@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --narra-dark:    #173f46;
+  --narra-green:   #c7e995;
+  --narra-mid:     #1e5260;
+  --narra-light:   #e8f5d0;
+  --narra-muted:   #8aab6e;
+  --narra-ink:     #0d2b30;
+  --narra-surface: #f4faf0;
+  --narra-border:  #d0e8b8;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', sans-serif;
+  background: var(--narra-surface);
+  color: var(--narra-ink);
+}
+
+h1, h2, h3, h4, h5, .font-heading {
+  font-family: 'Albert Sans', sans-serif;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--narra-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--narra-muted); }
+
+/* Animations */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+.animate-fade-up { animation: fadeUp 0.4s ease both; }
+.animate-pulse-soft { animation: pulse-soft 2s ease infinite; }
+
+/* Stagger delays */
+.delay-1 { animation-delay: 0.05s; }
+.delay-2 { animation-delay: 0.1s; }
+.delay-3 { animation-delay: 0.15s; }
+.delay-4 { animation-delay: 0.2s; }

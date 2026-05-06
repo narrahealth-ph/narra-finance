@@ -54,7 +54,7 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
     const lines = text.trim().split('\n')
     const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''))
 
-    return lines.slice(1).map(line => {
+    return lines.slice(1).map((line): BankRow => {
       const cols: string[] = []
       let cur = '', inQ = false
       for (const ch of line) {
@@ -75,7 +75,7 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
       const amount = parseFloat(get(['amount', 'debit', 'credit', 'value'])) || 0
       const desc = get(['description', 'narration', 'details', 'memo', 'payee'])
       const descLower = desc.toLowerCase()
-      const type = descLower.includes('currency exchange') || descLower.includes('conversion')
+      const type = (descLower.includes('currency exchange') || descLower.includes('conversion')
         ? 'fx'
         : descLower.includes('lawina') || amount > 0
         ? 'revenue'
@@ -86,10 +86,10 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
         description: desc,
         amount: Math.abs(amount),
         currency: get(['currency', 'ccy']) || 'USD',
-        type,
+        type: type as BankRow['type'],
         account: get(['account', 'bank']) || '',
       }
-    }).filter(r => r.amount > 0 && r.date)
+    }) as BankRow[]).filter(r => r.amount > 0 && r.date)
   }
 
   // ── File handler ───────────────────────────────────────────────────────────

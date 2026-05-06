@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
       [periodId]
     )
 
-    const pending = result.rows.map(row => ({
+    const pending = result.rows.map((row: any) => ({
       invoiceId:       row.invoiceId || `INV-${row.id}`,
       clientName:      row.clientName || 'Unknown',
       amount:          parseFloat(row.amount) || 0,

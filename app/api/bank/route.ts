@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireRole } from '@/lib/auth'
 import { query } from '@/lib/db'
+import { toUSD } from '@/lib/fx'
 
 // POST /api/bank — save transactions and auto-reconcile
 export async function POST(req: NextRequest) {
@@ -11,14 +12,20 @@ export async function POST(req: NextRequest) {
 
   const saved = []
   for (const tx of transactions) {
+    const currency  = tx.currency || 'USD'
+    const txDate    = tx.date || new Date().toISOString().split('T')[0]
+    const amountUsd = currency !== 'USD'
+      ? await toUSD(tx.amount, currency, txDate)
+      : (tx.amount_usd || tx.amount)
+
     const res = await query(
       `INSERT INTO bank_transactions
         (period_id, date, description, amount, currency, amount_usd, type, account, status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'unmatched')
        ON CONFLICT DO NOTHING
        RETURNING id`,
-      [periodId, tx.date, tx.description, tx.amount,
-       tx.currency || 'USD', tx.amount_usd || tx.amount, tx.type, tx.account || tx.sourceAccount || '']
+      [periodId, txDate, tx.description, tx.amount,
+       currency, amountUsd, tx.type, tx.account || tx.sourceAccount || '']
     )
     if (res.rows[0]) saved.push(res.rows[0].id)
   }
@@ -36,8 +43,6 @@ export async function GET(req: NextRequest) {
   const periodId = searchParams.get('periodId')
   const action   = searchParams.get('action')
 
-  // GET /api/bank?action=summary&periodId=1
-  // Returns costs grouped by account code with individual transactions
   if (action === 'summary') {
     const txs = await query(
       `SELECT bt.*, i.vendor, i.account_name, i.drive_file_name
@@ -48,29 +53,28 @@ export async function GET(req: NextRequest) {
       [periodId]
     )
 
-    const expenses = txs.rows.filter(r => r.type === 'expense')
-    const revenue  = txs.rows.filter(r => r.type === 'revenue')
+    const expenses = txs.rows.filter((r: any) => r.type === 'expense')
+    const revenue  = txs.rows.filter((r: any) => r.type === 'revenue')
 
-    // Group expenses by account code
     const byAccount: Record<string, { total: number; items: any[] }> = {}
     for (const tx of expenses) {
       const acct = tx.account_name || tx.account || 'Uncategorized'
       if (!byAccount[acct]) byAccount[acct] = { total: 0, items: [] }
       byAccount[acct].total += parseFloat(tx.amount_usd || tx.amount || 0)
       byAccount[acct].items.push({
-        id:          tx.id,
-        date:        tx.date,
-        description: tx.description,
-        vendor:      tx.vendor || tx.description,
-        amount:      parseFloat(tx.amount_usd || tx.amount || 0),
-        currency:    tx.currency,
-        status:      tx.status,
+        id:             tx.id,
+        date:           tx.date,
+        description:    tx.description,
+        vendor:         tx.vendor || tx.description,
+        amount:         parseFloat(tx.amount_usd || tx.amount || 0),
+        currency:       tx.currency,
+        status:         tx.status,
         matchedInvoice: tx.drive_file_name || null,
       })
     }
 
-    const totalExpenses = expenses.reduce((s, r) => s + parseFloat(r.amount_usd || r.amount || 0), 0)
-    const totalRevenue  = revenue.reduce((s, r) => s + parseFloat(r.amount_usd || r.amount || 0), 0)
+    const totalExpenses = expenses.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || r.amount || 0), 0)
+    const totalRevenue  = revenue.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || r.amount || 0), 0)
 
     return NextResponse.json({
       byAccount,
@@ -88,7 +92,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ transactions: res.rows })
 }
 
-// PATCH /api/bank — unmatch a transaction
+// PATCH /api/bank — unmatch or approve a transaction
 export async function PATCH(req: NextRequest) {
   const session = await requireRole('finance')
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -96,7 +100,6 @@ export async function PATCH(req: NextRequest) {
   const { action, bankTxId, invoiceId } = await req.json()
 
   if (action === 'unmatch') {
-    // Reset both records to unmatched
     await query(
       "UPDATE bank_transactions SET status='unmatched', matched_invoice_id=NULL WHERE id=$1",
       [bankTxId]
@@ -127,7 +130,7 @@ export async function PATCH(req: NextRequest) {
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
 }
 
-// ── Auto-reconcile with confidence scoring ───────────────────────────────────
+// ── Auto-reconcile with confidence scoring ────────────────────────────────────
 async function autoReconcile(periodId: number) {
   const invoices = await query(
     "SELECT id, amount_usd, date, vendor FROM invoices WHERE period_id = $1 AND status='unmatched'",
@@ -146,25 +149,23 @@ async function autoReconcile(periodId: number) {
     let bestScore = 0
 
     for (const tx of bankTxs.rows) {
-      const txAmount = parseFloat(tx.amount || 0)
+      const txAmount   = parseFloat(tx.amount || 0)
       const amountDiff = Math.abs(txAmount - invAmount) / invAmount
-      const daysDiff = inv.date && tx.date
+      const daysDiff   = inv.date && tx.date
         ? Math.abs(new Date(tx.date).getTime() - new Date(inv.date).getTime()) / 86400000
         : 999
 
-      // Score: amount match (0-50) + date proximity (0-30) + vendor name match (0-20)
       let score = 0
-      if (amountDiff < 0.01)      score += 50  // exact match
-      else if (amountDiff < 0.05) score += 35  // within 5%
-      else if (amountDiff < 0.10) score += 15  // within 10%
-      else continue                             // too far off — skip
+      if (amountDiff < 0.01)      score += 50
+      else if (amountDiff < 0.05) score += 35
+      else if (amountDiff < 0.10) score += 15
+      else continue
 
       if (daysDiff <= 1)       score += 30
       else if (daysDiff <= 3)  score += 20
       else if (daysDiff <= 7)  score += 10
       else if (daysDiff <= 14) score += 5
 
-      // Vendor name match
       if (inv.vendor && tx.description) {
         const vendor = inv.vendor.toLowerCase()
         const desc   = tx.description.toLowerCase()
@@ -180,8 +181,6 @@ async function autoReconcile(periodId: number) {
 
     if (!bestMatch) continue
 
-    // High confidence (score >= 65) → auto-confirm
-    // Medium confidence (score 40-64) → mark as proposed for review
     const confidence = bestScore >= 65 ? 'high' : bestScore >= 40 ? 'medium' : 'low'
     if (confidence === 'low') continue
 
@@ -196,7 +195,6 @@ async function autoReconcile(periodId: number) {
       [status, inv.id, bestMatch.id]
     )
 
-    // Remove from pool
     bankTxs.rows = bankTxs.rows.filter((tx: any) => tx.id !== bestMatch.id)
   }
 }

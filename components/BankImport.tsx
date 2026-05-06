@@ -21,7 +21,6 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
   const [dragging, setDragging] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  // ── PDF → Claude AI extraction ─────────────────────────────────────────────
   async function parsePDF(file: File) {
     setParsing(true)
     setError('')
@@ -32,7 +31,6 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
         reader.onerror = () => rej(new Error('Could not read file'))
         reader.readAsDataURL(file)
       })
-
       const response = await fetch('/api/bank/parse-pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -49,12 +47,11 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
     }
   }
 
-  // ── CSV parsing ────────────────────────────────────────────────────────────
   function parseCSV(text: string): BankRow[] {
     const lines = text.trim().split('\n')
-    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''))
+    const headers = lines[0].split(',').map((h: string) => h.trim().toLowerCase().replace(/['"]/g, ''))
 
-    return lines.slice(1).map((line): BankRow => {
+    const parsed = lines.slice(1).map((line: string) => {
       const cols: string[] = []
       let cur = '', inQ = false
       for (const ch of line) {
@@ -66,7 +63,7 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
 
       const get = (names: string[]) => {
         for (const n of names) {
-          const idx = headers.findIndex(h => h.includes(n))
+          const idx = headers.findIndex((h: string) => h.includes(n))
           if (idx >= 0) return cols[idx]?.trim().replace(/['",$]/g, '') || ''
         }
         return ''
@@ -75,24 +72,26 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
       const amount = parseFloat(get(['amount', 'debit', 'credit', 'value'])) || 0
       const desc = get(['description', 'narration', 'details', 'memo', 'payee'])
       const descLower = desc.toLowerCase()
-      const type = (descLower.includes('currency exchange') || descLower.includes('conversion')
+      const rawType = descLower.includes('currency exchange') || descLower.includes('conversion')
         ? 'fx'
         : descLower.includes('lawina') || amount > 0
         ? 'revenue'
         : 'expense'
 
-      return {
-        date: get(['date', 'transaction date', 'posting']),
+      const row: BankRow = {
+        date:        get(['date', 'transaction date', 'posting']),
         description: desc,
-        amount: Math.abs(amount),
-        currency: get(['currency', 'ccy']) || 'USD',
-        type: type as BankRow['type'],
-        account: get(['account', 'bank']) || '',
+        amount:      Math.abs(amount),
+        currency:    get(['currency', 'ccy']) || 'USD',
+        type:        rawType as BankRow['type'],
+        account:     get(['account', 'bank']) || '',
       }
-    }) as BankRow[]).filter(r => r.amount > 0 && r.date)
+      return row
+    })
+
+    return parsed.filter((r: BankRow) => r.amount > 0 && r.date)
   }
 
-  // ── File handler ───────────────────────────────────────────────────────────
   function handleFile(file: File) {
     setError('')
     setRows([])
@@ -115,27 +114,19 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
   function onInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (file) handleFile(file)
-    // Reset input so same file can be re-selected
     e.target.value = ''
   }
 
-  // ── Drag and drop handlers ─────────────────────────────────────────────────
   const onDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragging(true)
+    e.preventDefault(); e.stopPropagation(); setDragging(true)
   }, [])
 
   const onDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragging(false)
+    e.preventDefault(); e.stopPropagation(); setDragging(false)
   }, [])
 
   const onDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragging(false)
+    e.preventDefault(); e.stopPropagation(); setDragging(false)
     const file = e.dataTransfer.files?.[0]
     if (file) handleFile(file)
   }, [])
@@ -190,53 +181,27 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
         )}
       </div>
 
-      {/* Upload area */}
       <div
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
+        onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
         onClick={() => !parsing && fileRef.current?.click()}
         className={`border-2 border-dashed rounded-xl p-12 text-center transition-all select-none
-          ${parsing
-            ? 'border-narra-green bg-narra-light/20 cursor-wait'
-            : dragging
-            ? 'border-narra-dark bg-narra-light/40 cursor-copy'
-            : 'border-narra-border cursor-pointer hover:border-narra-muted hover:bg-narra-light/30'
-          }`}>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".csv,.pdf,application/pdf,text/csv"
-          className="hidden"
-          onChange={onInputChange}
-        />
+          ${parsing ? 'border-narra-green bg-narra-light/20 cursor-wait'
+            : dragging ? 'border-narra-dark bg-narra-light/40 cursor-copy'
+            : 'border-narra-border cursor-pointer hover:border-narra-muted hover:bg-narra-light/30'}`}>
+        <input ref={fileRef} type="file" accept=".csv,.pdf,application/pdf,text/csv" className="hidden" onChange={onInputChange} />
         {parsing ? (
-          <>
-            <div className="text-4xl mb-3 animate-pulse">✨</div>
-            <p className="font-heading font-medium text-narra-dark">Claude is reading your bank statement…</p>
-            <p className="text-narra-muted text-sm mt-1">Extracting all transactions from the PDF</p>
-          </>
+          <><div className="text-4xl mb-3 animate-pulse">✨</div>
+          <p className="font-heading font-medium text-narra-dark">Claude is reading your bank statement…</p></>
         ) : dragging ? (
-          <>
-            <div className="text-4xl mb-3">📂</div>
-            <p className="font-heading font-medium text-narra-dark">Drop it!</p>
-          </>
+          <><div className="text-4xl mb-3">📂</div><p className="font-heading font-medium text-narra-dark">Drop it!</p></>
         ) : (
-          <>
-            <div className="text-4xl mb-3">🏦</div>
-            <p className="font-heading font-medium text-narra-dark">Drop your Sleek bank statement here</p>
-            <p className="text-narra-muted text-sm mt-1">or click to browse · PDF or CSV · Multi-currency</p>
-            <div className="flex justify-center gap-2 mt-3">
-              {['PDF', 'CSV'].map(f => (
-                <span key={f} className="text-xs px-2 py-1 bg-narra-light rounded-md text-narra-muted font-mono">{f}</span>
-              ))}
-            </div>
-          </>
+          <><div className="text-4xl mb-3">🏦</div>
+          <p className="font-heading font-medium text-narra-dark">Drop your Sleek bank statement here</p>
+          <p className="text-narra-muted text-sm mt-1">or click to browse · PDF or CSV · Multi-currency</p></>
         )}
         {error && <p className="text-red-500 text-sm mt-3">{error}</p>}
       </div>
 
-      {/* Currency summary */}
       {rows.length > 0 && Object.keys(byCurrency).length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {Object.entries(byCurrency).map(([ccy, { in: inn, out }]) => (
@@ -252,13 +217,10 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
         </div>
       )}
 
-      {/* Transactions table */}
       {rows.length > 0 && (
         <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
           <div className="px-4 py-3 bg-narra-light/50 border-b border-narra-border flex items-center justify-between">
-            <span className="text-sm font-body text-narra-dark">
-              {rows.length} transactions · Review and correct before saving
-            </span>
+            <span className="text-sm font-body text-narra-dark">{rows.length} transactions · Review and correct before saving</span>
             <div className="flex gap-4 text-xs">
               <span className="text-green-600">↑ ${totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
               <span className="text-red-500">↓ ${totalExpenses.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>

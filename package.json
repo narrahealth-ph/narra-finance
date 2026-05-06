@@ -9,7 +9,7 @@
     "db:push": "node lib/db-migrate.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.24.0",
+    "@anthropic-ai/sdk": "^0.39.0",
     "cookies-next": "^4.2.1",
     "dotenv": "^17.4.2",
     "googleapis": "^140.0.0",

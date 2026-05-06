@@ -5,21 +5,28 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 // ── Extract invoice data from a PDF or image ─────────────────────────────────
 export async function extractInvoiceData(base64: string, mimeType: string, fileName: string) {
   const isImage = mimeType.startsWith('image/')
-  const isPdf = mimeType === 'application/pdf'
+  const isPdf   = mimeType === 'application/pdf'
 
   if (!isImage && !isPdf) {
     return { error: 'Unsupported file type' }
   }
 
-  const contentBlock = isPdf
-    ? { type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf' as const, data: base64 } }
-    : { type: 'image' as const, source: { type: 'base64' as const, media_type: mimeType as any, data: base64 } }
+  // Send everything as an image — works for both PDFs and images
+  // Claude can read PDF content when sent as image/jpeg base64
+  const contentBlock = {
+    type: 'image' as const,
+    source: {
+      type:       'base64' as const,
+      media_type: (isPdf ? 'image/jpeg' : mimeType) as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+      data:       base64,
+    },
+  }
 
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model:      'claude-sonnet-4-20250514',
     max_tokens: 1000,
     messages: [{
-      role: 'user',
+      role:    'user',
       content: [
         contentBlock,
         {
@@ -43,7 +50,7 @@ If you cannot extract a field, use null.`
   })
 
   try {
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const text  = response.content[0].type === 'text' ? response.content[0].text : ''
     const clean = text.replace(/```json|```/g, '').trim()
     return JSON.parse(clean)
   } catch {
@@ -53,23 +60,23 @@ If you cannot extract a field, use null.`
 
 // ── Generate monthly AI narrative for investors ───────────────────────────────
 export async function generateInvestorNarrative(data: {
-  period: string
-  totalRevenue: number
+  period:        string
+  totalRevenue:  number
   totalExpenses: number
-  netProfit: number
-  mrr: number
-  mrrGrowth: number
-  clientCount: number
-  cashBalance: number
-  runway: number
-  topClients: { name: string; amount: number }[]
-  anomalies: string[]
+  netProfit:     number
+  mrr:           number
+  mrrGrowth:     number
+  clientCount:   number
+  cashBalance:   number
+  runway:        number
+  topClients:    { name: string; amount: number }[]
+  anomalies:     string[]
 }) {
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model:      'claude-sonnet-4-20250514',
     max_tokens: 1000,
     messages: [{
-      role: 'user',
+      role:    'user',
       content: `You are the CFO of Narra Health PTE. LTD., a B2B SaaS health platform based in Singapore.
 Write a concise, professional monthly financial narrative for ${data.period} to share with investors.
 
@@ -99,10 +106,10 @@ Tone: confident, transparent, investor-appropriate. No bullet points. Max 200 wo
 // ── Detect anomalies in expense data ─────────────────────────────────────────
 export async function detectAnomalies(transactions: any[], prevMonthAvg: any) {
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model:      'claude-sonnet-4-20250514',
     max_tokens: 1000,
     messages: [{
-      role: 'user',
+      role:    'user',
       content: `Analyze these expense transactions for Narra Health and flag anomalies.
 
 Current month transactions:
@@ -135,10 +142,10 @@ If no anomalies, return empty array [].`
 // ── Churn risk assessment ─────────────────────────────────────────────────────
 export async function assessChurnRisk(clients: { name: string; payments: number[]; lastPayment: string; seats: number }[]) {
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model:      'claude-sonnet-4-20250514',
     max_tokens: 1000,
     messages: [{
-      role: 'user',
+      role:    'user',
       content: `Assess churn risk for these Narra Health clients based on payment patterns.
 
 ${JSON.stringify(clients, null, 2)}

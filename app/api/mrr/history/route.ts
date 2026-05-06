@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
 
     const allRows = res.data.values || []
 
-    function getCell(row: number, col: string): any {
+    const getCell = (row: number, col: string): any => {
       return (allRows[row - 1] || [])[colToIndex(col)]
     }
 

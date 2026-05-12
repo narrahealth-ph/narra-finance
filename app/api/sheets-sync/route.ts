@@ -37,7 +37,14 @@ export async function POST(req: NextRequest) {
 
   const { monthLabel, clients, costs } = await req.json()
   const col = MONTH_TO_COL[monthLabel]
-  if (!col) return NextResponse.json({ error: `No column mapping for ${monthLabel}` }, { status: 400 })
+  if (!col) {
+    console.error(
+      `[sheets-sync] No column mapping found.\n` +
+      `  monthLabel received: "${monthLabel}"\n` +
+      `  valid keys: ${Object.keys(MONTH_TO_COL).join(', ')}`
+    )
+    return NextResponse.json({ error: `No column mapping for "${monthLabel}". Valid keys: ${Object.keys(MONTH_TO_COL).join(', ')}` }, { status: 400 })
+  }
 
   try {
     const sheets = getSheetsClient()

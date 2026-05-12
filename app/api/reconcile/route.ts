@@ -352,12 +352,19 @@ Return ONLY valid JSON, no markdown:
     const { mrrSnapshot, periodLabel } = body
     // periodLabel format: "January_2026"
     const [monthName, year] = periodLabel.split('_')
-    const monthAbbr = monthName.substring(0, 3)
+    const monthAbbr = monthName?.substring(0, 3)
     const colKey = `${monthAbbr}_${year}`
     const col = MONTH_TO_COL[colKey]
 
     if (!col) {
-      return NextResponse.json({ error: `No column mapping for ${periodLabel}` }, { status: 400 })
+      console.error(
+        `[push_to_sheet] No column mapping found.\n` +
+        `  periodLabel received: "${periodLabel}"\n` +
+        `  parsed monthName: "${monthName}", year: "${year}"\n` +
+        `  colKey attempted: "${colKey}"\n` +
+        `  valid keys: ${Object.keys(MONTH_TO_COL).join(', ')}`
+      )
+      return NextResponse.json({ error: `No column mapping for "${periodLabel}" (tried key "${colKey}"). Valid keys: ${Object.keys(MONTH_TO_COL).join(', ')}` }, { status: 400 })
     }
 
     try {

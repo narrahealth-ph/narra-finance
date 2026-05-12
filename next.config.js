@@ -14,7 +14,9 @@ const nextConfig = {
     }
     return config
   },
-  serverExternalPackages: ['googleapis', 'google-auth-library', 'pg'],
+  experimental: {
+    serverComponentsExternalPackages: ['googleapis', 'google-auth-library', 'pg'],
+  },
 }
 
 module.exports = nextConfig

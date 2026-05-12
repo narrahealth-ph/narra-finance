@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
   const session = await requireRole('finance')
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { periodId, fileId, fileName, mimeType } = await req.json()
+  const { periodId, fileId, fileName, mimeType, force } = await req.json()
 
   if (!fileId || !fileName) {
     return NextResponse.json({ status: 'error', error: 'fileId and fileName are required' }, { status: 400 })
@@ -61,11 +61,27 @@ export async function POST(req: NextRequest) {
   try {
     // Check if already extracted
     const existing = await query(
-      'SELECT id FROM invoices WHERE drive_file_id = $1',
+      'SELECT id, vendor, date, amount, currency, amount_usd, account_name, notes FROM invoices WHERE drive_file_id = $1',
       [fileId]
     )
-    if (existing.rows.length > 0) {
-      return NextResponse.json({ status: 'already_exists', id: existing.rows[0].id })
+    if (existing.rows.length > 0 && !force) {
+      const row = existing.rows[0]
+      return NextResponse.json({
+        status: 'already_exists',
+        id: row.id,
+        data: {
+          vendor:             row.vendor,
+          date:               row.date,
+          amount:             row.amount,
+          currency:           row.currency,
+          suggested_account:  row.account_name,
+          description:        row.notes,
+        }
+      })
+    }
+    // force=true: delete existing record and re-extract
+    if (existing.rows.length > 0 && force) {
+      await query('DELETE FROM invoices WHERE drive_file_id = $1', [fileId])
     }
 
     // Determine MIME type — default to PDF if unknown

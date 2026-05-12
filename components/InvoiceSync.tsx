@@ -38,33 +38,33 @@ export default function InvoiceSync({ periodId, monthLabel, onSync }: {
     setLoading(false)
   }
 
+  async function extractFile(file: DriveFile, force = false) {
+    setInvoices(prev => prev.map(i =>
+      i.fileId === file.id ? { ...i, status: 'extracting' } : i
+    ))
+    const res = await fetch('/api/drive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ periodId, fileId: file.id, fileName: file.name, mimeType: file.mimeType, force }),
+    })
+    const result = await res.json()
+    setInvoices(prev => prev.map(i =>
+      i.fileId === file.id ? {
+        ...i,
+        status: result.status === 'error' ? 'error'
+              : result.status === 'already_exists' ? 'exists'
+              : 'done',
+        data:  result.data,
+        error: result.error
+      } : i
+    ))
+    return result
+  }
+
   async function syncAll() {
     setSyncing(true)
     for (const file of files) {
-      setInvoices(prev => prev.map(i =>
-        i.fileId === file.id ? { ...i, status: 'extracting' } : i
-      ))
-      const res = await fetch('/api/drive', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          periodId,
-          fileId: file.id,
-          fileName: file.name,
-          mimeType: file.mimeType
-        }),
-      })
-      const result = await res.json()
-      setInvoices(prev => prev.map(i =>
-        i.fileId === file.id ? {
-          ...i,
-          status: result.status === 'error' ? 'error'
-                : result.status === 'already_exists' ? 'exists'
-                : 'done',
-          data: result.data,
-          error: result.error
-        } : i
-      ))
+      await extractFile(file, false)
     }
     setSyncing(false)
     onSync()
@@ -156,18 +156,32 @@ export default function InvoiceSync({ periodId, monthLabel, onSync }: {
                   </td>
                   <td className="px-4 py-3 text-narra-muted text-xs">{inv.data?.suggested_account || '—'}</td>
                   <td className="px-4 py-3">
-                    {inv.data?.confidence && (
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${
-                        inv.data.confidence === 'high'   ? 'bg-green-100 text-green-700' :
-                        inv.data.confidence === 'medium' ? 'bg-amber-100 text-amber-700' :
-                                                           'bg-red-100 text-red-700'
-                      }`}>
-                        {inv.data.confidence}
-                      </span>
-                    )}
-                    {inv.status === 'error' && (
-                      <span className="text-red-400 text-xs">{inv.error}</span>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {inv.data?.confidence && (
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${
+                          inv.data.confidence === 'high'   ? 'bg-green-100 text-green-700' :
+                          inv.data.confidence === 'medium' ? 'bg-amber-100 text-amber-700' :
+                                                             'bg-red-100 text-red-700'
+                        }`}>
+                          {inv.data.confidence}
+                        </span>
+                      )}
+                      {inv.status === 'error' && (
+                        <span className="text-red-400 text-xs">{inv.error}</span>
+                      )}
+                      {(inv.status === 'exists' || inv.status === 'done' || inv.status === 'error') && (
+                        <button
+                          onClick={() => {
+                            const file = files.find(f => f.id === inv.fileId)
+                            if (file) extractFile(file, true)
+                          }}
+                          className="text-xs text-narra-muted hover:text-narra-dark transition-colors"
+                          title="Re-extract"
+                        >
+                          ↻
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

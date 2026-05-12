@@ -11,16 +11,23 @@ export async function extractInvoiceData(base64: string, mimeType: string, fileN
     return { error: 'Unsupported file type' }
   }
 
-  // Send everything as an image — works for both PDFs and images
-  // Claude can read PDF content when sent as image/jpeg base64
-  const contentBlock = {
-    type: 'image' as const,
-    source: {
-      type:       'base64' as const,
-      media_type: (isPdf ? 'image/jpeg' : mimeType) as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
-      data:       base64,
-    },
-  }
+  const contentBlock = isPdf
+    ? {
+        type: 'document' as const,
+        source: {
+          type:       'base64' as const,
+          media_type: 'application/pdf' as const,
+          data:       base64,
+        },
+      }
+    : {
+        type: 'image' as const,
+        source: {
+          type:       'base64' as const,
+          media_type: mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+          data:       base64,
+        },
+      }
 
   const response = await client.messages.create({
     model:      'claude-sonnet-4-20250514',

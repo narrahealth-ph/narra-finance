@@ -73,9 +73,13 @@ export async function GET(req: NextRequest) {
   let outgoingInvoices: any[] = []
   try {
     const sheets = getSheetsClient()
+    const periodRow = await query('SELECT end_date FROM periods WHERE id = $1', [periodId])
+    const sheetYear = periodRow.rows[0]?.end_date
+      ? new Date(periodRow.rows[0].end_date).getFullYear()
+      : new Date().getFullYear()
     const invRes = await sheets.spreadsheets.values.get({
       spreadsheetId: INVOICE_SHEET_ID,
-      range: '2026!A2:I200',
+      range: `${sheetYear}!A2:I200`,
     })
     const rows = invRes.data.values || []
     outgoingInvoices = rows

@@ -8,22 +8,37 @@ export async function POST(req: NextRequest) {
   const session = await requireRole('finance')
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { base64, fileName } = await req.json()
+  const { base64, fileName, mimeType } = await req.json()
 
-  try {
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4000,
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'document',
-            source: { type: 'base64', media_type: 'application/pdf', data: base64 }
-          },
-          {
-            type: 'text',
-            text: `Extract ALL transactions from this bank statement PDF (filename: ${fileName}).
+  const isImage = mimeType && mimeType.startsWith('image/')
+  const resolvedMimeType = isImage ? mimeType : 'application/pdf'
+
+  const contentBlock: any = isImage
+    ? { type: 'image',    source: { type: 'base64', media_type: resolvedMimeType, data: base64 } }
+    : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
+
+  const prompt = isImage
+    ? `This is a screenshot or image of a financial statement or payment summary (filename: ${fileName}).
+
+Extract ALL individual transactions or payment entries visible in this image.
+If it shows a summary page (e.g. PayPal monthly summary, bank summary), extract each line item as a separate transaction.
+
+For each entry extract:
+- date (format: YYYY-MM-DD, use the statement date if individual dates are not shown)
+- description (vendor, payee, or payment description)
+- amount (positive number)
+- currency (USD, SGD, EUR, GBP, PHP — default USD if unclear)
+- type: "revenue" if money received, "expense" if money sent/paid out, "transfer" for internal moves
+- account: the account name or platform (e.g. "PayPal", "USD", "SGD")
+
+IMPORTANT:
+- Do NOT include running balances or total balance rows as transactions
+- DO include fees as separate expense transactions if shown
+- If only totals are visible (e.g. "Total payments sent: $X"), create one transaction for that total
+
+Return ONLY valid JSON, no markdown:
+{"transactions": [{"date": "2026-04-01", "description": "Payment to vendor", "amount": 100.00, "currency": "USD", "type": "expense", "account": "PayPal"}]}`
+    : `Extract ALL transactions from this bank statement PDF (filename: ${fileName}).
 
 This is a Sleek multi-currency bank statement for Narra Health PTE. LTD.
 It has sections for SGD, USD, EUR, and GBP accounts.
@@ -40,27 +55,22 @@ For each transaction row extract:
   * "transfer" if it's an internal transfer
 - account: the currency account it belongs to (e.g. "SGD", "USD")
 
-IMPORTANT: 
+IMPORTANT:
 - Do NOT include opening balances or "Balance brought forward" rows
 - Do NOT include "Total Balance Carried Forward" summary rows
 - DO include all actual transactions including payroll (IDEIN SERVICES)
 - For FX conversions, use the SGD amount and mark as "fx"
 
 Return ONLY valid JSON, no markdown:
-{
-  "transactions": [
-    {
-      "date": "2026-04-01",
-      "description": "PLANETSCALE INC",
-      "amount": 60.79,
-      "currency": "SGD",
-      "type": "expense",
-      "account": "SGD"
-    }
-  ]
-}`
-          }
-        ]
+{"transactions": [{"date": "2026-04-01", "description": "PLANETSCALE INC", "amount": 60.79, "currency": "SGD", "type": "expense", "account": "SGD"}]}`
+
+  try {
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4000,
+      messages: [{
+        role: 'user',
+        content: [contentBlock, { type: 'text', text: prompt }]
       }]
     })
 

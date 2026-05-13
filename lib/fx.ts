@@ -31,6 +31,7 @@ export async function getRate(fromCurrency: string, date: string): Promise<numbe
     const targetRate = rates[fromCurrency]
     return targetRate ? 1 / (targetRate as number) : getFallbackRate(fromCurrency)
   } catch {
+    console.error(`[fx] API failed for ${fromCurrency} on ${date} — using hardcoded fallback rate`)
     return getFallbackRate(fromCurrency)
   }
 }

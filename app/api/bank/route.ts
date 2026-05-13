@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireRole } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { toUSD } from '@/lib/fx'
+import { writeAudit } from '@/lib/audit'
+
+const DISCREPANCY_FLAG_THRESHOLD = 0.05 // Flag matches with >5% amount difference
 
 // POST /api/bank — save transactions and auto-reconcile
 export async function POST(req: NextRequest) {
@@ -10,7 +13,15 @@ export async function POST(req: NextRequest) {
 
   const { periodId, transactions } = await req.json()
 
+  // Check period lock
+  const period = await query('SELECT locked FROM periods WHERE id = $1', [periodId])
+  if (period.rows[0]?.locked) {
+    return NextResponse.json({ error: 'Period is locked — unlock before importing bank statements' }, { status: 403 })
+  }
+
+  const userEmail = (session as any).email || 'unknown'
   const saved = []
+
   for (const tx of transactions) {
     const currency  = tx.currency || 'USD'
     const txDate    = tx.date || new Date().toISOString().split('T')[0]
@@ -27,14 +38,18 @@ export async function POST(req: NextRequest) {
       [periodId, txDate, tx.description, tx.amount,
        currency, amountUsd, tx.type, tx.account || tx.sourceAccount || '']
     )
-    if (res.rows[0]) saved.push(res.rows[0].id)
+    if (res.rows[0]) {
+      saved.push(res.rows[0].id)
+      await writeAudit('bank_transactions', res.rows[0].id, 'insert', null,
+        { periodId, amount: tx.amount, currency, type: tx.type }, userEmail)
+    }
   }
 
   await autoReconcile(periodId)
   return NextResponse.json({ saved: saved.length })
 }
 
-// GET /api/bank?periodId=1
+// GET /api/bank?periodId=1&action=summary
 export async function GET(req: NextRequest) {
   const session = await requireRole('finance')
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -45,9 +60,9 @@ export async function GET(req: NextRequest) {
 
   if (action === 'summary') {
     const txs = await query(
-      `SELECT bt.*, i.vendor, i.account_name, i.drive_file_name
+      `SELECT bt.*, i.id as invoice_id, i.vendor, i.account_name, i.drive_file_name, i.amount_usd as invoice_amount_usd
        FROM bank_transactions bt
-       LEFT JOIN invoices i ON i.matched_bank_id = bt.id::text::integer
+       LEFT JOIN invoices i ON i.matched_bank_id = bt.id
        WHERE bt.period_id = $1
        ORDER BY bt.date`,
       [periodId]
@@ -56,25 +71,36 @@ export async function GET(req: NextRequest) {
     const expenses = txs.rows.filter((r: any) => r.type === 'expense')
     const revenue  = txs.rows.filter((r: any) => r.type === 'revenue')
 
+    const safeUsd = (r: any) => {
+      const usd = parseFloat(r.amount_usd)
+      if (!isNaN(usd) && usd > 0) return usd
+      if ((r.currency || 'USD') === 'USD') return parseFloat(r.amount || 0)
+      return 0
+    }
+
     const byAccount: Record<string, { total: number; items: any[] }> = {}
     for (const tx of expenses) {
       const acct = tx.account_name || tx.account || 'Uncategorized'
       if (!byAccount[acct]) byAccount[acct] = { total: 0, items: [] }
-      byAccount[acct].total += parseFloat(tx.amount_usd || tx.amount || 0)
+      const amt = safeUsd(tx)
+      byAccount[acct].total += amt
       byAccount[acct].items.push({
-        id:             tx.id,
-        date:           tx.date,
-        description:    tx.description,
-        vendor:         tx.vendor || tx.description,
-        amount:         parseFloat(tx.amount_usd || tx.amount || 0),
-        currency:       tx.currency,
-        status:         tx.status,
-        matchedInvoice: tx.drive_file_name || null,
+        id:              tx.id,
+        date:            tx.date,
+        description:     tx.description,
+        vendor:          tx.vendor || tx.description,
+        amount:          amt,
+        currency:        tx.currency,
+        status:          tx.status,
+        discrepancyPct:  tx.discrepancy_pct ? parseFloat(tx.discrepancy_pct) : null,
+        invoiceId:        tx.invoice_id || null,
+        matchedInvoice:  tx.drive_file_name || null,
+        invoiceAmountUsd: tx.invoice_amount_usd ? parseFloat(tx.invoice_amount_usd) : null,
       })
     }
 
-    const totalExpenses = expenses.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || r.amount || 0), 0)
-    const totalRevenue  = revenue.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || r.amount || 0), 0)
+    const totalExpenses = expenses.reduce((s: number, r: any) => s + safeUsd(r), 0)
+    const totalRevenue  = revenue.reduce((s: number, r: any) => s + safeUsd(r), 0)
 
     return NextResponse.json({
       byAccount,
@@ -92,16 +118,57 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ transactions: res.rows })
 }
 
-// PATCH /api/bank — unmatch or approve a transaction
+// DELETE /api/bank?txId=X — delete a single bank transaction
+export async function DELETE(req: NextRequest) {
+  const session = await requireRole('finance')
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { searchParams } = new URL(req.url)
+  const txId = searchParams.get('txId')
+  if (!txId) return NextResponse.json({ error: 'txId required' }, { status: 400 })
+
+  // Block if period is locked
+  const txCheck = await query(
+    `SELECT bt.id, p.locked FROM bank_transactions bt
+     JOIN periods p ON p.id = bt.period_id WHERE bt.id = $1`,
+    [txId]
+  )
+  if (!txCheck.rows[0]) return NextResponse.json({ error: 'Transaction not found' }, { status: 404 })
+  if (txCheck.rows[0].locked) return NextResponse.json({ error: 'Period is locked' }, { status: 403 })
+
+  // Unlink any matched invoice first
+  await query(
+    "UPDATE invoices SET status='unmatched', matched_bank_id=NULL WHERE matched_bank_id=$1",
+    [txId]
+  )
+  await query('DELETE FROM bank_transactions WHERE id=$1', [txId])
+  await writeAudit('bank_transactions', txId, 'delete', null, null, (session as any).email)
+
+  return NextResponse.json({ ok: true })
+}
+
+// PATCH /api/bank — unmatch, approve, reassign
 export async function PATCH(req: NextRequest) {
   const session = await requireRole('finance')
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { action, bankTxId, invoiceId } = await req.json()
+  const { action, bankTxId, invoiceId, newInvoiceId } = await req.json()
+  const userEmail = (session as any).email || 'unknown'
 
+  // Check period lock via the bank transaction's period
+  if (bankTxId) {
+    const tx = await query('SELECT bt.id, p.locked FROM bank_transactions bt JOIN periods p ON p.id = bt.period_id WHERE bt.id = $1', [bankTxId])
+    if (tx.rows[0]?.locked) {
+      return NextResponse.json({ error: 'Period is locked — unlock before modifying matches' }, { status: 403 })
+    }
+  }
+
+  // ── unmatch ──────────────────────────────────────────────────────────────────
   if (action === 'unmatch') {
+    const old = await query('SELECT status, matched_invoice_id FROM bank_transactions WHERE id = $1', [bankTxId])
+
     await query(
-      "UPDATE bank_transactions SET status='unmatched', matched_invoice_id=NULL WHERE id=$1",
+      "UPDATE bank_transactions SET status='unmatched', matched_invoice_id=NULL, discrepancy_pct=NULL WHERE id=$1",
       [bankTxId]
     )
     if (invoiceId) {
@@ -110,9 +177,24 @@ export async function PATCH(req: NextRequest) {
         [invoiceId]
       )
     }
+    await writeAudit('bank_transactions', bankTxId, 'unmatch',
+      { status: old.rows[0]?.status, matched_invoice_id: old.rows[0]?.matched_invoice_id },
+      { status: 'unmatched', matched_invoice_id: null }, userEmail)
+
     return NextResponse.json({ ok: true })
   }
 
+  // ── acknowledge — mark as manually reviewed, no invoice needed ───────────────
+  if (action === 'acknowledge') {
+    await query(
+      "UPDATE bank_transactions SET status='acknowledged' WHERE id=$1",
+      [bankTxId]
+    )
+    await writeAudit('bank_transactions', bankTxId, 'acknowledge', null, { status: 'acknowledged' }, userEmail)
+    return NextResponse.json({ ok: true })
+  }
+
+  // ── approve_match ────────────────────────────────────────────────────────────
   if (action === 'approve_match') {
     await query(
       "UPDATE bank_transactions SET status='matched' WHERE id=$1",
@@ -124,20 +206,73 @@ export async function PATCH(req: NextRequest) {
         [invoiceId]
       )
     }
+    await writeAudit('bank_transactions', bankTxId, 'approve_match', null,
+      { status: 'matched', invoiceId }, userEmail)
+
     return NextResponse.json({ ok: true })
+  }
+
+  // ── reassign — move bank tx to a different invoice ───────────────────────────
+  if (action === 'reassign') {
+    if (!newInvoiceId) {
+      return NextResponse.json({ error: 'newInvoiceId required for reassign' }, { status: 400 })
+    }
+
+    // Verify new invoice exists and is for the same period
+    const newInv = await query('SELECT id, vendor, amount_usd FROM invoices WHERE id = $1', [newInvoiceId])
+    if (!newInv.rows[0]) {
+      return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
+    }
+
+    const tx = await query('SELECT id, amount_usd FROM bank_transactions WHERE id = $1', [bankTxId])
+    const txAmt  = parseFloat(tx.rows[0]?.amount_usd || 0)
+    const invAmt = parseFloat(newInv.rows[0].amount_usd || 0)
+    const diff   = invAmt > 0 ? Math.abs(txAmt - invAmt) / invAmt : 0
+    const newStatus = diff > DISCREPANCY_FLAG_THRESHOLD ? 'flagged' : 'matched'
+
+    // Unlink old invoice if any
+    if (invoiceId) {
+      await query(
+        "UPDATE invoices SET status='unmatched', matched_bank_id=NULL WHERE id=$1",
+        [invoiceId]
+      )
+    }
+
+    // Link to new invoice
+    await query(
+      "UPDATE bank_transactions SET status=$1, matched_invoice_id=$2, discrepancy_pct=$3 WHERE id=$4",
+      [newStatus, newInvoiceId, diff > 0 ? (diff * 100).toFixed(4) : null, bankTxId]
+    )
+    await query(
+      "UPDATE invoices SET status=$1, matched_bank_id=$2 WHERE id=$3",
+      [newStatus, bankTxId, newInvoiceId]
+    )
+
+    await writeAudit('bank_transactions', bankTxId, 'reassign',
+      { matched_invoice_id: invoiceId },
+      { matched_invoice_id: newInvoiceId, status: newStatus, discrepancy_pct: diff * 100 },
+      userEmail)
+
+    return NextResponse.json({
+      ok: true,
+      status: newStatus,
+      discrepancyPct: diff * 100,
+      flagged: newStatus === 'flagged',
+      vendor: newInv.rows[0].vendor,
+    })
   }
 
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
 }
 
-// ── Auto-reconcile with confidence scoring ────────────────────────────────────
+// ── Auto-reconcile with confidence scoring + discrepancy flagging ─────────────
 async function autoReconcile(periodId: number) {
   const invoices = await query(
     "SELECT id, amount_usd, date, vendor FROM invoices WHERE period_id = $1 AND status='unmatched'",
     [periodId]
   )
   const bankTxs = await query(
-    "SELECT id, amount, date, description FROM bank_transactions WHERE period_id = $1 AND status='unmatched' AND type='expense'",
+    "SELECT id, amount, amount_usd, date, description FROM bank_transactions WHERE period_id = $1 AND status='unmatched' AND type='expense'",
     [periodId]
   )
 
@@ -149,16 +284,17 @@ async function autoReconcile(periodId: number) {
     let bestScore = 0
 
     for (const tx of bankTxs.rows) {
-      const txAmount   = parseFloat(tx.amount || 0)
+      const txAmount   = parseFloat(tx.amount_usd || tx.amount || 0)
       const amountDiff = Math.abs(txAmount - invAmount) / invAmount
       const daysDiff   = inv.date && tx.date
         ? Math.abs(new Date(tx.date).getTime() - new Date(inv.date).getTime()) / 86400000
         : 999
 
+      // Exclude matches with >10% diff (5-10% will be flagged below)
       let score = 0
-      if (amountDiff < 0.01)      score += 50
-      else if (amountDiff < 0.05) score += 35
-      else if (amountDiff < 0.10) score += 15
+      if (amountDiff < 0.01)       score += 50
+      else if (amountDiff < 0.05)  score += 35
+      else if (amountDiff < 0.10)  score += 15
       else continue
 
       if (daysDiff <= 1)       score += 30
@@ -173,28 +309,34 @@ async function autoReconcile(periodId: number) {
         else if (vendor.split(' ').some((w: string) => w.length > 3 && desc.includes(w))) score += 10
       }
 
-      if (score > bestScore) {
-        bestScore = score
-        bestMatch = tx
-      }
+      if (score > bestScore) { bestScore = score; bestMatch = { tx, amountDiff } }
     }
 
     if (!bestMatch) continue
 
+    const { tx: matchedTx, amountDiff } = bestMatch
     const confidence = bestScore >= 65 ? 'high' : bestScore >= 40 ? 'medium' : 'low'
     if (confidence === 'low') continue
 
-    const status = confidence === 'high' ? 'matched' : 'proposed'
+    // >5% discrepancy → flagged regardless of confidence
+    const isFlagged = amountDiff > DISCREPANCY_FLAG_THRESHOLD
+    const status = isFlagged ? 'flagged' : confidence === 'high' ? 'matched' : 'proposed'
 
     await query(
       "UPDATE invoices SET status=$1, matched_bank_id=$2 WHERE id=$3",
-      [status, bestMatch.id, inv.id]
+      [status, matchedTx.id, inv.id]
     )
     await query(
-      "UPDATE bank_transactions SET status=$1, matched_invoice_id=$2 WHERE id=$3",
-      [status, inv.id, bestMatch.id]
+      "UPDATE bank_transactions SET status=$1, matched_invoice_id=$2, discrepancy_pct=$3 WHERE id=$4",
+      [status, inv.id, isFlagged ? (amountDiff * 100).toFixed(4) : null, matchedTx.id]
     )
 
-    bankTxs.rows = bankTxs.rows.filter((tx: any) => tx.id !== bestMatch.id)
+    if (isFlagged) {
+      console.warn(
+        `[autoReconcile] Flagged match: invoice ${inv.id} (${invAmount} USD) ↔ tx ${matchedTx.id} (${parseFloat(matchedTx.amount_usd || matchedTx.amount)} USD) — ${(amountDiff * 100).toFixed(1)}% discrepancy`
+      )
+    }
+
+    bankTxs.rows = bankTxs.rows.filter((tx: any) => tx.id !== matchedTx.id)
   }
 }

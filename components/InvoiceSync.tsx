@@ -11,8 +11,10 @@ interface ExtractedInvoice {
   fileId: string
   fileName: string
   status: 'pending' | 'extracting' | 'done' | 'error' | 'exists'
+  dbId?: number
   data?: any
   error?: string
+  saving?: boolean
 }
 
 export default function InvoiceSync({ periodId, monthLabel, onSync }: {
@@ -54,6 +56,7 @@ export default function InvoiceSync({ periodId, monthLabel, onSync }: {
         status: result.status === 'error' ? 'error'
               : result.status === 'already_exists' ? 'exists'
               : 'done',
+        dbId:  result.id,
         data:  result.data,
         error: result.error
       } : i
@@ -68,6 +71,22 @@ export default function InvoiceSync({ periodId, monthLabel, onSync }: {
     }
     setSyncing(false)
     onSync()
+  }
+
+  async function saveField(inv: ExtractedInvoice, field: string, value: string) {
+    if (!inv.dbId) return
+    setInvoices(prev => prev.map(i => i.fileId === inv.fileId ? { ...i, saving: true } : i))
+    const body: any = { id: inv.dbId }
+    if (field === 'amount')  body.amount      = parseFloat(value) || 0
+    if (field === 'vendor')  body.vendor      = value
+    if (field === 'date')    body.date        = value
+    if (field === 'account') body.accountName = value
+    await fetch('/api/invoices', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    setInvoices(prev => prev.map(i =>
+      i.fileId === inv.fileId
+        ? { ...i, saving: false, data: { ...i.data, [field === 'account' ? 'suggested_account' : field]: field === 'amount' ? parseFloat(value) || 0 : value } }
+        : i
+    ))
   }
 
   const statusIcon = (s: ExtractedInvoice['status']) =>
@@ -146,13 +165,46 @@ export default function InvoiceSync({ periodId, monthLabel, onSync }: {
                   <td className={`px-4 py-3 font-mono text-base ${statusColor(inv.status)}`}>
                     {statusIcon(inv.status)}
                   </td>
-                  <td className="px-4 py-3 text-narra-ink max-w-xs truncate">{inv.fileName}</td>
-                  <td className="px-4 py-3 text-narra-muted">{inv.data?.vendor || '—'}</td>
-                  <td className="px-4 py-3 text-narra-muted">{inv.data?.date || '—'}</td>
-                  <td className="px-4 py-3 text-right font-medium text-narra-dark">
-                    {inv.data?.amount
-                      ? `${inv.data.currency || 'USD'} ${Number(inv.data.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}`
-                      : '—'}
+                  <td className="px-4 py-3 text-narra-ink max-w-xs truncate text-xs">{inv.fileName}</td>
+                  <td className="px-4 py-3">
+                    {inv.dbId ? (
+                      <input
+                        defaultValue={inv.data?.vendor || ''}
+                        onBlur={e => { if (e.target.value !== (inv.data?.vendor || '')) saveField(inv, 'vendor', e.target.value) }}
+                        className="bg-transparent outline-none border-b border-transparent focus:border-narra-muted w-32 text-narra-muted text-sm"
+                        placeholder="—"
+                      />
+                    ) : <span className="text-narra-muted">{inv.data?.vendor || '—'}</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    {inv.dbId ? (
+                      <input
+                        defaultValue={inv.data?.date || ''}
+                        onBlur={e => { if (e.target.value !== (inv.data?.date || '')) saveField(inv, 'date', e.target.value) }}
+                        className="bg-transparent outline-none border-b border-transparent focus:border-narra-muted w-28 text-narra-muted text-sm"
+                        placeholder="YYYY-MM-DD"
+                      />
+                    ) : <span className="text-narra-muted">{inv.data?.date || '—'}</span>}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {inv.dbId ? (
+                      <div className="flex items-center justify-end gap-1">
+                        <span className="text-narra-muted text-xs">{inv.data?.currency || 'USD'}</span>
+                        <input
+                          type="number"
+                          defaultValue={inv.data?.amount || ''}
+                          onBlur={e => { if (parseFloat(e.target.value) !== inv.data?.amount) saveField(inv, 'amount', e.target.value) }}
+                          className="bg-transparent outline-none border-b border-transparent focus:border-narra-green text-right w-24 font-medium text-narra-dark text-sm"
+                          placeholder="0.00"
+                          step="0.01"
+                        />
+                        {inv.saving && <span className="text-narra-muted text-xs">saving…</span>}
+                      </div>
+                    ) : (
+                      <span className="text-narra-muted">
+                        {inv.data?.amount ? `${inv.data.currency || 'USD'} ${Number(inv.data.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—'}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-narra-muted text-xs">{inv.data?.suggested_account || '—'}</td>
                   <td className="px-4 py-3">

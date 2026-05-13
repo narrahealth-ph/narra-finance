@@ -86,34 +86,65 @@ function buildGLCSV(gl: any, period: string, bs: any): string {
 
 function buildBSCSV(bs: any, period: string): string {
   const [month, year] = period.split('_')
+  const endDate = bs.period?.end_date?.split('T')[0] || `${year}-12-31`
+
+  const safe = (v: number) => (v < 0 ? `"(${fmt(Math.abs(v))})"` : fmt(v))
+
   const rows: string[][] = [
     ['Report Name', 'Balance Sheet'],
     ['Company Name', 'NARRA HEALTH PTE. LTD.'],
     ['Start Date', `${year}-01-01`],
-    ['End Date',   `${year}-12-31`],
+    ['End Date', endDate],
     ['', ''],
-    ['Account', year],
+    ['Account', `${month} ${year}`],
+    // ── Current Assets ──
     ['Current Assets', fmt(bs.totalCurrentAssets || 0)],
     ['600 - Accounts Receivable', fmt(bs.arTotal || 0)],
     ['610 - Prepayments', fmt(bs.prepayments || 0)],
-    ['BANK Sleek Business Account SGD', fmt(bs.cashClosing || 0)],
-    ['SBA - USD', fmt(bs.cashUSD || 0)],
-    ['Non-current assets', fmt(bs.intangibleAssets || 0)],
-    ['670 - Intangible Asset', fmt(bs.intangibleAssets || 0)],
+    ...Object.entries(bs.cashByAccount || {}).map(([acct, info]: [string, any]) =>
+      [`BANK ${acct}`, fmt(info.amount)]
+    ),
+    [`'Total Current Assets'`, fmt(bs.totalCurrentAssets || 0)],
+    ['', ''],
+    // ── Non-current Assets ──
+    ['Non-current Assets', fmt(bs.totalNonCurrentAssets || 0)],
+    ...(bs.fixedAssets > 0        ? [['Fixed Assets', fmt(bs.fixedAssets)]] : []),
+    ...(bs.intangibleAssets > 0   ? [['670 - Intangible Asset', fmt(bs.intangibleAssets)]] : []),
+    [`'Total Non-current Assets'`, fmt(bs.totalNonCurrentAssets || 0)],
+    ['', ''],
     [`'Total Asset (Debit)'`, fmt(bs.totalAssets || 0)],
     ['', ''],
-    ['Current Liabilities', fmt(bs.totalLiabilities || 0)],
+    // ── Current Liabilities ──
+    ['Current Liabilities', fmt(bs.totalCurrentLiabilities || 0)],
     ['800 - Accounts Payable', fmt(bs.accountsPayable || 0)],
+    ...(bs.deferredRevenue > 0    ? [['Deferred Revenue', fmt(bs.deferredRevenue)]] : []),
+    ...(bs.director835 > 0        ? [['835 - Director Current Account', fmt(bs.director835)]] : []),
+    ...(bs.director840 > 0        ? [['840 - Director Current Account', fmt(bs.director840)]] : []),
+    ...(bs.director842 > 0        ? [['842 - Director Current Account', fmt(bs.director842)]] : []),
+    ...(bs.incomeTax > 0          ? [['860 - Income Tax Payable', fmt(bs.incomeTax)]] : []),
+    ...(bs.gstPayable > 0         ? [['GST Payable', fmt(bs.gstPayable)]] : []),
+    [`'Total Current Liabilities'`, fmt(bs.totalCurrentLiabilities || 0)],
+    ['', ''],
+    // ── Non-current Liabilities ──
+    ['Non-current Liabilities', fmt(bs.totalNonCurrentLiabilities || 0)],
+    ...(bs.loans > 0              ? [['851 - Loans', fmt(bs.loans)]] : []),
+    ...(bs.investment852 > 0      ? [['852 - Founder Investment', fmt(bs.investment852)]] : []),
+    ...(bs.investment853 > 0      ? [['853 - Founder Investment', fmt(bs.investment853)]] : []),
+    [`'Total Non-current Liabilities'`, fmt(bs.totalNonCurrentLiabilities || 0)],
     [`'Total Liability (Credit)'`, fmt(bs.totalLiabilities || 0)],
     ['', ''],
+    // ── Equity ──
     ['Equity', fmt(bs.totalEquity || 0)],
-    ['920 - Retained Earnings', fmt(bs.retainedEarnings || 0)],
-    [`'Total Equity (Credit)'`, fmt(bs.totalEquity || 0)],
+    ['900 - Share Capital', fmt(bs.shareCapital || 0)],
+    ['920 - Retained Earnings', safe(bs.retainedEarnings || 0)],
+    [`'Provisional Profit / Loss (Credit)'`, safe(bs.provisionalPL || 0)],
+    [`'Total Equity (Credit)'`, safe(bs.totalEquity || 0)],
     ['', ''],
-    [`'Provisional Profit / Loss (Credit)'`, bs.retainedEarnings < 0 ? `(${fmt(bs.retainedEarnings)})` : fmt(bs.retainedEarnings)],
     [`'Total (Credit)'`, fmt(bs.totalAssets || 0)],
+    ['', ''],
+    ['Balance Check (Assets = Liabilities + Equity)', bs.balanceCheck ? 'BALANCED' : 'OUT OF BALANCE'],
   ]
-  return rows.map(r => r.join(',')).join('\n')
+  return rows.map(r => r.map(c => (String(c).includes(',') && !String(c).startsWith('"')) ? `"${c}"` : c).join(',')).join('\n')
 }
 
 function buildPLCSV(pl: any, period: string): string {
@@ -300,10 +331,17 @@ export default function ReportsPanel({ data, loading, period }: { data: any; loa
       {/* Balance Sheet */}
       {tab === 'bs' && bs && (
         <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
-          <div className="px-6 py-4 border-b border-narra-border bg-narra-dark text-white">
-            <div className="text-xs text-white/40 uppercase tracking-widest mb-1">NARRA HEALTH PTE. LTD.</div>
-            <h3 className="font-heading font-semibold text-white">Balance Sheet</h3>
-            <p className="text-xs text-white/50 mt-0.5">As at end of {period.replace('_', ' ')}</p>
+          <div className="px-6 py-4 border-b border-narra-border bg-narra-dark text-white flex justify-between items-start">
+            <div>
+              <div className="text-xs text-white/40 uppercase tracking-widest mb-1">NARRA HEALTH PTE. LTD.</div>
+              <h3 className="font-heading font-semibold text-white">Balance Sheet</h3>
+              <p className="text-xs text-white/50 mt-0.5">As at end of {period.replace('_', ' ')}</p>
+            </div>
+            {!bs.balanceCheck && (
+              <div className="bg-red-500/20 text-red-300 text-xs px-3 py-1.5 rounded-lg font-body">
+                ⚠ Out of balance — check manual entries
+              </div>
+            )}
           </div>
           <table className="w-full text-sm">
             <thead>
@@ -313,36 +351,55 @@ export default function ReportsPanel({ data, loading, period }: { data: any; loa
               </tr>
             </thead>
             <tbody>
-              {/* Current Assets */}
+              {/* ── Current Assets ── */}
               <tr className="bg-narra-light/40">
                 <td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider">
-                  Current Assets — ${fmt(bs.totalCurrentAssets || (bs.cashClosing + bs.arTotal + bs.prepayments))}
+                  Current Assets — ${fmt(bs.totalCurrentAssets || 0)}
                 </td>
               </tr>
-              {[
-                { label: '600 - Accounts Receivable', val: bs.arTotal },
-                { label: '610 - Prepayments',         val: bs.prepayments },
-                { label: 'BANK Sleek Business Account SGD', val: bs.cashClosing },
-                ...(bs.cashUSD ? [{ label: 'SBA - USD', val: bs.cashUSD }] : []),
-              ].filter(r => r.val > 0).map(r => (
-                <tr key={r.label} className="border-t border-narra-border/50 hover:bg-narra-surface">
-                  <td className="px-6 py-3 text-narra-ink pl-10">{r.label}</td>
-                  <td className="px-6 py-3 text-right font-medium">{fmt(r.val)}</td>
+              {Object.entries(bs.cashByAccount || {}).map(([acct, info]: [string, any]) => (
+                <tr key={acct} className="border-t border-narra-border/50 hover:bg-narra-surface">
+                  <td className="px-6 py-3 text-narra-ink pl-10">BANK {acct}</td>
+                  <td className="px-6 py-3 text-right font-medium">{fmt(info.amount)}</td>
                 </tr>
               ))}
+              {bs.arTotal > 0 && (
+                <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                  <td className="px-6 py-3 text-narra-ink pl-10">600 - Accounts Receivable</td>
+                  <td className="px-6 py-3 text-right font-medium">{fmt(bs.arTotal)}</td>
+                </tr>
+              )}
+              {bs.prepayments > 0 && (
+                <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                  <td className="px-6 py-3 text-narra-ink pl-10">610 - Prepayments</td>
+                  <td className="px-6 py-3 text-right font-medium">{fmt(bs.prepayments)}</td>
+                </tr>
+              )}
               <tr className="border-t border-narra-border bg-narra-surface">
                 <td className="px-6 py-3 font-semibold text-narra-dark">Total Current Assets</td>
                 <td className="px-6 py-3 text-right font-semibold">{fmt(bs.totalCurrentAssets || 0)}</td>
               </tr>
 
-              {/* Non-current Assets */}
-              {bs.intangibleAssets > 0 && <>
+              {/* ── Non-current Assets ── */}
+              {bs.totalNonCurrentAssets > 0 && <>
                 <tr className="bg-narra-light/40">
                   <td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider pt-3">Non-current Assets</td>
                 </tr>
-                <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
-                  <td className="px-6 py-3 text-narra-ink pl-10">670 - Intangible Asset</td>
-                  <td className="px-6 py-3 text-right font-medium">{fmt(bs.intangibleAssets)}</td>
+                {bs.fixedAssets > 0 && (
+                  <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                    <td className="px-6 py-3 text-narra-ink pl-10">Fixed Assets</td>
+                    <td className="px-6 py-3 text-right font-medium">{fmt(bs.fixedAssets)}</td>
+                  </tr>
+                )}
+                {bs.intangibleAssets > 0 && (
+                  <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                    <td className="px-6 py-3 text-narra-ink pl-10">670 - Intangible Asset</td>
+                    <td className="px-6 py-3 text-right font-medium">{fmt(bs.intangibleAssets)}</td>
+                  </tr>
+                )}
+                <tr className="border-t border-narra-border bg-narra-surface">
+                  <td className="px-6 py-3 font-semibold text-narra-dark">Total Non-current Assets</td>
+                  <td className="px-6 py-3 text-right font-semibold">{fmt(bs.totalNonCurrentAssets)}</td>
                 </tr>
               </>}
 
@@ -351,45 +408,130 @@ export default function ReportsPanel({ data, loading, period }: { data: any; loa
                 <td className="px-6 py-4 text-right font-heading font-bold">{fmt(bs.totalAssets)}</td>
               </tr>
 
-              {/* Liabilities */}
+              {/* ── Current Liabilities ── */}
               <tr className="bg-narra-light/40">
                 <td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider pt-3">Current Liabilities</td>
               </tr>
-              <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
-                <td className="px-6 py-3 text-narra-ink pl-10">800 - Accounts Payable</td>
-                <td className="px-6 py-3 text-right font-medium">{fmt(bs.accountsPayable || 0)}</td>
+              {bs.accountsPayable > 0 && (
+                <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                  <td className="px-6 py-3 text-narra-ink pl-10">800 - Accounts Payable</td>
+                  <td className="px-6 py-3 text-right font-medium">{fmt(bs.accountsPayable)}</td>
+                </tr>
+              )}
+              {bs.deferredRevenue > 0 && (
+                <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                  <td className="px-6 py-3 text-narra-ink pl-10">Deferred Revenue</td>
+                  <td className="px-6 py-3 text-right font-medium">{fmt(bs.deferredRevenue)}</td>
+                </tr>
+              )}
+              {bs.director835 > 0 && (
+                <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                  <td className="px-6 py-3 text-narra-ink pl-10">835 - Director Current Account</td>
+                  <td className="px-6 py-3 text-right font-medium">{fmt(bs.director835)}</td>
+                </tr>
+              )}
+              {bs.director840 > 0 && (
+                <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                  <td className="px-6 py-3 text-narra-ink pl-10">840 - Director Current Account</td>
+                  <td className="px-6 py-3 text-right font-medium">{fmt(bs.director840)}</td>
+                </tr>
+              )}
+              {bs.director842 > 0 && (
+                <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                  <td className="px-6 py-3 text-narra-ink pl-10">842 - Director Current Account</td>
+                  <td className="px-6 py-3 text-right font-medium">{fmt(bs.director842)}</td>
+                </tr>
+              )}
+              {bs.incomeTax > 0 && (
+                <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                  <td className="px-6 py-3 text-narra-ink pl-10">860 - Income Tax Payable</td>
+                  <td className="px-6 py-3 text-right font-medium">{fmt(bs.incomeTax)}</td>
+                </tr>
+              )}
+              {bs.gstPayable > 0 && (
+                <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                  <td className="px-6 py-3 text-narra-ink pl-10">GST Payable</td>
+                  <td className="px-6 py-3 text-right font-medium">{fmt(bs.gstPayable)}</td>
+                </tr>
+              )}
+              <tr className="border-t border-narra-border bg-narra-surface">
+                <td className="px-6 py-3 font-semibold text-narra-dark">Total Current Liabilities</td>
+                <td className="px-6 py-3 text-right font-semibold">{fmt(bs.totalCurrentLiabilities || 0)}</td>
               </tr>
+
+              {/* ── Non-current Liabilities ── */}
+              {bs.totalNonCurrentLiabilities > 0 && <>
+                <tr className="bg-narra-light/40">
+                  <td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider pt-3">Non-current Liabilities</td>
+                </tr>
+                {bs.loans > 0 && (
+                  <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                    <td className="px-6 py-3 text-narra-ink pl-10">851 - Loans</td>
+                    <td className="px-6 py-3 text-right font-medium">{fmt(bs.loans)}</td>
+                  </tr>
+                )}
+                {bs.investment852 > 0 && (
+                  <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                    <td className="px-6 py-3 text-narra-ink pl-10">852 - Founder Investment</td>
+                    <td className="px-6 py-3 text-right font-medium">{fmt(bs.investment852)}</td>
+                  </tr>
+                )}
+                {bs.investment853 > 0 && (
+                  <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                    <td className="px-6 py-3 text-narra-ink pl-10">853 - Founder Investment</td>
+                    <td className="px-6 py-3 text-right font-medium">{fmt(bs.investment853)}</td>
+                  </tr>
+                )}
+                <tr className="border-t border-narra-border bg-narra-surface">
+                  <td className="px-6 py-3 font-semibold text-narra-dark">Total Non-current Liabilities</td>
+                  <td className="px-6 py-3 text-right font-semibold">{fmt(bs.totalNonCurrentLiabilities)}</td>
+                </tr>
+              </>}
+
               <tr className="border-t border-narra-border bg-narra-surface">
                 <td className="px-6 py-3 font-semibold text-narra-dark">Total Liability (Credit)</td>
                 <td className="px-6 py-3 text-right font-semibold">{fmt(bs.totalLiabilities || 0)}</td>
               </tr>
 
-              {/* Equity */}
+              {/* ── Equity ── */}
               <tr className="bg-narra-light/40">
                 <td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider pt-3">Equity</td>
               </tr>
               <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                <td className="px-6 py-3 text-narra-ink pl-10">900 - Share Capital</td>
+                <td className="px-6 py-3 text-right font-medium">{fmt(bs.shareCapital || 0)}</td>
+              </tr>
+              <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
                 <td className="px-6 py-3 text-narra-ink pl-10">920 - Retained Earnings</td>
-                <td className={`px-6 py-3 text-right font-medium ${bs.retainedEarnings >= 0 ? '' : 'text-red-600'}`}>
-                  {bs.retainedEarnings < 0 ? '(' : ''}{fmt(Math.abs(bs.retainedEarnings))}{bs.retainedEarnings < 0 ? ')' : ''}
+                <td className={`px-6 py-3 text-right font-medium ${(bs.retainedEarnings || 0) >= 0 ? '' : 'text-red-600'}`}>
+                  {(bs.retainedEarnings || 0) < 0 ? '(' : ''}{fmt(Math.abs(bs.retainedEarnings || 0))}{(bs.retainedEarnings || 0) < 0 ? ')' : ''}
+                </td>
+              </tr>
+              <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                <td className="px-6 py-3 text-narra-ink pl-10">Provisional Profit / Loss (Credit)</td>
+                <td className={`px-6 py-3 text-right font-medium ${(bs.provisionalPL || 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                  {(bs.provisionalPL || 0) < 0 ? '(' : ''}{fmt(Math.abs(bs.provisionalPL || 0))}{(bs.provisionalPL || 0) < 0 ? ')' : ''}
                 </td>
               </tr>
               <tr className="border-t border-narra-border bg-narra-surface">
                 <td className="px-6 py-3 font-semibold text-narra-dark">Total Equity (Credit)</td>
-                <td className={`px-6 py-3 text-right font-semibold ${bs.totalEquity >= 0 ? '' : 'text-red-600'}`}>
-                  {bs.totalEquity < 0 ? '(' : ''}{fmt(Math.abs(bs.totalEquity))}{bs.totalEquity < 0 ? ')' : ''}
+                <td className={`px-6 py-3 text-right font-semibold ${(bs.totalEquity || 0) >= 0 ? '' : 'text-red-600'}`}>
+                  {(bs.totalEquity || 0) < 0 ? '(' : ''}{fmt(Math.abs(bs.totalEquity || 0))}{(bs.totalEquity || 0) < 0 ? ')' : ''}
                 </td>
               </tr>
 
-              <tr className="border-t border-narra-border/50">
-                <td className="px-6 py-3 text-narra-ink pl-10">Provisional Profit / Loss (Credit)</td>
-                <td className={`px-6 py-3 text-right font-medium ${(bs.retainedEarnings || 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                  {(bs.retainedEarnings || 0) < 0 ? '(' : ''}{fmt(Math.abs(bs.retainedEarnings || 0))}{(bs.retainedEarnings || 0) < 0 ? ')' : ''}
-                </td>
-              </tr>
               <tr className="border-t-2 border-narra-dark">
                 <td className="px-6 py-4 font-heading font-bold text-narra-dark">Total (Credit)</td>
                 <td className="px-6 py-4 text-right font-heading font-bold">{fmt(bs.totalAssets)}</td>
+              </tr>
+
+              {/* Balance check */}
+              <tr className={`border-t ${bs.balanceCheck ? 'bg-green-50' : 'bg-red-50'}`}>
+                <td colSpan={2} className={`px-6 py-2 text-xs font-body ${bs.balanceCheck ? 'text-green-700' : 'text-red-600'}`}>
+                  {bs.balanceCheck
+                    ? '✓ Balanced — Assets equal Liabilities + Equity'
+                    : '⚠ Out of balance — check manual entries in the Adjustments tab'}
+                </td>
               </tr>
             </tbody>
           </table>

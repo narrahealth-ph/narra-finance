@@ -8,15 +8,19 @@ import ReportsPanel from '@/components/ReportsPanel'
 import MRRPanel from '@/components/MRRPanel'
 import ReconciliationPanel from '@/components/ReconciliationPanel'
 import AIInsights from '@/components/AIInsights'
+import ManualEntriesPanel from '@/components/ManualEntriesPanel'
+import FinancialCloseWizard from '@/components/FinancialCloseWizard'
 
 const MONTHS = [
   'January','February','March','April','May','June',
   'July','August','September','October','November','December'
 ]
 
-const YEARS = ['2025', '2026', '2027']
+// Generate years from 2024 through next year dynamically
+const _cy = new Date().getFullYear()
+const YEARS = Array.from({ length: _cy - 2022 }, (_, i) => String(2024 + i))
 
-type Tab = 'mrr' | 'reconcile' | 'invoices' | 'bank' | 'reports' | 'ai'
+type Tab = 'mrr' | 'reconcile' | 'invoices' | 'bank' | 'reports' | 'entries' | 'ai'
 
 export default function FinancePage() {
   const router = useRouter()
@@ -31,6 +35,9 @@ export default function FinancePage() {
   const [periodId,      setPeriodId]      = useState<number | null>(null)
   const [reportData,    setReportData]    = useState<any>(null)
   const [loadingReport, setLoadingReport] = useState(false)
+  const [showWizard,    setShowWizard]    = useState(false)
+  const [clearing,      setClearing]      = useState(false)
+  const [showClearConfirm, setShowClearConfirm] = useState(false)
 
   useEffect(() => {
     async function ensurePeriod() {
@@ -66,17 +73,36 @@ export default function FinancePage() {
     router.push('/login')
   }
 
+  async function clearPeriod() {
+    if (!periodId) return
+    setClearing(true)
+    setShowClearConfirm(false)
+    await fetch(`/api/periods?periodId=${periodId}`, { method: 'DELETE' })
+    setReportData(null)
+    setClearing(false)
+    await loadReports()
+  }
+
   const tabs: { id: Tab; label: string; icon: string }[] = [
-    { id: 'mrr',       label: 'MRR',           icon: '📈' },
-    { id: 'reconcile', label: 'Reconciliation', icon: '⚖️' },
-    { id: 'invoices',  label: 'Invoices',       icon: '📄' },
-    { id: 'bank',      label: 'Bank Import',    icon: '🏦' },
-    { id: 'reports',   label: 'Reports',        icon: '📊' },
-    { id: 'ai',        label: 'AI Insights',    icon: '✨' },
+    { id: 'mrr',       label: 'MRR',             icon: '📈' },
+    { id: 'reconcile', label: 'Reconciliation',   icon: '⚖️' },
+    { id: 'invoices',  label: 'Invoices',         icon: '📄' },
+    { id: 'bank',      label: 'Bank Import',      icon: '🏦' },
+    { id: 'reports',   label: 'Reports',          icon: '📊' },
+    { id: 'entries',   label: 'Adjustments',      icon: '✏️' },
+    { id: 'ai',        label: 'AI Insights',      icon: '✨' },
   ]
 
   return (
     <div className="min-h-screen flex flex-col bg-narra-surface">
+      {showWizard && (
+        <FinancialCloseWizard
+          reportData={reportData}
+          selectedMonth={selectedMonth}
+          onNavigate={(t) => setTab(t as Tab)}
+          onClose={() => setShowWizard(false)}
+        />
+      )}
 
       {/* Header */}
       <header className="bg-narra-dark text-white px-6 py-3 flex items-center justify-between sticky top-0 z-30">
@@ -150,6 +176,32 @@ export default function FinancePage() {
             </div>
           )}
 
+          {/* Clear period */}
+          {!showClearConfirm ? (
+            <button
+              onClick={() => setShowClearConfirm(true)}
+              disabled={clearing}
+              title="Delete all data for this month and start over"
+              className="text-white/30 hover:text-red-400 text-xs transition-colors px-3 py-1.5 rounded-lg hover:bg-white/10"
+            >
+              {clearing ? 'Clearing…' : 'Clear month'}
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-red-400 text-xs">Clear all {selectedMonthName} data?</span>
+              <button onClick={clearPeriod} className="text-xs px-2 py-1 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all">Yes</button>
+              <button onClick={() => setShowClearConfirm(false)} className="text-xs px-2 py-1 bg-white/10 text-white/60 rounded-lg hover:bg-white/20 transition-all">No</button>
+            </div>
+          )}
+
+          {/* Monthly close wizard */}
+          <button
+            onClick={() => setShowWizard(true)}
+            className="text-narra-green text-xs font-body px-3 py-1.5 rounded-lg border border-narra-green/30 hover:bg-narra-green/10 transition-all"
+          >
+            Close Month
+          </button>
+
           <button onClick={signOut}
             className="text-white/40 hover:text-white text-xs transition-colors px-3 py-1.5 rounded-lg hover:bg-white/10">
             Sign out
@@ -203,6 +255,13 @@ export default function FinancePage() {
             )}
             {tab === 'reports' && (
               <ReportsPanel data={reportData} loading={loadingReport} period={selectedMonth} />
+            )}
+            {tab === 'entries' && (
+              <ManualEntriesPanel
+                periodId={periodId}
+                reportData={reportData}
+                onRefresh={loadReports}
+              />
             )}
             {tab === 'ai' && (
               <AIInsights periodId={periodId} data={reportData} />

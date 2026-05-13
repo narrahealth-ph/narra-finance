@@ -19,11 +19,23 @@ interface MatchedPair {
   confidence: 'high' | 'medium' | 'low'
 }
 
+const ACCOUNT_OPTIONS = [
+  '411 - Professional Fees',
+  '417 - Freight',
+  '426 - Subscriptions',
+  '427 - General Expenses',
+  '452 - Bank Fees',
+  '525 - FX Gains/Losses',
+  'Payroll',
+  'Uncategorized',
+]
+
 interface CostGroup {
   accountCode: string
   total: number
   items: {
     id: number
+    invoiceId: number | null
     date: string
     description: string
     vendor: string
@@ -31,6 +43,7 @@ interface CostGroup {
     currency: string
     status: string
     matchedInvoice: string | null
+    accountCode: string
   }[]
 }
 
@@ -40,15 +53,19 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   onRefresh: () => void
   selectedMonth?: string
 }) {
-  const [loading,       setLoading]       = useState(true)
-  const [costGroups,    setCostGroups]    = useState<CostGroup[]>([])
-  const [matches,       setMatches]       = useState<MatchedPair[]>([])
-  const [unmatched,     setUnmatched]     = useState<any[]>([])
+  const [loading,        setLoading]        = useState(true)
+  const [costGroups,     setCostGroups]     = useState<CostGroup[]>([])
+  const [matches,        setMatches]        = useState<MatchedPair[]>([])
+  const [unmatched,      setUnmatched]      = useState<any[]>([])
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
-  const [totalExpenses, setTotalExpenses] = useState(0)
-  const [totalRevenue,  setTotalRevenue]  = useState(0)
-  const [activeTab,     setActiveTab]     = useState<'overview' | 'matches' | 'unmatched'>('overview')
-  const [unmatching,    setUnmatching]    = useState<number | null>(null)
+  const [totalExpenses,  setTotalExpenses]  = useState(0)
+  const [totalRevenue,   setTotalRevenue]   = useState(0)
+  const [activeTab,      setActiveTab]      = useState<'overview' | 'matches' | 'unmatched'>('overview')
+  const [unmatching,      setUnmatching]      = useState<number | null>(null)
+  const [deletingTx,      setDeletingTx]      = useState<number | null>(null)
+  const [acknowledging,   setAcknowledging]   = useState<number | null>(null)
+  const [acknowledged,    setAcknowledged]    = useState<any[]>([])
+  const [showAcknowledged, setShowAcknowledged] = useState(false)
 
   useEffect(() => {
     if (!periodId) return
@@ -69,7 +86,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
         const groups: CostGroup[] = Object.entries(summary.byAccount || {}).map(([code, group]: any) => ({
           accountCode: code,
           total: group.total,
-          items: group.items,
+          items: group.items.map((item: any) => ({ ...item, accountCode: code })),
         })).sort((a, b) => b.total - a.total)
         setCostGroups(groups)
       }
@@ -80,8 +97,10 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
         const txData = await txRes.json()
         const txs = txData.transactions || []
 
-        const matchedTxs = txs.filter((t: any) => t.status === 'matched' || t.status === 'proposed')
-        const unmatchedTxs = txs.filter((t: any) => t.status === 'unmatched' && t.type === 'expense')
+        const matchedTxs      = txs.filter((t: any) => t.status === 'matched' || t.status === 'proposed')
+        const unmatchedTxs    = txs.filter((t: any) => t.status === 'unmatched' && t.type === 'expense')
+        const acknowledgedTxs = txs.filter((t: any) => t.status === 'acknowledged' && t.type === 'expense')
+        setAcknowledged(acknowledgedTxs)
 
         // Load invoices for matched pairs
         const invRes = await fetch(`/api/invoices?periodId=${periodId}`, { credentials: 'include' })
@@ -157,6 +176,37 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
     } catch (err) {
       console.error('Approve match error:', err)
     }
+  }
+
+  async function retagInvoice(invoiceId: number, accountName: string) {
+    await fetch('/api/invoices', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ id: invoiceId, accountName }),
+    })
+    await loadData()
+  }
+
+  async function acknowledgeTx(txId: number) {
+    setAcknowledging(txId)
+    await fetch('/api/bank', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ action: 'acknowledge', bankTxId: txId }),
+    })
+    setAcknowledging(null)
+    await loadData()
+    onRefresh()
+  }
+
+  async function deleteBankTx(txId: number) {
+    setDeletingTx(txId)
+    await fetch(`/api/bank?txId=${txId}`, { method: 'DELETE', credentials: 'include' })
+    setDeletingTx(null)
+    await loadData()
+    onRefresh()
   }
 
   function toggleGroup(code: string) {
@@ -313,7 +363,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="bg-narra-surface">
-                            {['Date', 'Vendor / Description', 'Amount', 'Invoice', 'Status'].map(h => (
+                            {['Date', 'Vendor / Description', 'Amount', 'Invoice', 'Account', 'Status', ''].map(h => (
                               <th key={h} className={`px-4 py-2 text-xs font-body text-narra-muted uppercase tracking-wider ${h === 'Amount' ? 'text-right' : 'text-left'}`}>{h}</th>
                             ))}
                           </tr>
@@ -343,11 +393,38 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                                 )}
                               </td>
                               <td className="px-4 py-2.5">
+                                {item.invoiceId ? (
+                                  <select
+                                    defaultValue={item.accountCode}
+                                    onChange={e => retagInvoice(item.invoiceId!, e.target.value)}
+                                    className="text-xs bg-narra-light border border-narra-border rounded-lg px-2 py-1 outline-none cursor-pointer text-narra-dark hover:border-narra-muted transition-colors"
+                                    title="Retag this invoice's account category"
+                                  >
+                                    {ACCOUNT_OPTIONS.map(a => <option key={a} value={a}>{a}</option>)}
+                                    {!ACCOUNT_OPTIONS.includes(item.accountCode) && (
+                                      <option value={item.accountCode}>{item.accountCode}</option>
+                                    )}
+                                  </select>
+                                ) : (
+                                  <span className="text-xs text-narra-muted">{item.accountCode}</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-2.5">
                                 <span className={`text-xs px-2 py-0.5 rounded-full ${
                                   item.status === 'matched'   ? 'bg-green-50 text-green-700' :
                                   item.status === 'proposed'  ? 'bg-amber-50 text-amber-700' :
                                   'bg-narra-light text-narra-muted'
                                 }`}>{item.status}</span>
+                              </td>
+                              <td className="px-4 py-2.5">
+                                <button
+                                  onClick={() => deleteBankTx(item.id)}
+                                  disabled={deletingTx === item.id}
+                                  title="Delete this transaction (removes duplicate)"
+                                  className="w-6 h-6 rounded-full bg-red-50 text-red-400 hover:bg-red-500 hover:text-white transition-all text-xs flex items-center justify-center disabled:opacity-30"
+                                >
+                                  {deletingTx === item.id ? '…' : '✕'}
+                                </button>
                               </td>
                             </tr>
                           ))}
@@ -470,7 +547,17 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                               {pair.invoiceFile && <div className="text-xs text-narra-muted truncate max-w-[160px]">{pair.invoiceFile}</div>}
                             </div>
                           ) : (
-                            <span className="text-narra-muted text-xs italic">No invoice on file</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-narra-muted text-xs italic">No invoice on file</span>
+                              <button
+                                onClick={() => acknowledgeTx(pair.bankTxId)}
+                                disabled={acknowledging === pair.bankTxId}
+                                title="I've verified this manually — dismiss the alert"
+                                className="text-xs px-2 py-0.5 bg-narra-light text-narra-muted hover:bg-green-100 hover:text-green-700 rounded-full transition-all disabled:opacity-30"
+                              >
+                                {acknowledging === pair.bankTxId ? '…' : '✓ Dismiss'}
+                              </button>
+                            </div>
                           )}
                         </td>
                         <td className="px-4 py-3 text-xs text-narra-muted">{pair.accountCode}</td>
@@ -510,10 +597,14 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
             <p className="text-xs text-narra-muted">These expenses have no matching invoice — follow up with your team or add the invoice to Drive.</p>
           </div>
 
-          {unmatched.length === 0 ? (
+          {unmatched.length === 0 && acknowledged.length === 0 ? (
             <div className="bg-green-50 border border-green-200 rounded-xl p-8 text-center">
               <div className="text-3xl mb-2">🎉</div>
               <p className="font-heading font-semibold text-green-800">All transactions matched!</p>
+            </div>
+          ) : unmatched.length === 0 && acknowledged.length > 0 ? (
+            <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-center">
+              <p className="font-heading font-semibold text-green-800">All cleared — {acknowledged.length} manually verified</p>
             </div>
           ) : (
             <div className="bg-white border border-amber-200 rounded-xl overflow-hidden">
@@ -533,19 +624,68 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                 <tbody>
                   {unmatched.map((tx: any, i) => (
                     <tr key={i} className="border-t border-amber-100 hover:bg-amber-50/50">
-                      <td className="px-4 py-3 text-amber-700 text-xs whitespace-nowrap">{tx.date}</td>
+                      <td className="px-4 py-3 text-amber-700 text-xs whitespace-nowrap">{String(tx.date).split('T')[0]}</td>
                       <td className="px-4 py-3 text-amber-900 font-medium">{tx.description}</td>
                       <td className="px-4 py-3 text-right font-medium text-amber-900 whitespace-nowrap">
                         {tx.currency} ${parseFloat(tx.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                       </td>
                       <td className="px-4 py-3 text-amber-600 text-xs">{tx.account || '—'}</td>
                       <td className="px-4 py-3">
-                        <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full">Follow up</span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => acknowledgeTx(tx.id)}
+                            disabled={acknowledging === tx.id}
+                            title="I've verified this manually — dismiss the alert"
+                            className="text-xs px-2 py-1 bg-green-50 text-green-700 hover:bg-green-100 rounded-full transition-all disabled:opacity-30 whitespace-nowrap"
+                          >
+                            {acknowledging === tx.id ? '…' : '✓ I see it'}
+                          </button>
+                          <button
+                            onClick={() => deleteBankTx(tx.id)}
+                            disabled={deletingTx === tx.id}
+                            title="Delete — use if this is a duplicate or error"
+                            className="w-6 h-6 rounded-full bg-red-50 text-red-400 hover:bg-red-500 hover:text-white transition-all text-xs flex items-center justify-center disabled:opacity-30"
+                          >
+                            {deletingTx === tx.id ? '…' : '✕'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Acknowledged / manually verified */}
+          {acknowledged.length > 0 && (
+            <div>
+              <button
+                onClick={() => setShowAcknowledged(v => !v)}
+                className="text-xs text-narra-muted hover:text-narra-dark flex items-center gap-1.5 transition-colors"
+              >
+                <span>{showAcknowledged ? '▼' : '▶'}</span>
+                {acknowledged.length} manually verified (acknowledged)
+              </button>
+              {showAcknowledged && (
+                <div className="mt-2 bg-white border border-narra-border rounded-xl overflow-hidden">
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {acknowledged.map((tx: any, i) => (
+                        <tr key={i} className="border-t border-narra-border/40 hover:bg-narra-surface text-narra-muted">
+                          <td className="px-4 py-2.5 text-xs whitespace-nowrap">{String(tx.date).split('T')[0]}</td>
+                          <td className="px-4 py-2.5">{tx.description}</td>
+                          <td className="px-4 py-2.5 text-right text-xs whitespace-nowrap">{tx.currency} ${parseFloat(tx.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+                          <td className="px-4 py-2.5 text-xs">{tx.account || '—'}</td>
+                          <td className="px-4 py-2.5">
+                            <span className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded-full">Verified</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -9,7 +9,7 @@ import { downloadCSV, toCSV } from '@/lib/csv'
 type HistoryPoint = { month: string; confirmed: number; pending: number; costs: number; net: number }
 type PendingInvoice = { invoiceId: string; clientName: string; amount: number; issueDate: string; daysOutstanding: number; billingType: string }
 type PipelineInvoice = { invoiceId: string; clientName: string; amount: number; issueDate: string; billingType: string; notes?: string }
-type Client = { name: string; annualAmount: number; seats: number; type: string; isNew: boolean }
+type Client = { name: string; annualAmount: number; seats: number; billingType: string; isNew: boolean; isPending: boolean; isOneOff: boolean }
 type Cost = { name: string; amount: number }
 
 const DEFAULT_COSTS: Cost[] = [
@@ -87,8 +87,10 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth }: {
             name:         c.name,
             annualAmount: c.annualAmount,
             seats:        0,
-            type:         'direct',
+            billingType:  c.billingType || 'annual',
             isNew:        c.isNew,
+            isPending:    c.isPending || false,
+            isOneOff:     c.isOneOff || false,
           })))
         }
 
@@ -139,7 +141,8 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth }: {
     return amount / 12
   }
 
-  const totalConfirmedMrr = useMemo(() => clients.reduce((s, c) => s + Math.round(c.annualAmount / 12), 0), [clients])
+  // Only count paid recurring clients toward confirmed MRR (one-off excluded from MRR)
+  const totalConfirmedMrr = useMemo(() => clients.filter(c => !c.isPending && !c.isOneOff).reduce((s, c) => s + Math.round(c.annualAmount / 12), 0), [clients])
   const totalPendingMrr   = useMemo(() => pendingInvoices.reduce((s, i) => s + calcMonthly(i.amount, i.billingType), 0), [pendingInvoices])
   const totalCosts        = costs.reduce((s, c) => s + c.amount, 0)
   const netRevenue        = totalConfirmedMrr - totalCosts
@@ -174,7 +177,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth }: {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         year, month: selectedMonth,
-        clients: clients.map(c => ({ name: c.name, monthlyMrr: Math.round(c.annualAmount / 12), isNew: c.isNew })),
+        clients: clients.filter(c => !c.isPending).map(c => ({ name: c.name, monthlyMrr: Math.round(c.annualAmount / 12), isNew: c.isNew })),
         costs: {
           payroll:        costs.find(c => c.name.toLowerCase().includes('payroll'))?.amount || 0,
           subscriptions:  costs.find(c => c.name.toLowerCase().includes('subscriptions'))?.amount || 0,
@@ -381,77 +384,119 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth }: {
               <span className="text-sm font-heading font-medium text-narra-dark">
                 {periodView === 'year' ? `All active clients · ${selectedYear}` : `Active clients · ${selectedMonth?.replace('_', ' ')}`}
               </span>
-              <p className="text-xs text-narra-muted mt-0.5">Pulled live from Google Sheet · 🆕 = new contract this month · ✓ = existing subscription</p>
+              <p className="text-xs text-narra-muted mt-0.5">From outgoing invoice tracker · billing type determines MRR contribution</p>
             </div>
-            <span className="text-xs text-narra-muted">Edit inline · Annual ÷ 12 = monthly</span>
+            <span className="text-xs text-narra-muted">Annual÷12 · Quarterly÷3 · Monthly=full · One-off excluded</span>
           </div>
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-narra-dark text-white">
-                {['Client', 'Annual (USD)', 'MRR (÷12)', 'Status', '% of MRR'].map(h => (
-                  <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'Client' || h === 'Status' ? 'text-left' : 'text-right'}`}>{h}</th>
+                {['Client', 'Billing', 'Invoice Amt', 'MRR', 'Payment', '% of MRR'].map(h => (
+                  <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'Client' || h === 'Billing' || h === 'Payment' ? 'text-left' : 'text-right'}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {clients.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-narra-muted text-sm">
-                  Loading from Google Sheet… if this persists, make sure the sheet is shared with the service account.
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-narra-muted text-sm">
+                  Loading from outgoing invoice tracker…
                 </td></tr>
               ) : clients.map((c, i) => {
-                const mrr = Math.round(c.annualAmount / 12)
-                const pct = totalConfirmedMrr > 0 ? (mrr / totalConfirmedMrr * 100).toFixed(0) : '0'
+                // One-off: annualAmount IS the invoice amount (not ARR); recurring: annualAmount = monthlyMrr*12
+                const mrr        = c.isOneOff ? c.annualAmount : Math.round(c.annualAmount / 12)
+                const invoiceAmt = c.isOneOff ? c.annualAmount
+                                 : c.billingType === 'monthly'  ? mrr
+                                 : c.billingType === 'quarterly' ? mrr * 3
+                                 : c.annualAmount
+                const billingLabel = c.isOneOff ? 'One-off'
+                                   : c.billingType === 'monthly'   ? 'Monthly'
+                                   : c.billingType === 'quarterly'  ? 'Quarterly'
+                                   : 'Annual'
+                const pct = !c.isOneOff && totalConfirmedMrr > 0 ? (mrr / totalConfirmedMrr * 100).toFixed(0) : '—'
                 return (
-                  <tr key={i} className="border-t border-narra-border hover:bg-narra-surface transition-colors">
+                  <tr key={i} className={`border-t border-narra-border hover:bg-narra-surface transition-colors ${c.isPending ? 'opacity-75' : ''}`}>
                     <td className="px-4 py-2.5">
-                      <input value={c.name} onChange={e => setClients(p => p.map((cl, idx) => idx === i ? { ...cl, name: e.target.value } : cl))}
-                        className="bg-transparent outline-none border-b border-transparent focus:border-narra-muted w-36 font-medium text-narra-dark" />
+                      <div className="flex items-center gap-1.5">
+                        {c.isNew && <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">New</span>}
+                        <span className="font-medium text-narra-dark">{c.name}</span>
+                      </div>
                     </td>
-                    <td className="px-4 py-2.5 text-right">
-                      <span className="text-narra-muted text-xs mr-1">$</span>
-                      <input type="number" value={c.annualAmount} onChange={e => setClients(p => p.map((cl, idx) => idx === i ? { ...cl, annualAmount: parseFloat(e.target.value) || 0 } : cl))}
-                        className="bg-transparent outline-none text-right border-b border-transparent focus:border-narra-muted w-24 font-medium text-narra-dark" />
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-medium text-narra-dark">${mrr.toLocaleString()}</td>
                     <td className="px-4 py-2.5">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.isNew ? 'bg-green-100 text-green-700' : 'bg-narra-light text-narra-muted'}`}>
-                        {c.isNew ? '🆕 New' : '✓ Retained'}
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${c.isOneOff ? 'bg-purple-100 text-purple-700' : 'bg-narra-light text-narra-muted'}`}>{billingLabel}</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-narra-dark">${invoiceAmt.toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-right font-medium text-narra-dark">
+                      {c.isOneOff ? <span className="text-purple-700">${mrr.toLocaleString()} this month</span> : `$${mrr.toLocaleString()}/mo`}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.isPending ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+                        {c.isPending ? 'Sent' : 'Paid'}
                       </span>
                     </td>
                     <td className="px-4 py-2.5 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <div className="w-14 h-1.5 bg-narra-light rounded-full overflow-hidden">
-                          <div className="h-full bg-narra-dark rounded-full" style={{ width: `${pct}%` }} />
+                      {c.isOneOff ? <span className="text-xs text-narra-muted italic">non-recurring</span> : (
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="w-14 h-1.5 bg-narra-light rounded-full overflow-hidden">
+                            <div className="h-full bg-narra-dark rounded-full" style={{ width: `${pct}%` }} />
+                          </div>
+                          <span className="text-narra-muted text-xs w-8 text-right">{pct}%</span>
                         </div>
-                        <span className="text-narra-muted text-xs w-8 text-right">{pct}%</span>
-                      </div>
+                      )}
                     </td>
                   </tr>
                 )
               })}
-              {clients.length > 0 && (
-                <tr className="border-t-2 border-narra-dark bg-narra-surface">
-                  <td className="px-4 py-3 font-heading font-bold text-narra-dark">Total Confirmed</td>
-                  <td className="px-4 py-3 text-right font-heading font-bold text-narra-dark">${clients.reduce((s, c) => s + c.annualAmount, 0).toLocaleString()}</td>
-                  <td className="px-4 py-3 text-right font-heading font-bold text-narra-dark">${totalConfirmedMrr.toLocaleString()}</td>
-                  <td /><td />
-                </tr>
-              )}
-              {totalPendingMrr > 0 && (
-                <tr className="border-t border-amber-200 bg-amber-50">
-                  <td className="px-4 py-3 font-medium text-amber-700">+ Pending (sent, not collected)</td>
-                  <td className="px-4 py-3 text-right text-amber-700">${Math.round(totalPendingMrr * 12).toLocaleString()}</td>
-                  <td className="px-4 py-3 text-right font-medium text-amber-700">${Math.round(totalPendingMrr).toLocaleString()}</td>
-                  <td /><td className="px-4 py-3 text-right text-amber-700 text-xs italic">Not in Sheet yet</td>
-                </tr>
-              )}
+              {clients.length > 0 && (() => {
+                const confirmedRecurring = clients.filter(c => !c.isPending && !c.isOneOff)
+                const pendingRecurring   = clients.filter(c => c.isPending && !c.isOneOff)
+                const confirmedOneOff    = clients.filter(c => !c.isPending && c.isOneOff)
+                const pendingOneOff      = clients.filter(c => c.isPending && c.isOneOff)
+                const pendingMrr         = pendingRecurring.reduce((s, c) => s + Math.round(c.annualAmount / 12), 0)
+                const confirmedOneOffTotal = confirmedOneOff.reduce((s, c) => s + c.annualAmount, 0)
+                const pendingOneOffTotal   = pendingOneOff.reduce((s, c) => s + c.annualAmount, 0)
+                return (
+                  <>
+                    <tr className="border-t-2 border-narra-dark bg-narra-surface">
+                      <td className="px-4 py-3 font-heading font-bold text-narra-dark" colSpan={3}>
+                        Confirmed MRR · {confirmedRecurring.length} recurring client{confirmedRecurring.length !== 1 ? 's' : ''} (Paid)
+                      </td>
+                      <td className="px-4 py-3 text-right font-heading font-bold text-narra-dark">${totalConfirmedMrr.toLocaleString()}/mo</td>
+                      <td colSpan={2} />
+                    </tr>
+                    {confirmedOneOffTotal > 0 && (
+                      <tr className="border-t border-purple-200 bg-purple-50">
+                        <td className="px-4 py-3 font-medium text-purple-800" colSpan={3}>
+                          + One-off revenue this month ({confirmedOneOff.length} payment{confirmedOneOff.length !== 1 ? 's' : ''}, Paid)
+                        </td>
+                        <td className="px-4 py-3 text-right font-medium text-purple-800">${confirmedOneOffTotal.toLocaleString()}</td>
+                        <td colSpan={2} />
+                      </tr>
+                    )}
+                    {pendingMrr > 0 && (
+                      <tr className="border-t border-amber-200 bg-amber-50">
+                        <td className="px-4 py-3 font-medium text-amber-700" colSpan={3}>
+                          + Pending recurring · {pendingRecurring.length} invoice{pendingRecurring.length !== 1 ? 's' : ''} sent, not yet paid
+                        </td>
+                        <td className="px-4 py-3 text-right font-medium text-amber-700">${pendingMrr.toLocaleString()}/mo</td>
+                        <td colSpan={2} />
+                      </tr>
+                    )}
+                    {pendingOneOffTotal > 0 && (
+                      <tr className="border-t border-amber-100 bg-amber-50/50">
+                        <td className="px-4 py-3 font-medium text-amber-600" colSpan={3}>
+                          + Pending one-off · {pendingOneOff.length} invoice{pendingOneOff.length !== 1 ? 's' : ''} sent, not yet paid
+                        </td>
+                        <td className="px-4 py-3 text-right font-medium text-amber-600">${pendingOneOffTotal.toLocaleString()}</td>
+                        <td colSpan={2} />
+                      </tr>
+                    )}
+                  </>
+                )
+              })()}
             </tbody>
           </table>
           <div className="px-4 py-3 border-t border-narra-border">
-            <button onClick={() => setClients(p => [...p, { name: 'New Client', annualAmount: 0, seats: 0, type: 'direct', isNew: true }])}
-              className="text-sm text-narra-muted hover:text-narra-dark border border-dashed border-narra-border rounded-lg px-3 py-1.5 transition-all hover:border-narra-muted">
-              + Add client manually
-            </button>
+            <p className="text-xs text-narra-muted">Data from outgoing invoice tracker · sync invoices to refresh</p>
           </div>
         </div>
       )}

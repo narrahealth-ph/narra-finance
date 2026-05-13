@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth'
 import { listMonthFolders, findMonthFolder, listInvoiceFiles, downloadFileAsBase64 } from '@/lib/drive'
 import { extractInvoiceData } from '@/lib/ai'
 import { query } from '@/lib/db'
+import { writeAudit } from '@/lib/audit'
 
 export async function GET(req: NextRequest) {
   const session = await requireRole('finance')
@@ -57,6 +58,16 @@ export async function POST(req: NextRequest) {
   if (!fileId || !fileName) {
     return NextResponse.json({ status: 'error', error: 'fileId and fileName are required' }, { status: 400 })
   }
+
+  // Check period lock
+  if (periodId) {
+    const period = await query('SELECT locked FROM periods WHERE id = $1', [periodId])
+    if (period.rows[0]?.locked) {
+      return NextResponse.json({ status: 'error', error: 'Period is locked — unlock before adding invoices' }, { status: 403 })
+    }
+  }
+
+  const userEmail = (session as any).email || 'unknown'
 
   try {
     // Check if already extracted
@@ -160,6 +171,10 @@ export async function POST(req: NextRequest) {
         extracted.description    || '',
       ]
     )
+
+    await writeAudit('invoices', result.rows[0].id, 'insert', null,
+      { periodId, fileName, vendor: extracted.vendor, amount: extracted.amount, currency: extracted.currency },
+      userEmail)
 
     return NextResponse.json({
       status: 'extracted',

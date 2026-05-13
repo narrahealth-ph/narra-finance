@@ -4,6 +4,7 @@ import { listMonthFolders, findMonthFolder, listInvoiceFiles, downloadFileAsBase
 import { extractInvoiceData } from '@/lib/ai'
 import { query } from '@/lib/db'
 import { writeAudit } from '@/lib/audit'
+import { toUSD } from '@/lib/fx'
 
 export async function GET(req: NextRequest) {
   const session = await requireRole('finance')
@@ -151,6 +152,14 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    // Convert to USD for amount_usd
+    const invoiceCurrency = extracted.currency || 'USD'
+    const invoiceDate     = extracted.date || new Date().toISOString().split('T')[0]
+    const invoiceAmount   = extracted.amount || 0
+    const amountUsd = invoiceCurrency !== 'USD'
+      ? await toUSD(invoiceAmount, invoiceCurrency, invoiceDate)
+      : invoiceAmount
+
     // Save to DB
     const result = await query(
       `INSERT INTO invoices
@@ -162,13 +171,13 @@ export async function POST(req: NextRequest) {
         periodId,
         fileId,
         fileName,
-        extracted.vendor         || 'Unknown',
-        extracted.date           || new Date().toISOString().split('T')[0],
-        extracted.amount         || 0,
-        extracted.currency       || 'USD',
-        extracted.amount         || 0,
+        extracted.vendor            || 'Unknown',
+        invoiceDate,
+        invoiceAmount,
+        invoiceCurrency,
+        amountUsd,
         extracted.suggested_account || '427 - General Expenses',
-        extracted.description    || '',
+        extracted.description       || '',
       ]
     )
 

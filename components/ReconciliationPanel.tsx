@@ -15,8 +15,9 @@ interface MatchedPair {
   invoiceAmount: number | null
   invoiceFile: string | null
   accountCode: string
-  status: 'matched' | 'proposed' | 'unmatched'
+  status: 'matched' | 'proposed' | 'flagged' | 'unmatched'
   confidence: 'high' | 'medium' | 'low'
+  discrepancyPct: number | null
 }
 
 const ACCOUNT_OPTIONS = [
@@ -66,6 +67,9 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   const [acknowledging,   setAcknowledging]   = useState<number | null>(null)
   const [acknowledged,    setAcknowledged]    = useState<any[]>([])
   const [showAcknowledged, setShowAcknowledged] = useState(false)
+  const [allInvoices,     setAllInvoices]     = useState<any[]>([])
+  const [linkingTx,       setLinkingTx]       = useState<number | null>(null)
+  const [reassigning,     setReassigning]     = useState<number | null>(null)
 
   useEffect(() => {
     if (!periodId) return
@@ -97,16 +101,18 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
         const txData = await txRes.json()
         const txs = txData.transactions || []
 
-        const matchedTxs      = txs.filter((t: any) => t.status === 'matched' || t.status === 'proposed')
+        const matchedTxs      = txs.filter((t: any) => t.status === 'matched' || t.status === 'proposed' || t.status === 'flagged')
         const unmatchedTxs    = txs.filter((t: any) => t.status === 'unmatched' && t.type === 'expense')
         const acknowledgedTxs = txs.filter((t: any) => t.status === 'acknowledged' && t.type === 'expense')
         setAcknowledged(acknowledgedTxs)
 
-        // Load invoices for matched pairs
+        // Load invoices for matched pairs + manual assignment
         const invRes = await fetch(`/api/invoices?periodId=${periodId}`, { credentials: 'include' })
         const invData = invRes.ok ? await invRes.json() : { invoices: [] }
+        const invoiceList = invData.invoices || []
+        setAllInvoices(invoiceList)
         const invMap: Record<number, any> = {}
-        for (const inv of (invData.invoices || [])) invMap[inv.matched_bank_id] = inv
+        for (const inv of invoiceList) invMap[inv.matched_bank_id] = inv
 
         const pairs: MatchedPair[] = matchedTxs.map((tx: any) => {
           const inv = invMap[tx.id]
@@ -124,7 +130,8 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
             invoiceFile:     inv?.drive_file_name || null,
             accountCode:     inv?.account_name || tx.account || 'Uncategorized',
             status:          tx.status,
-            confidence:      tx.status === 'matched' ? 'high' : 'medium',
+            confidence:      tx.status === 'matched' ? 'high' : tx.status === 'flagged' ? 'low' : 'medium',
+            discrepancyPct:  tx.discrepancy_pct ? parseFloat(tx.discrepancy_pct) : null,
           }
         })
 
@@ -209,6 +216,25 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
     onRefresh()
   }
 
+  async function reassignInvoice(bankTxId: number, currentInvoiceId: number | null, newInvoiceId: number) {
+    setReassigning(bankTxId)
+    try {
+      await fetch('/api/bank', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action: 'reassign', bankTxId, invoiceId: currentInvoiceId, newInvoiceId }),
+      })
+      setLinkingTx(null)
+      await loadData()
+      onRefresh()
+    } catch (err) {
+      console.error('Reassign error:', err)
+    } finally {
+      setReassigning(null)
+    }
+  }
+
   function toggleGroup(code: string) {
     setExpandedGroups(prev => {
       const next = new Set(prev)
@@ -233,7 +259,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
     downloadCSV(toCSV(rows, ''), `Costs_${selectedMonth}.csv`)
   }
 
-  const proposedMatches = matches.filter(m => m.status === 'proposed')
+  const proposedMatches = matches.filter(m => m.status === 'proposed' || m.status === 'flagged')
   const confirmedMatches = matches.filter(m => m.status === 'matched')
   const netRevenue = totalRevenue - totalExpenses
   const matchRate = (costGroups.flatMap(g => g.items).filter(i => i.matchedInvoice).length /
@@ -459,7 +485,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
       {/* ── MATCHES ── */}
       {activeTab === 'matches' && (
         <div className="space-y-4">
-          {/* Proposed — need review */}
+          {/* Proposed + Flagged — need review */}
           {proposedMatches.length > 0 && (
             <div>
               <h3 className="font-heading font-semibold text-amber-700 mb-3 flex items-center gap-2">
@@ -467,29 +493,35 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
               </h3>
               <div className="space-y-2">
                 {proposedMatches.map((pair, i) => (
-                  <div key={i} className="bg-amber-50 border border-amber-200 rounded-xl overflow-hidden">
+                  <div key={i} className={`border rounded-xl overflow-hidden ${pair.status === 'flagged' ? 'bg-red-50 border-red-300' : 'bg-amber-50 border-amber-200'}`}>
+                    {pair.status === 'flagged' && (
+                      <div className="px-4 py-1.5 bg-red-100 border-b border-red-200 text-xs text-red-700 font-medium">
+                        Amount discrepancy: {pair.discrepancyPct?.toFixed(1)}% — verify before approving
+                      </div>
+                    )}
                     <div className="grid grid-cols-2 gap-0 text-sm">
                       {/* Bank side */}
-                      <div className="px-4 py-3 border-r border-amber-200">
-                        <div className="text-xs text-amber-700 uppercase tracking-wider mb-1 font-body">Bank Transaction</div>
-                        <div className="font-medium text-amber-900">{pair.bankDescription}</div>
-                        <div className="text-amber-700 text-xs mt-0.5">{pair.bankDate} · {pair.bankCurrency} ${pair.bankAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                      <div className={`px-4 py-3 border-r ${pair.status === 'flagged' ? 'border-red-200' : 'border-amber-200'}`}>
+                        <div className={`text-xs uppercase tracking-wider mb-1 font-body ${pair.status === 'flagged' ? 'text-red-700' : 'text-amber-700'}`}>Bank Transaction</div>
+                        <div className={`font-medium ${pair.status === 'flagged' ? 'text-red-900' : 'text-amber-900'}`}>{pair.bankDescription}</div>
+                        <div className={`text-xs mt-0.5 ${pair.status === 'flagged' ? 'text-red-700' : 'text-amber-700'}`}>{pair.bankDate} · {pair.bankCurrency} ${pair.bankAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
                         {pair.bankAccount && <div className="text-amber-600 text-xs">{pair.bankAccount}</div>}
                       </div>
                       {/* Invoice side */}
                       <div className="px-4 py-3">
-                        <div className="text-xs text-amber-700 uppercase tracking-wider mb-1 font-body">Matched Invoice</div>
-                        <div className="font-medium text-amber-900">{pair.invoiceVendor || '—'}</div>
-                        <div className="text-amber-700 text-xs mt-0.5">
+                        <div className={`text-xs uppercase tracking-wider mb-1 font-body ${pair.status === 'flagged' ? 'text-red-700' : 'text-amber-700'}`}>Matched Invoice</div>
+                        <div className={`font-medium ${pair.status === 'flagged' ? 'text-red-900' : 'text-amber-900'}`}>{pair.invoiceVendor || '—'}</div>
+                        <div className={`text-xs mt-0.5 ${pair.status === 'flagged' ? 'text-red-700' : 'text-amber-700'}`}>
                           {pair.invoiceDate} · USD ${pair.invoiceAmount?.toLocaleString('en-US', { minimumFractionDigits: 2 }) || '—'}
                         </div>
                         {pair.invoiceFile && <div className="text-amber-600 text-xs truncate">{pair.invoiceFile}</div>}
                       </div>
                     </div>
                     {/* Actions */}
-                    <div className="px-4 py-2.5 border-t border-amber-200 bg-amber-100/50 flex items-center justify-between">
-                      <span className="text-xs text-amber-700">
+                    <div className={`px-4 py-2.5 border-t flex items-center justify-between ${pair.status === 'flagged' ? 'border-red-200 bg-red-100/50' : 'border-amber-200 bg-amber-100/50'}`}>
+                      <span className={`text-xs ${pair.status === 'flagged' ? 'text-red-700 font-medium' : 'text-amber-700'}`}>
                         Amount diff: ${Math.abs((pair.bankAmount || 0) - (pair.invoiceAmount || 0)).toFixed(2)}
+                        {pair.discrepancyPct && pair.discrepancyPct > 5 ? ` (${pair.discrepancyPct.toFixed(1)}%)` : ''}
                       </span>
                       <div className="flex gap-2">
                         <button
@@ -622,7 +654,10 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                   </tr>
                 </thead>
                 <tbody>
-                  {unmatched.map((tx: any, i) => (
+                  {unmatched.map((tx: any, i) => {
+                    const availableInvoices = allInvoices.filter(inv => inv.status === 'unmatched')
+                    const isLinking = linkingTx === tx.id
+                    return (
                     <tr key={i} className="border-t border-amber-100 hover:bg-amber-50/50">
                       <td className="px-4 py-3 text-amber-700 text-xs whitespace-nowrap">{String(tx.date).split('T')[0]}</td>
                       <td className="px-4 py-3 text-amber-900 font-medium">{tx.description}</td>
@@ -631,27 +666,64 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                       </td>
                       <td className="px-4 py-3 text-amber-600 text-xs">{tx.account || '—'}</td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => acknowledgeTx(tx.id)}
-                            disabled={acknowledging === tx.id}
-                            title="I've verified this manually — dismiss the alert"
-                            className="text-xs px-2 py-1 bg-green-50 text-green-700 hover:bg-green-100 rounded-full transition-all disabled:opacity-30 whitespace-nowrap"
-                          >
-                            {acknowledging === tx.id ? '…' : '✓ I see it'}
-                          </button>
-                          <button
-                            onClick={() => deleteBankTx(tx.id)}
-                            disabled={deletingTx === tx.id}
-                            title="Delete — use if this is a duplicate or error"
-                            className="w-6 h-6 rounded-full bg-red-50 text-red-400 hover:bg-red-500 hover:text-white transition-all text-xs flex items-center justify-center disabled:opacity-30"
-                          >
-                            {deletingTx === tx.id ? '…' : '✕'}
-                          </button>
+                        <div className="flex flex-col gap-1.5">
+                          {/* Invoice picker */}
+                          {isLinking ? (
+                            <div className="flex items-center gap-1.5">
+                              <select
+                                className="text-xs border border-amber-300 rounded-lg px-2 py-1 bg-white outline-none max-w-[200px]"
+                                defaultValue=""
+                                onChange={e => {
+                                  if (e.target.value) reassignInvoice(tx.id, null, parseInt(e.target.value))
+                                }}
+                              >
+                                <option value="">Select invoice…</option>
+                                {availableInvoices.map(inv => (
+                                  <option key={inv.id} value={inv.id}>
+                                    {inv.vendor} · ${parseFloat(inv.amount_usd || inv.amount || 0).toFixed(2)} {inv.currency !== 'USD' ? `(${inv.currency})` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                onClick={() => setLinkingTx(null)}
+                                className="text-xs text-amber-600 hover:text-amber-900"
+                              >Cancel</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              {availableInvoices.length > 0 && (
+                                <button
+                                  onClick={() => setLinkingTx(tx.id)}
+                                  disabled={reassigning === tx.id}
+                                  title="Link to an existing invoice"
+                                  className="text-xs px-2 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-full transition-all disabled:opacity-30 whitespace-nowrap"
+                                >
+                                  {reassigning === tx.id ? '…' : '+ Link invoice'}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => acknowledgeTx(tx.id)}
+                                disabled={acknowledging === tx.id}
+                                title="I've verified this manually — dismiss the alert"
+                                className="text-xs px-2 py-1 bg-green-50 text-green-700 hover:bg-green-100 rounded-full transition-all disabled:opacity-30 whitespace-nowrap"
+                              >
+                                {acknowledging === tx.id ? '…' : '✓ I see it'}
+                              </button>
+                              <button
+                                onClick={() => deleteBankTx(tx.id)}
+                                disabled={deletingTx === tx.id}
+                                title="Delete — use if this is a duplicate or error"
+                                className="w-6 h-6 rounded-full bg-red-50 text-red-400 hover:bg-red-500 hover:text-white transition-all text-xs flex items-center justify-center disabled:opacity-30"
+                              >
+                                {deletingTx === tx.id ? '…' : '✕'}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

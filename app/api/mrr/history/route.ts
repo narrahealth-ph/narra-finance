@@ -19,18 +19,6 @@ const MONTH_COLS: { month: string; col: string; year: number }[] = [
   { month: 'Oct 2025', col: 'N',  year: 2025 },
   { month: 'Nov 2025', col: 'O',  year: 2025 },
   { month: 'Dec 2025', col: 'P',  year: 2025 },
-  { month: 'Jan 2026', col: 'Y',  year: 2026 },
-  { month: 'Feb 2026', col: 'Z',  year: 2026 },
-  { month: 'Mar 2026', col: 'AA', year: 2026 },
-  { month: 'Apr 2026', col: 'AB', year: 2026 },
-  { month: 'May 2026', col: 'AC', year: 2026 },
-  { month: 'Jun 2026', col: 'AD', year: 2026 },
-  { month: 'Jul 2026', col: 'AE', year: 2026 },
-  { month: 'Aug 2026', col: 'AF', year: 2026 },
-  { month: 'Sep 2026', col: 'AG', year: 2026 },
-  { month: 'Oct 2026', col: 'AH', year: 2026 },
-  { month: 'Nov 2026', col: 'AI', year: 2026 },
-  { month: 'Dec 2026', col: 'AJ', year: 2026 },
 ]
 
 function getSheetClient() {
@@ -74,7 +62,7 @@ export async function GET(req: NextRequest) {
     // Read entire sheet up to row 40, all relevant columns
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: MRR_SHEET_ID,
-      range: `'${MRR_TAB}'!A1:AJ40`,
+      range: `'${MRR_TAB}'!A1:S40`,
     })
 
     const allRows = res.data.values || []
@@ -102,15 +90,8 @@ export async function GET(req: NextRequest) {
 
     // ── Cumulative cash position ──────────────────────────────────────────────
     // S37 = closing cash balance end of 2025 (column S = summary column)
-    // We read row 37 col S to get the 2025 closing balance
-    const closing2025 = parseNum(getCell(37, 'S'))
-
-    // Sum all 2026 net revenue months to date
-    const net2026ToDate = history
-      .filter(h => h.year === 2026)
-      .reduce((s, h) => s + h.net, 0)
-
-    const cumulativeCash = closing2025 + net2026ToDate
+    const closing2025    = parseNum(getCell(37, 'S'))
+    const cumulativeCash = closing2025
 
     // Per-client breakdown from outgoing invoice sheet (billing-type-aware)
     // Outgoing invoice columns: [0]=InvoiceID [1]=ClientName [4]=IssueDate [5]=Amount [6]=Status [7]=BillingType [8]=Notes

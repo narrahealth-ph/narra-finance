@@ -286,7 +286,7 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
   }[t])
 
   // Group rows by source file for display
-  const sources = [...new Set(rows.map(r => r.source || 'Unknown'))]
+  const sources = Array.from(new Set(rows.map(r => r.source || 'Unknown')))
 
   return (
     <div className="space-y-6 animate-fade-up">

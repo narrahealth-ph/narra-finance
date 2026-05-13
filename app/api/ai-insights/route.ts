@@ -18,9 +18,9 @@ export async function POST(req: NextRequest) {
   const mrr = await query('SELECT * FROM mrr_entries WHERE period_id = $1', [periodId])
 
   const totalExpenses = invoices.rows.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || 0), 0)
-  const totalRevenue = bankTxs.rows.filter((r: any) => r.type === 'revenue').reduce((s: number, r: any) => s + parseFloat(r.amount || 0), 0)
+  const totalRevenue = bankTxs.rows.filter((r: any) => r.type === 'revenue').reduce((s: number, r: any) => s + parseFloat(r.amount_usd || r.amount || 0), 0)
   const totalMrr = mrr.rows.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || 0), 0)
-  const cashOpening = bankTxs.rows.filter((r: any) => r.type === 'opening').reduce((s: number, r: any) => s + parseFloat(r.amount || 0), 0)
+  const cashOpening = bankTxs.rows.filter((r: any) => r.type === 'opening').reduce((s: number, r: any) => s + parseFloat(r.amount_usd || r.amount || 0), 0)
   const cashBalance = cashOpening + totalRevenue - totalExpenses
   const runway = totalExpenses > 0 ? Math.floor(cashBalance / (totalExpenses)) : 999
 

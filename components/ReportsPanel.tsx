@@ -58,11 +58,12 @@ function buildGLCSV(gl: any, period: string, bs: any): string {
     rows.push([`'Opening'`, '', '0.00', '0.00', '0.00', '', '', '', '', '', '', '', '', '', '', '', ''])
     let bal = 0
     for (const r of gl.revenueRows) {
-      bal += r.amount
+      const amt = parseFloat(r.amount_usd || r.amount || 0)
+      bal += amt
       rows.push([
         r.date || '',
         'BANK Sleek Business Account USD - NARRA HEALTH PTE. LTD.',
-        fmt(r.amount), '0.00', fmt(bal),
+        fmt(amt), '0.00', fmt(bal),
         'Payment Entry', '', '',
         r.description || '',
         'Customer', r.description || '',
@@ -70,14 +71,14 @@ function buildGLCSV(gl: any, period: string, bs: any): string {
         '', '', '',
       ])
     }
-    const revTotal = gl.revenueRows.reduce((s: number, r: any) => s + r.amount, 0)
+    const revTotal = gl.revenueRows.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || r.amount || 0), 0)
     rows.push([`'Total'`, '', fmt(revTotal), '0.00', fmt(revTotal), '', '', '', '', '', '', '', '', '', '', '', ''])
     rows.push([`'Closing (Opening + Total)'`, '', fmt(revTotal), '0.00', fmt(revTotal), '', '', '', '', '', '', '', '', '', '', '', ''])
     rows.push(['', '', '', '', '0.00', '', '', '', '', '', '', '', '', '', '', '', ''])
   }
 
   const grandDebit  = Object.values(gl.expenseByAccount as Record<string, any[]>).flat().reduce((s, i) => s + parseFloat(i.amount_usd || 0), 0)
-    + (gl.revenueRows || []).reduce((s: number, r: any) => s + r.amount, 0)
+    + (gl.revenueRows || []).reduce((s: number, r: any) => s + parseFloat(r.amount_usd || r.amount || 0), 0)
   rows.push([`'Total'`, '', fmt(grandDebit), fmt(grandDebit), '0.00', '', '', '', '', '', '', '', '', '', '', '', ''])
   rows.push([`'Closing (Opening + Total)'`, '', '0.00', '0.00', '0.00', '', '', '', '', '', '', '', '', '', '', '', ''])
 
@@ -307,7 +308,7 @@ export default function ReportsPanel({ data, loading, period }: { data: any; loa
                 {pl.revenueRows.map((r: any, i: number) => (
                   <tr key={i} className="border-t border-narra-border/50 hover:bg-narra-surface">
                     <td className="px-6 py-3 text-narra-ink pl-10">310 - Service Revenue · {r.description}</td>
-                    <td className="px-6 py-3 text-right font-medium text-green-700">{fmt(r.amount)}</td>
+                    <td className="px-6 py-3 text-right font-medium text-green-700">{fmt(parseFloat(r.amount_usd || r.amount || 0))}</td>
                   </tr>
                 ))}
                 <tr className="border-t border-narra-border bg-narra-surface">
@@ -604,7 +605,7 @@ export default function ReportsPanel({ data, loading, period }: { data: any; loa
               {/* Revenue rows */}
               {gl.revenueRows?.length > 0 && (() => {
                 let bal = 0
-                const total = gl.revenueRows.reduce((s: number, r: any) => s + r.amount, 0)
+                const total = gl.revenueRows.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || r.amount || 0), 0)
                 return [
                   <tr key="rev-open" className="bg-narra-light/50 border-t-2 border-narra-dark">
                     <td className="px-4 py-2 text-xs text-narra-muted italic">'Opening'</td>
@@ -613,13 +614,14 @@ export default function ReportsPanel({ data, loading, period }: { data: any; loa
                     <td className="px-4 py-2 text-right text-xs text-narra-muted">0.00</td>
                   </tr>,
                   ...gl.revenueRows.map((r: any, i: number) => {
-                    bal += r.amount
+                    const amt = parseFloat(r.amount_usd || r.amount || 0)
+                    bal += amt
                     return (
                       <tr key={`rev-${i}`} className="border-t border-narra-border/30 hover:bg-narra-surface">
                         <td className="px-4 py-2.5 text-narra-muted text-xs font-mono">{r.date}</td>
                         <td className="px-4 py-2.5 text-narra-ink">{r.description}</td>
                         <td className="px-4 py-2.5 text-right text-narra-muted">0.00</td>
-                        <td className="px-4 py-2.5 text-right font-medium text-green-700">{fmt(r.amount)}</td>
+                        <td className="px-4 py-2.5 text-right font-medium text-green-700">{fmt(amt)}</td>
                         <td className="px-4 py-2.5 text-right font-medium text-narra-dark">{fmt(bal)}</td>
                       </tr>
                     )

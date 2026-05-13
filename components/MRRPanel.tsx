@@ -31,9 +31,6 @@ const FALLBACK_HISTORY: HistoryPoint[] = [
   { month: 'Oct 2025', confirmed: 7640, pending: 0, costs: 7094,  net: 547   },
   { month: 'Nov 2025', confirmed: 7640, pending: 0, costs: 1916,  net: 5724  },
   { month: 'Dec 2025', confirmed: 7640, pending: 0, costs: 6062,  net: 1579  },
-  { month: 'Jan 2026', confirmed: 8185, pending: 0, costs: 4974,  net: 3210  },
-  { month: 'Feb 2026', confirmed: 7682, pending: 0, costs: 3982,  net: 3700  },
-  { month: 'Mar 2026', confirmed: 7776, pending: 0, costs: 6208,  net: 1568  },
 ]
 
 function CustomTooltip({ active, payload, label }: any) {
@@ -51,13 +48,13 @@ function CustomTooltip({ active, payload, label }: any) {
   )
 }
 
-export default function MRRPanel({ periodId, data, onRefresh, selectedMonth }: {
-  periodId: number; data: any; onRefresh: () => void; selectedMonth?: string
+export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, refreshKey }: {
+  periodId: number; data: any; onRefresh: () => void; selectedMonth?: string; refreshKey?: number
 }) {
   const [history,         setHistory]         = useState<HistoryPoint[]>(FALLBACK_HISTORY)
   const [historyLoading,  setHistoryLoading]  = useState(true)
   const [clients,         setClients]         = useState<Client[]>([])
-  const [costs,           setCosts]           = useState<Cost[]>(DEFAULT_COSTS)
+  const [costs,           setCosts]           = useState<Cost[]>([])
   const [pendingInvoices,  setPendingInvoices]  = useState<PendingInvoice[]>([])
   const [pipelineInvoices, setPipelineInvoices] = useState<PipelineInvoice[]>([])
   const [activeTab,        setActiveTab]        = useState<'revenue' | 'costs' | 'pending' | 'pipeline'>('revenue')
@@ -65,7 +62,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth }: {
   const [pushMsg,         setPushMsg]         = useState('')
   const [syncing,         setSyncing]         = useState(false)
   const [syncResult,      setSyncResult]      = useState<any>(null)
-  const [chartView,    setChartView]    = useState<'all' | '2025' | '2026'>('all')
+  const [chartView,    setChartView]    = useState<'all' | '2025'>('all')
   const [periodView,   setPeriodView]   = useState<'month' | 'year'>('month')
   const [yearTotals,   setYearTotals]   = useState<Record<number, { mrr: number; costs: number; net: number }>>({})
   const [cumulativeCash, setCumulativeCash] = useState<number | null>(null)
@@ -75,6 +72,8 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth }: {
   // ── Load history + client breakdown from Google Sheet ──────────────────────
   useEffect(() => {
     setHistoryLoading(true)
+    setClients([])
+    setCosts([])
     fetch(`/api/mrr/history?month=${encodeURIComponent(selectedMonth || '')}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : { history: [], clientBreakdown: [], yearTotals: {} })
       .then(json => {
@@ -97,13 +96,13 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth }: {
         // Year totals for annual view
         if (json.yearTotals) setYearTotals(json.yearTotals)
 
-        // Cumulative cash position (S37 + 2026 net to date)
+        // Cumulative cash position
         if (json.cumulativeCash !== undefined) setCumulativeCash(json.cumulativeCash)
         if (json.closing2025   !== undefined) setClosing2025(json.closing2025)
       })
       .catch(() => {})
       .finally(() => setHistoryLoading(false))
-  }, [selectedMonth]) // re-fetch when month changes so client table updates
+  }, [selectedMonth, refreshKey]) // re-fetch when month changes or after a clear
 
   useEffect(() => {
     if (!periodId) return
@@ -156,7 +155,6 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth }: {
 
   const chartData = useMemo(() => {
     if (chartView === '2025') return history.filter(h => h.month.includes('2025'))
-    if (chartView === '2026') return history.filter(h => h.month.includes('2026'))
     return history
   }, [history, chartView])
 
@@ -330,7 +328,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth }: {
           </div>
           {/* View toggle */}
           <div className="flex bg-narra-surface border border-narra-border rounded-lg overflow-hidden text-xs">
-            {(['all', '2025', '2026'] as const).map(v => (
+            {(['all', '2025'] as const).map(v => (
               <button key={v} onClick={() => setChartView(v)}
                 className={`px-4 py-2 font-body transition-all ${chartView === v ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:text-narra-dark'}`}>
                 {v === 'all' ? 'All Time' : v}

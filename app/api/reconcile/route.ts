@@ -180,8 +180,12 @@ Return ONLY valid JSON, no markdown:
     })
     const text  = response.content[0].type === 'text' ? response.content[0].text : ''
     const clean = text.replace(/```json|```/g, '').trim()
-    const parsed = JSON.parse(clean)
-    return NextResponse.json(parsed)
+    try {
+      const parsed = JSON.parse(clean)
+      return NextResponse.json(parsed)
+    } catch {
+      return NextResponse.json({ error: 'Failed to parse bank PDF response', raw: clean.slice(0, 200) }, { status: 500 })
+    }
   }
 
   // ── action: parse_paypal_image ────────────────────────────────────────────
@@ -209,8 +213,12 @@ Return ONLY valid JSON, no markdown:
     })
     const text  = response.content[0].type === 'text' ? response.content[0].text : ''
     const clean = text.replace(/```json|```/g, '').trim()
-    const parsed = JSON.parse(clean)
-    return NextResponse.json(parsed)
+    try {
+      const parsed = JSON.parse(clean)
+      return NextResponse.json(parsed)
+    } catch {
+      return NextResponse.json({ error: 'Failed to parse PayPal image response', raw: clean.slice(0, 200) }, { status: 500 })
+    }
   }
 
   // ── action: ai_reconcile ──────────────────────────────────────────────────
@@ -289,7 +297,12 @@ Return ONLY valid JSON, no markdown:
 
     const text   = response.content[0].type === 'text' ? response.content[0].text : ''
     const clean  = text.replace(/```json|```/g, '').trim()
-    const result = JSON.parse(clean)
+    let result: any
+    try {
+      result = JSON.parse(clean)
+    } catch {
+      return NextResponse.json({ error: 'AI reconcile returned invalid JSON', raw: clean.slice(0, 200) }, { status: 500 })
+    }
 
     // Save AI result to DB
     await query(

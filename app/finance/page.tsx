@@ -38,13 +38,14 @@ export default function FinancePage() {
   const [showWizard,    setShowWizard]    = useState(false)
   const [clearing,      setClearing]      = useState(false)
   const [showClearConfirm, setShowClearConfirm] = useState(false)
+  const [mrrRefreshKey, setMrrRefreshKey] = useState(0)
 
   useEffect(() => {
     async function ensurePeriod() {
       const monthIdx  = MONTHS.indexOf(selectedMonthName)
       const startDate = `${selectedYear}-${String(monthIdx + 1).padStart(2, '0')}-01`
       const lastDay   = new Date(parseInt(selectedYear), monthIdx + 1, 0).getDate()
-      const endDate   = `${selectedYear}-${String(monthIdx + 1).padStart(2, '00')}-${lastDay}`
+      const endDate   = `${selectedYear}-${String(monthIdx + 1).padStart(2, '0')}-${lastDay}`
 
       const res = await fetch('/api/periods', {
         method: 'POST',
@@ -77,10 +78,19 @@ export default function FinancePage() {
     if (!periodId) return
     setClearing(true)
     setShowClearConfirm(false)
-    await fetch(`/api/periods?periodId=${periodId}`, { method: 'DELETE' })
-    setReportData(null)
-    setClearing(false)
-    await loadReports()
+    try {
+      const res = await fetch(`/api/periods?periodId=${periodId}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        alert(err.error || 'Failed to clear period')
+        return
+      }
+      setReportData(null)
+      setMrrRefreshKey(k => k + 1)
+      await loadReports()
+    } finally {
+      setClearing(false)
+    }
   }
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
@@ -237,6 +247,7 @@ export default function FinancePage() {
                 data={reportData?.mrr}
                 onRefresh={loadReports}
                 selectedMonth={selectedMonth}
+                refreshKey={mrrRefreshKey}
               />
             )}
             {tab === 'reconcile' && (

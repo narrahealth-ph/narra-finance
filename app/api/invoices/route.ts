@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireRole } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { writeAudit } from '@/lib/audit'
+import { toUSD } from '@/lib/fx'
 
 // GET /api/invoices?periodId=1
 // Returns all expense invoices for a period (used by ReconciliationPanel for match display)
@@ -42,16 +43,24 @@ export async function PATCH(req: NextRequest) {
 
   const old = inv.rows[0]
 
+  // Compute amount_usd with FX conversion when amount or currency is being updated
+  let amountUsd: number | null = null
+  if (amount != null) {
+    const effectiveCurrency = currency ?? inv.rows[0].currency ?? 'USD'
+    const effectiveDate     = date ?? inv.rows[0].date ?? new Date().toISOString().split('T')[0]
+    amountUsd = await toUSD(amount, effectiveCurrency, effectiveDate)
+  }
+
   await query(
     `UPDATE invoices SET
        vendor       = COALESCE($2, vendor),
        date         = COALESCE($3, date),
        amount       = COALESCE($4, amount),
-       amount_usd   = COALESCE($4, amount_usd),
+       amount_usd   = COALESCE($7, amount_usd),
        currency     = COALESCE($5, currency),
        account_name = COALESCE($6, account_name)
      WHERE id = $1`,
-    [id, vendor ?? null, date ?? null, amount != null ? amount : null, currency ?? null, accountName ?? null]
+    [id, vendor ?? null, date ?? null, amount != null ? amount : null, currency ?? null, accountName ?? null, amountUsd]
   )
 
   await writeAudit('invoices', id, 'update',

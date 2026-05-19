@@ -79,13 +79,10 @@ function contractEnd(issueDate: Date, billingType: string): Date {
   return end
 }
 
-/** Total active MRR from "All time" rows for a given calendar month */
-/** Returns true only for paid or sent/invoiced statuses */
 function isActiveStatus(status: string): boolean {
   const s = status.toLowerCase().trim()
-  // Whitelist: must explicitly be paid or sent
   return (
-    s.includes('paid') ||        // "Paid", "Fully paid", "Partially paid"
+    s.includes('paid') ||
     s === 'sent' ||
     s === 'invoiced' ||
     s === 'outstanding' ||
@@ -93,16 +90,17 @@ function isActiveStatus(status: string): boolean {
   )
 }
 
-/** Returns true if the invoice is pending (sent but not yet paid) */
 function isPendingStatus(status: string): boolean {
   const s = status.toLowerCase().trim()
-  return !s.includes('paid') // "Fully paid", "Paid" → confirmed; "Sent" etc → pending
+  return !s.includes('paid')
 }
 
 function calcMrrForMonth(invRows: any[][], monthStart: Date, monthEnd: Date): number {
-  const seen = new Set<string>()
+  // Dedup by invoice ID only — a client can have multiple active invoices
+  const seenKeys = new Set<string>()
   let total = 0
   for (const r of invRows) {
+    const invoiceId    = (r[0] || '').trim()
     const clientName   = (r[1] || '').trim()
     const amount       = parseNum((r[5] || '').toString())
     const status       = (r[6] || '').toLowerCase().trim()
@@ -112,16 +110,18 @@ function calcMrrForMonth(invRows: any[][], monthStart: Date, monthEnd: Date): nu
     if (!isActiveStatus(status)) continue
 
     const isOneOff = billingType === 'one-off' || billingType === 'one off' || billingType === 'oneoff'
+    const d = parseDate(issueDateStr)
+    const key = invoiceId || `${clientName.toLowerCase()}|${issueDateStr}|${amount}`
+    if (seenKeys.has(key)) continue
+    seenKeys.add(key)
+
     if (isOneOff) {
-      const d = parseDate(issueDateStr)
       if (!d || d < monthStart || d > monthEnd) continue
       total += amount
     } else {
-      const d = parseDate(issueDateStr)
       if (!d || d > monthEnd) continue
       if (contractEnd(d, billingType) <= monthStart) continue
-      const key = clientName.toLowerCase()
-      if (!seen.has(key)) { seen.add(key); total += calcMonthlyMrr(amount, billingType) }
+      total += calcMonthlyMrr(amount, billingType)
     }
   }
   return Math.round(total)
@@ -144,22 +144,17 @@ export async function GET(req: NextRequest) {
     const mrrRows = mrrRes.data.values || []
     const getCell = (row: number, col: string): any => (mrrRows[row - 1] || [])[colToIndex(col)]
 
-    // Build 2025 history — keep ALL months (don't filter out 0-MRR months) so graph is continuous
+    // Build 2025 history — confirmed MRR from invoice tracker, costs from MRR sheet
+    // (Invoice tracker is the source of truth for revenue; MRR sheet has payroll/subs/costs)
     const history: { month: string; year: number; confirmed: number; pending: number; costs: number; net: number }[] =
       MONTH_COLS.map(({ month, col, year }) => {
-        const confirmed = parseNum(getCell(3, col))
-        const payroll   = parseNum(getCell(29, col))
-        const subs      = parseNum(getCell(30, col))
-        const sleek     = parseNum(getCell(31, col))
-        const costs     = payroll + subs + sleek
-        const net       = parseNum(getCell(37, col)) || (confirmed - costs)
-        return { month, year, confirmed, pending: 0, costs: costs || 0, net: net || 0 }
+        const payroll = parseNum(getCell(29, col))
+        const subs    = parseNum(getCell(30, col))
+        const sleek   = parseNum(getCell(31, col))
+        const costs   = payroll + subs + sleek
+        // confirmed MRR calculated from invoice tracker (filled in after invRows load)
+        return { month, year, confirmed: 0, pending: 0, costs: costs || 0, net: 0 }
       })
-
-    // Always keep Jan 2025 even if zero (costs-only first month)
-    if (!history.some(h => h.month === 'Jan 2025')) {
-      history.unshift({ month: 'Jan 2025', year: 2025, confirmed: 0, pending: 0, costs: 1173, net: -1173 })
-    }
 
     const closing2025    = parseNum(getCell(37, 'S'))
     const cumulativeCash = closing2025
@@ -182,39 +177,32 @@ export async function GET(req: NextRequest) {
       console.error('[mrr/history] Could not read All time tab:', e.message)
     }
 
-    // ── 3. Supplement 2025 months that have 0 confirmed from the MRR sheet ──
-    // Use the invoice sheet to fill gaps (in case the MRR sheet is incomplete)
+    // ── 3. Fill confirmed MRR for all months from invoice tracker ────────────
+    // 2025: fills the confirmed field (costs already set from MRR sheet above)
+    // 2026+: adds new month entries with confirmed from invoice tracker
     if (invRows.length > 0) {
+      // Fill 2025 confirmed from invoice tracker
       for (const pt of history) {
-        if (pt.confirmed === 0 && pt.year === 2025) {
-          const mIdx  = MONTH_NAMES_SHORT.indexOf(pt.month.split(' ')[0])
-          const mStart = new Date(2025, mIdx, 1)
-          const mEnd   = new Date(2025, mIdx + 1, 0)
-          const calc   = calcMrrForMonth(invRows, mStart, mEnd)
-          if (calc > 0) {
-            pt.confirmed = calc
-            pt.net = calc - pt.costs
-          }
-        }
+        const mIdx   = MONTH_NAMES_SHORT.indexOf(pt.month.split(' ')[0])
+        const mStart = new Date(pt.year, mIdx, 1)
+        const mEnd   = new Date(pt.year, mIdx + 1, 0)
+        pt.confirmed = calcMrrForMonth(invRows, mStart, mEnd)
+        pt.net       = pt.confirmed - pt.costs
       }
-    }
 
-    // ── 4. Generate 2026+ history from invoice sheet ──────────────────────────
-    if (invRows.length > 0) {
-      const today        = new Date()
-      const currentYear  = today.getFullYear()
-      const currentMonth = today.getMonth()
-      const maxYear      = Math.max(currentYear, 2026)
+      // Add 2026+ months
+      const today       = new Date()
+      const currentYear = today.getFullYear()
+      const maxYear     = Math.max(currentYear, 2026)
 
       for (let yr = 2026; yr <= maxYear; yr++) {
-        const lastMonth = yr < currentYear ? 11 : currentMonth
+        const lastMonth = yr < currentYear ? 11 : today.getMonth()
         for (let m = 0; m <= lastMonth; m++) {
           const label = `${MONTH_NAMES_SHORT[m]} ${yr}`
-          if (history.some(h => h.month === label)) continue // already have data
-          const monthStart = new Date(yr, m, 1)
-          const monthEnd   = new Date(yr, m + 1, 0)
-          const confirmed  = calcMrrForMonth(invRows, monthStart, monthEnd)
-          // Include even if 0 so graph is continuous
+          if (history.some(h => h.month === label)) continue
+          const mStart    = new Date(yr, m, 1)
+          const mEnd      = new Date(yr, m + 1, 0)
+          const confirmed = calcMrrForMonth(invRows, mStart, mEnd)
           history.push({ month: label, year: yr, confirmed, pending: 0, costs: 0, net: confirmed })
         }
       }

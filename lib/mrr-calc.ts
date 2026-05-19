@@ -46,6 +46,7 @@ export function contractEnd(issueDate: Date, billingType: string): Date {
   if (t === 'quarterly')    end.setMonth(end.getMonth() + 3)
   else if (t === 'monthly') end.setMonth(end.getMonth() + 1)
   else                      end.setMonth(end.getMonth() + 12)
+  end.setDate(1) // normalize to month boundary so Sep 2025 annual expires Sep 1 2026 (active through Aug 2026)
   return end
 }
 

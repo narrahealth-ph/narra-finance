@@ -278,16 +278,33 @@ export async function GET(req: NextRequest) {
 
       console.log(`[mrr/history] ${monthParam}: ${entries.length} active invoice rows`)
 
-      // Sort by issue date ascending for display; newest-first for countedInMrr dedup
+      // Sort newest-first for countedInMrr dedup.
+      // Prefer newest PAID contract per client so that a pending (not-yet-paid) 2026 invoice
+      // does not block a paid 2025 carryover from being counted.
       const byDateDesc = [...entries].sort((a, b) =>
         (parseDate(b.issueDate)?.getTime() || 0) - (parseDate(a.issueDate)?.getTime() || 0)
       )
-      const seenClients = new Set<string>()
-      const countedIds  = new Set<string>()
+      const seenPaidClients   = new Set<string>()
+      const seenAllClients    = new Set<string>()
+      const countedIds        = new Set<string>()
       for (const c of byDateDesc) {
         if (c.isOneOff) { countedIds.add(c.invoiceId || c.issueDate); continue }
         const key = c.name.toLowerCase()
-        if (!seenClients.has(key)) { seenClients.add(key); countedIds.add(c.invoiceId || c.issueDate) }
+        if (!c.isPending) {
+          // Paid contract: mark as counted if no paid contract seen yet for this client
+          if (!seenPaidClients.has(key)) {
+            seenPaidClients.add(key)
+            seenAllClients.add(key)
+            countedIds.add(c.invoiceId || c.issueDate)
+          }
+        } else {
+          // Pending contract: only mark as counted if no contract (paid or pending) seen yet
+          // AND there is no paid contract anywhere in the list for this client
+          if (!seenAllClients.has(key) && !seenPaidClients.has(key)) {
+            seenAllClients.add(key)
+            countedIds.add(c.invoiceId || c.issueDate)
+          }
+        }
       }
 
       // Final list sorted oldest → newest for display

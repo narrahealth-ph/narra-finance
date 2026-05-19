@@ -60,9 +60,16 @@ export function isActiveStatus(status: string): boolean {
   )
 }
 
+export function isPendingStatus(status: string): boolean {
+  const s = status.toLowerCase().trim()
+  return s === 'sent' || s === 'invoiced' || s === 'outstanding' || s === 'due'
+}
+
 export function calcMrrForMonth(invRows: any[][], monthStart: Date, monthEnd: Date): number {
-  const seen = new Set<string>()
-  let total = 0
+  // First pass: collect all active entries for this month
+  type Entry = { key: string; amount: number; billingType: string; issueDate: Date; isPending: boolean; isOneOff: boolean }
+  const active: Entry[] = []
+
   for (const r of invRows) {
     const clientName   = (r[1] || '').trim()
     const amount       = parseNum((r[5] || '').toString())
@@ -73,18 +80,44 @@ export function calcMrrForMonth(invRows: any[][], monthStart: Date, monthEnd: Da
     if (!isActiveStatus(status)) continue
 
     const isOneOff = billingType === 'one-off' || billingType === 'one off' || billingType === 'oneoff'
+    const d = parseInvDate(issueDateStr)
+
     if (isOneOff) {
-      const d = parseInvDate(issueDateStr)
       if (!d || d < monthStart || d > monthEnd) continue
-      total += amount
+      active.push({ key: clientName.toLowerCase(), amount, billingType, issueDate: d, isPending: isPendingStatus(status), isOneOff: true })
     } else {
-      const d = parseInvDate(issueDateStr)
       if (!d || d > monthEnd) continue
       if (contractEnd(d, billingType) <= monthStart) continue
-      const key = clientName.toLowerCase()
-      if (!seen.has(key)) { seen.add(key); total += calcMonthlyMrr(amount, billingType) }
+      active.push({ key: clientName.toLowerCase(), amount, billingType, issueDate: d, isPending: isPendingStatus(status), isOneOff: false })
     }
   }
+
+  // Second pass: sort newest-first, prefer paid contracts in dedup
+  active.sort((a, b) => b.issueDate.getTime() - a.issueDate.getTime())
+
+  const seenPaid = new Set<string>()
+  const seenAll  = new Set<string>()
+  let total = 0
+
+  for (const e of active) {
+    if (e.isOneOff) {
+      total += e.amount
+      continue
+    }
+    if (!e.isPending) {
+      if (!seenPaid.has(e.key)) {
+        seenPaid.add(e.key)
+        seenAll.add(e.key)
+        total += calcMonthlyMrr(e.amount, e.billingType)
+      }
+    } else {
+      if (!seenAll.has(e.key) && !seenPaid.has(e.key)) {
+        seenAll.add(e.key)
+        total += calcMonthlyMrr(e.amount, e.billingType)
+      }
+    }
+  }
+
   return Math.round(total)
 }
 

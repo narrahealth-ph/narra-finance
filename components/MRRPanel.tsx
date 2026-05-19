@@ -70,8 +70,9 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   const [chartView,    setChartView]    = useState<'all' | '2025'>('all')
   const [periodView,   setPeriodView]   = useState<'month' | 'year'>('month')
   const [yearTotals,   setYearTotals]   = useState<Record<number, { mrr: number; costs: number; net: number }>>({})
-  const [cumulativeCash, setCumulativeCash] = useState<number | null>(null)
-  const [closing2025,    setClosing2025]    = useState<number>(0)
+  const [cumulativeCash,    setCumulativeCash]    = useState<number | null>(null)
+  const [closing2025,       setClosing2025]       = useState<number>(0)
+  const [sheetRefreshKey,   setSheetRefreshKey]   = useState(0)
   const selectedYear = selectedMonth?.split('_')[1] || '2026'
 
   // ── Load history + client breakdown from Google Sheet ──────────────────────
@@ -111,7 +112,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
       })
       .catch(() => {})
       .finally(() => setHistoryLoading(false))
-  }, [selectedMonth, refreshKey]) // re-fetch when month changes or after a clear
+  }, [selectedMonth, refreshKey, sheetRefreshKey]) // re-fetch when month changes, after a clear, or manual refresh
 
   useEffect(() => {
     if (!periodId) return
@@ -316,6 +317,13 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
               Full Year
             </button>
           </div>
+          <button
+            onClick={() => setSheetRefreshKey(k => k + 1)}
+            disabled={historyLoading}
+            title="Re-fetch latest data from Google Sheet"
+            className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all disabled:opacity-50">
+            {historyLoading ? '⟳ Loading…' : '↻ Refresh from Sheet'}
+          </button>
           <button onClick={syncInvoices} disabled={syncing || clients.length === 0 || !periodId}
             className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-dark hover:bg-narra-light transition-all disabled:opacity-50"
             title={clients.length === 0 ? 'No clients loaded from invoice tracker yet' : 'Save active client MRR for this period so the P&L uses accrual revenue'}>

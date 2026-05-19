@@ -89,10 +89,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ holdingCompany: res.rows[0] })
   }
 
+  const holdingId    = body.holdingCompanyId ?? body.holding_company_id ?? null
+  const billingType  = body.billingType || body.billing_type || 'annual'
   const res = await query(
     `INSERT INTO clients (name, holding_company_id, distributor, billing_type, notes)
      VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-    [body.name, body.holdingCompanyId || null, body.distributor || null, body.billingType || 'annual', body.notes || null]
+    [body.name, holdingId || null, body.distributor || null, billingType, body.notes || null]
   )
   return NextResponse.json({ client: res.rows[0] })
 }
@@ -109,11 +111,13 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
+  const holdingId   = body.holdingCompanyId ?? body.holding_company_id ?? null
+  const billingType = body.billingType || body.billing_type || 'annual'
   await query(
     `UPDATE clients
      SET name=$1, holding_company_id=$2, distributor=$3, billing_type=$4, notes=$5, active=$6, updated_at=NOW()
      WHERE id=$7`,
-    [body.name, body.holdingCompanyId || null, body.distributor || null, body.billingType || 'annual', body.notes || null, body.active !== false, body.id]
+    [body.name, holdingId || null, body.distributor || null, billingType, body.notes || null, body.active !== false, body.id]
   )
 
   // Sync updated client list to Google Sheet "Clients" tab

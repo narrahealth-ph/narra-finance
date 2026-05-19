@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 interface Step {
   id: number
@@ -10,6 +10,7 @@ interface Step {
   isDone: boolean
   hasIssue?: boolean
   issueLabel?: string
+  manual?: boolean
 }
 
 interface Props {
@@ -17,11 +18,25 @@ interface Props {
   selectedMonth: string
   onNavigate: (tab: string) => void
   onClose: () => void
+  onRefresh: () => Promise<void>
 }
 
-export default function FinancialCloseWizard({ reportData, selectedMonth, onNavigate, onClose }: Props) {
+export default function FinancialCloseWizard({ reportData, selectedMonth, onNavigate, onClose, onRefresh }: Props) {
   const [activeStep,    setActiveStep]    = useState<number | null>(null)
   const [clientCount,   setClientCount]   = useState<number | null>(null)
+  const [refreshing,    setRefreshing]    = useState(false)
+  const storageKey = `wizard-manual-${selectedMonth}`
+  const [manualDone, setManualDone] = useState<Record<number, boolean>>(() => {
+    if (typeof window === 'undefined') return {}
+    try { return JSON.parse(localStorage.getItem(storageKey) || '{}') } catch { return {} }
+  })
+
+  // Refresh report data on open, then poll every 15s
+  useEffect(() => {
+    onRefresh()
+    const interval = setInterval(onRefresh, 15000)
+    return () => clearInterval(interval)
+  }, [onRefresh])
 
   useEffect(() => {
     fetch('/api/clients', { credentials: 'include' })
@@ -29,6 +44,18 @@ export default function FinancialCloseWizard({ reportData, selectedMonth, onNavi
       .then(d => setClientCount((d.clients || []).filter((c: any) => c.active).length))
       .catch(() => setClientCount(0))
   }, [])
+
+  function toggleManual(id: number) {
+    const next = { ...manualDone, [id]: !manualDone[id] }
+    setManualDone(next)
+    localStorage.setItem(storageKey, JSON.stringify(next))
+  }
+
+  async function handleRefresh() {
+    setRefreshing(true)
+    await onRefresh()
+    setRefreshing(false)
+  }
 
   const r = reportData?.reconciliation || {}
   const invoiceCount  = r.totalInvoices  ?? 0
@@ -98,7 +125,8 @@ export default function FinancialCloseWizard({ reportData, selectedMonth, onNavi
       description: 'Go to the Adjustments tab and fill in any manual entries: director amounts owed, income tax payable, GST, investments, or any prepayment schedules.',
       tab: 'entries',
       checkLabel: 'Adjustments reviewed',
-      isDone: false,
+      isDone: !!manualDone[7],
+      manual: true,
     },
     {
       id: 8,
@@ -106,7 +134,8 @@ export default function FinancialCloseWizard({ reportData, selectedMonth, onNavi
       description: 'Go to the Reports tab. Review the P&L, Balance Sheet, and General Ledger. Download all three CSVs — exchange rates used are stamped at the bottom of each file.',
       tab: 'reports',
       checkLabel: 'Reports exported',
-      isDone: false,
+      isDone: !!manualDone[8],
+      manual: true,
     },
   ]
 
@@ -195,20 +224,34 @@ export default function FinancialCloseWizard({ reportData, selectedMonth, onNavi
 
                 {/* Expanded detail */}
                 {isOpen && (
-                  <div className="px-6 pb-4 ml-12">
-                    <p className="text-sm text-narra-muted mb-3 leading-relaxed">{step.description}</p>
-                    <button
-                      onClick={() => goTo(step.tab)}
-                      className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all"
-                    >
-                      Go to {step.tab === 'reconcile' ? 'Reconciliation' :
-                             step.tab === 'invoices'  ? 'Invoices' :
-                             step.tab === 'bank'      ? 'Bank Import' :
-                             step.tab === 'entries'   ? 'Adjustments' :
-                             step.tab === 'mrr'       ? 'MRR' :
-                             step.tab === 'clients'   ? 'Clients' :
-                             'Reports'} →
-                    </button>
+                  <div className="px-6 pb-4 ml-12 flex flex-col gap-3">
+                    <p className="text-sm text-narra-muted leading-relaxed">{step.description}</p>
+                    <div className="flex gap-3 flex-wrap items-center">
+                      <button
+                        onClick={() => goTo(step.tab)}
+                        className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all"
+                      >
+                        Go to {step.tab === 'reconcile' ? 'Reconciliation' :
+                               step.tab === 'invoices'  ? 'Invoices' :
+                               step.tab === 'bank'      ? 'Bank Import' :
+                               step.tab === 'entries'   ? 'Adjustments' :
+                               step.tab === 'mrr'       ? 'MRR' :
+                               step.tab === 'clients'   ? 'Clients' :
+                               'Reports'} →
+                      </button>
+                      {step.manual && (
+                        <button
+                          onClick={() => toggleManual(step.id)}
+                          className={`px-4 py-2 rounded-lg text-sm font-body border transition-all ${
+                            step.isDone
+                              ? 'border-green-300 bg-green-50 text-green-700 hover:bg-red-50 hover:text-red-600 hover:border-red-300'
+                              : 'border-narra-border text-narra-muted hover:text-narra-dark hover:border-narra-muted'
+                          }`}
+                        >
+                          {step.isDone ? '✓ Mark undone' : 'Mark as done'}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -217,10 +260,14 @@ export default function FinancialCloseWizard({ reportData, selectedMonth, onNavi
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-narra-border bg-narra-light/30">
-          <p className="text-xs text-narra-muted text-center">
-            Steps 1–6 track automatically · Steps 7–8 are manual checkpoints
+        <div className="px-6 py-4 border-t border-narra-border bg-narra-light/30 flex items-center justify-between">
+          <p className="text-xs text-narra-muted">
+            Steps 1–6 track automatically · Steps 7–8 tick manually
           </p>
+          <button onClick={handleRefresh} disabled={refreshing}
+            className="text-xs text-narra-muted hover:text-narra-dark border border-narra-border rounded-lg px-3 py-1.5 hover:border-narra-muted transition-all disabled:opacity-50">
+            {refreshing ? 'Refreshing…' : '↻ Refresh'}
+          </button>
         </div>
       </div>
     </div>

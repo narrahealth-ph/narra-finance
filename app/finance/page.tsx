@@ -113,6 +113,7 @@ export default function FinancePage() {
           selectedMonth={selectedMonth}
           onNavigate={(t) => setTab(t as Tab)}
           onClose={() => setShowWizard(false)}
+          onRefresh={loadReports}
         />
       )}
 

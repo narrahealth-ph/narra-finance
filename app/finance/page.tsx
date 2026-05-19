@@ -173,7 +173,7 @@ export default function FinancePage() {
                   ${(reportData.pl?.totalRevenue || 0).toLocaleString()}
                 </div>
                 <div className="text-white/30 text-xs flex items-center gap-1">
-                  Revenue
+                  Gross Revenue
                   {!reportData.pl?.mrrSynced && (
                     <span title="MRR not synced — showing bank deposits. Go to MRR tab and click Sync Revenue to Period for accurate P&L."
                       className="text-amber-400 cursor-help">⚠</span>
@@ -181,10 +181,16 @@ export default function FinancePage() {
                 </div>
               </div>
               <div className="text-center">
-                <div className={`font-heading font-semibold ${(reportData.pl?.netProfit || 0) >= 0 ? 'text-narra-green' : 'text-red-400'}`}>
-                  ${Math.abs(reportData.pl?.netProfit || 0).toLocaleString()}
+                <div className="text-red-400 font-heading font-semibold">
+                  ${(reportData.pl?.totalExpenses || 0).toLocaleString()}
                 </div>
-                <div className="text-white/30 text-xs">{(reportData.pl?.netProfit || 0) >= 0 ? 'Profit' : 'Loss'}</div>
+                <div className="text-white/30 text-xs">Costs</div>
+              </div>
+              <div className="text-center">
+                <div className="text-narra-green font-heading font-semibold">
+                  ${(reportData.pl?.netProfit || 0).toLocaleString()}
+                </div>
+                <div className="text-white/30 text-xs">Net Revenue</div>
               </div>
               <div className="text-center">
                 <div className="text-white font-heading font-semibold">

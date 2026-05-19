@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { google } from 'googleapis'
+import { calcMrrForPeriod } from '@/lib/mrr-calc'
 
 const INVOICE_SHEET_ID = '1qYn8BxBfSNsYMAXeqN84dsoxIbd7pszglt4YDbsJO2k'
 const MONTHS = ['January','February','March','April','May','June',
@@ -62,16 +63,23 @@ export async function GET(req: NextRequest) {
   const totalExpenses = invoices.reduce((s: number, r: any) => s + safeUsd(r), 0)
   const revenueRows   = bankTxs.filter((r: any) => r.type === 'revenue')
 
-  // Revenue: prefer MRR (accrual) when synced, but use bank deposits as a floor.
-  // Using bank deposits as a floor prevents the false-loss scenario where MRR was
-  // only partially synced (e.g. 1 client pushed) and mrrRevenue << actual deposits.
-  // We also surface both numbers so the Reports tab can show them separately.
-  const mrrRevenue  = mrrRows.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || 0), 0)
+  // Revenue: prefer synced mrr_entries (accrual), fall back to invoice sheet calc,
+  // then bank deposits as a last resort.
+  let mrrRevenue  = mrrRows.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || 0), 0)
   const bankRevenue = revenueRows.reduce((s: number, r: any) => s + safeUsd(r), 0)
-  // Use whichever is larger: if MRR is properly synced it will exceed cash deposits
-  // (because accrual recognises annual contracts monthly); if MRR is missing or
-  // partially synced, the bank deposit total is a better approximation than $0.
-  const totalRevenue = Math.max(mrrRevenue, bankRevenue)
+
+  // If MRR hasn't been synced to the DB yet, calculate it live from the invoice sheet
+  // so carryover contracts from prior years are still reflected in the P&L.
+  if (mrrRevenue === 0) {
+    try {
+      mrrRevenue = await calcMrrForPeriod(p.start_date, p.end_date)
+    } catch (e) {
+      console.error('[reports] live MRR calc failed:', e)
+    }
+  }
+
+  // Use whichever is larger to avoid a false loss from partial syncs
+  const totalRevenue  = Math.max(mrrRevenue, bankRevenue)
   const revenueSource = mrrRevenue >= bankRevenue ? 'mrr' : 'bank'
 
   const netProfit = totalRevenue - totalExpenses

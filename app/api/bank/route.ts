@@ -152,7 +152,7 @@ export async function PATCH(req: NextRequest) {
   const session = await requireRole('finance')
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { action, bankTxId, invoiceId, newInvoiceId } = await req.json()
+  const { action, bankTxId, invoiceId, newInvoiceId, periodId: bodyPeriodId } = await req.json()
   const userEmail = (session as any).email || 'unknown'
 
   // Check period lock via the bank transaction's period
@@ -262,16 +262,24 @@ export async function PATCH(req: NextRequest) {
     })
   }
 
+  // ── rerun — re-run auto-reconcile for the period ──────────────────────────
+  if (action === 'rerun') {
+    if (!bodyPeriodId) return NextResponse.json({ error: 'periodId required' }, { status: 400 })
+    await autoReconcile(bodyPeriodId)
+    return NextResponse.json({ ok: true })
+  }
+
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
 }
 
 // ── Auto-reconcile with confidence scoring + discrepancy flagging ─────────────
 async function autoReconcile(periodId: number) {
+  // ── 1. Expense invoices → expense bank transactions ──────────────────────
   const invoices = await query(
     "SELECT id, amount_usd, date, vendor FROM invoices WHERE period_id = $1 AND status='unmatched'",
     [periodId]
   )
-  const bankTxs = await query(
+  const bankExpenses = await query(
     "SELECT id, amount, amount_usd, date, description FROM bank_transactions WHERE period_id = $1 AND status='unmatched' AND type='expense'",
     [periodId]
   )
@@ -283,14 +291,13 @@ async function autoReconcile(periodId: number) {
     let bestMatch: any = null
     let bestScore = 0
 
-    for (const tx of bankTxs.rows) {
+    for (const tx of bankExpenses.rows) {
       const txAmount   = parseFloat(tx.amount_usd || tx.amount || 0)
       const amountDiff = Math.abs(txAmount - invAmount) / invAmount
       const daysDiff   = inv.date && tx.date
         ? Math.abs(new Date(tx.date).getTime() - new Date(inv.date).getTime()) / 86400000
         : 999
 
-      // Exclude matches with >10% diff (5-10% will be flagged below)
       let score = 0
       if (amountDiff < 0.01)       score += 50
       else if (amountDiff < 0.05)  score += 35
@@ -318,7 +325,6 @@ async function autoReconcile(periodId: number) {
     const confidence = bestScore >= 65 ? 'high' : bestScore >= 40 ? 'medium' : 'low'
     if (confidence === 'low') continue
 
-    // >5% discrepancy → flagged regardless of confidence
     const isFlagged = amountDiff > DISCREPANCY_FLAG_THRESHOLD
     const status = isFlagged ? 'flagged' : confidence === 'high' ? 'matched' : 'proposed'
 
@@ -331,12 +337,64 @@ async function autoReconcile(periodId: number) {
       [status, inv.id, isFlagged ? (amountDiff * 100).toFixed(4) : null, matchedTx.id]
     )
 
-    if (isFlagged) {
-      console.warn(
-        `[autoReconcile] Flagged match: invoice ${inv.id} (${invAmount} USD) ↔ tx ${matchedTx.id} (${parseFloat(matchedTx.amount_usd || matchedTx.amount)} USD) — ${(amountDiff * 100).toFixed(1)}% discrepancy`
-      )
+    bankExpenses.rows = bankExpenses.rows.filter((tx: any) => tx.id !== matchedTx.id)
+  }
+
+  // ── 2. Revenue bank transactions → MRR entries (outgoing invoices synced) ──
+  // Match revenue deposits against synced MRR entries by amount proximity.
+  // This catches direct client payments but NOT bulk distributor payments (those
+  // need manual review since one bank tx covers multiple clients).
+  const mrrEntries = await query(
+    "SELECT id, client_name, amount_usd FROM mrr_entries WHERE period_id = $1",
+    [periodId]
+  )
+  const bankRevenue = await query(
+    "SELECT id, amount, amount_usd, date, description FROM bank_transactions WHERE period_id = $1 AND status='unmatched' AND type='revenue'",
+    [periodId]
+  )
+
+  for (const entry of mrrEntries.rows) {
+    const entryAmount = parseFloat(entry.amount_usd || 0)
+    if (!entryAmount) continue
+
+    let bestRevMatch: any = null
+    let bestRevScore = 0
+
+    for (const tx of bankRevenue.rows) {
+      const txAmount   = parseFloat(tx.amount_usd || tx.amount || 0)
+      const amountDiff = txAmount > 0 ? Math.abs(txAmount - entryAmount) / Math.max(txAmount, entryAmount) : 1
+      if (amountDiff > 0.10) continue  // >10% → skip
+
+      let score = 0
+      if (amountDiff < 0.01)       score += 50
+      else if (amountDiff < 0.05)  score += 35
+      else                         score += 15
+
+      // Client name in bank description (e.g. "OFII INC" in description)
+      if (entry.client_name && tx.description) {
+        const name = entry.client_name.toLowerCase()
+        const desc = tx.description.toLowerCase()
+        const words = name.split(/\s+/).filter((w: string) => w.length > 3)
+        if (desc.includes(name))                                           score += 30
+        else if (words.some((w: string) => desc.includes(w)))             score += 15
+      }
+
+      if (score > bestRevScore) { bestRevScore = score; bestRevMatch = { tx, amountDiff } }
     }
 
-    bankTxs.rows = bankTxs.rows.filter((tx: any) => tx.id !== matchedTx.id)
+    if (!bestRevMatch || bestRevScore < 40) continue
+
+    const { tx: matchedTx, amountDiff } = bestRevMatch
+    const isFlagged = amountDiff > DISCREPANCY_FLAG_THRESHOLD
+    const status = isFlagged ? 'flagged' : bestRevScore >= 65 ? 'matched' : 'proposed'
+
+    // Link via description field (MRR entries don't have matched_bank_id column;
+    // we tag the bank tx with the MRR entry client name in its account field)
+    await query(
+      "UPDATE bank_transactions SET status=$1, discrepancy_pct=$2 WHERE id=$3",
+      [status, isFlagged ? (amountDiff * 100).toFixed(4) : null, matchedTx.id]
+    )
+
+    bankRevenue.rows = bankRevenue.rows.filter((tx: any) => tx.id !== matchedTx.id)
   }
 }

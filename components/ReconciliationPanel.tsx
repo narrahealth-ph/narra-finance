@@ -70,6 +70,8 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   const [allInvoices,     setAllInvoices]     = useState<any[]>([])
   const [linkingTx,       setLinkingTx]       = useState<number | null>(null)
   const [reassigning,     setReassigning]     = useState<number | null>(null)
+  const [rerunning,       setRerunning]       = useState(false)
+  const [rerunMsg,        setRerunMsg]        = useState('')
 
   useEffect(() => {
     if (!periodId) return
@@ -235,6 +237,28 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
     }
   }
 
+  async function rerunAutoMatch() {
+    setRerunning(true)
+    setRerunMsg('')
+    try {
+      await fetch('/api/bank', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action: 'rerun', periodId }),
+      })
+      await loadData()
+      onRefresh()
+      setRerunMsg('Auto-match complete.')
+      setTimeout(() => setRerunMsg(''), 4000)
+    } catch (err) {
+      console.error('Rerun error:', err)
+      setRerunMsg('Error running auto-match.')
+    } finally {
+      setRerunning(false)
+    }
+  }
+
   function toggleGroup(code: string) {
     setExpandedGroups(prev => {
       const next = new Set(prev)
@@ -280,9 +304,13 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
           <h2 className="font-heading text-xl font-semibold text-narra-dark">Reconciliation</h2>
           <p className="text-sm text-narra-muted mt-0.5">{selectedMonth?.replace('_', ' ')} · Bank vs Invoices</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={rerunAutoMatch} disabled={rerunning}
+            className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50">
+            {rerunning ? '↻ Matching…' : '↻ Run Auto-Match'}
+          </button>
           <button onClick={() => { loadData(); onRefresh() }}
-            className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-dark hover:bg-narra-light transition-all">
+            className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">
             ↻ Refresh
           </button>
           <button onClick={exportCosts}
@@ -291,6 +319,10 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
           </button>
         </div>
       </div>
+
+      {rerunMsg && (
+        <div className="bg-green-50 border border-green-200 text-green-700 rounded-xl px-4 py-3 text-sm">{rerunMsg}</div>
+      )}
 
       {/* KPI tiles */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

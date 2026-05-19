@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
       : new Date().getFullYear()
     const invRes = await sheets.spreadsheets.values.get({
       spreadsheetId: INVOICE_SHEET_ID,
-      range: `${sheetYear}!A2:I200`,
+      range: `All time!A2:I500`,
     })
     const rows = invRes.data.values || []
     outgoingInvoices = rows

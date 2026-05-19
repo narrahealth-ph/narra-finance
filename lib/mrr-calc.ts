@@ -60,17 +60,13 @@ export function isActiveStatus(status: string): boolean {
   )
 }
 
-export function isPendingStatus(status: string): boolean {
-  const s = status.toLowerCase().trim()
-  return s === 'sent' || s === 'invoiced' || s === 'outstanding' || s === 'due'
-}
-
 export function calcMrrForMonth(invRows: any[][], monthStart: Date, monthEnd: Date): number {
-  // First pass: collect all active entries for this month
-  type Entry = { key: string; amount: number; billingType: string; issueDate: Date; isPending: boolean; isOneOff: boolean }
-  const active: Entry[] = []
+  // Dedup by invoice ID only — a client can have multiple active invoices (different products).
+  const seenKeys = new Set<string>()
+  let total = 0
 
   for (const r of invRows) {
+    const invoiceId    = (r[0] || '').trim()
     const clientName   = (r[1] || '').trim()
     const amount       = parseNum((r[5] || '').toString())
     const status       = (r[6] || '').toLowerCase().trim()
@@ -82,39 +78,18 @@ export function calcMrrForMonth(invRows: any[][], monthStart: Date, monthEnd: Da
     const isOneOff = billingType === 'one-off' || billingType === 'one off' || billingType === 'oneoff'
     const d = parseInvDate(issueDateStr)
 
+    // Dedup key: invoice ID if present, otherwise client+date+amount
+    const key = invoiceId || `${clientName.toLowerCase()}|${issueDateStr}|${amount}`
+    if (seenKeys.has(key)) continue
+    seenKeys.add(key)
+
     if (isOneOff) {
       if (!d || d < monthStart || d > monthEnd) continue
-      active.push({ key: clientName.toLowerCase(), amount, billingType, issueDate: d, isPending: isPendingStatus(status), isOneOff: true })
+      total += amount
     } else {
       if (!d || d > monthEnd) continue
       if (contractEnd(d, billingType) <= monthStart) continue
-      active.push({ key: clientName.toLowerCase(), amount, billingType, issueDate: d, isPending: isPendingStatus(status), isOneOff: false })
-    }
-  }
-
-  // Second pass: sort newest-first, prefer paid contracts in dedup
-  active.sort((a, b) => b.issueDate.getTime() - a.issueDate.getTime())
-
-  const seenPaid = new Set<string>()
-  const seenAll  = new Set<string>()
-  let total = 0
-
-  for (const e of active) {
-    if (e.isOneOff) {
-      total += e.amount
-      continue
-    }
-    if (!e.isPending) {
-      if (!seenPaid.has(e.key)) {
-        seenPaid.add(e.key)
-        seenAll.add(e.key)
-        total += calcMonthlyMrr(e.amount, e.billingType)
-      }
-    } else {
-      if (!seenAll.has(e.key) && !seenPaid.has(e.key)) {
-        seenAll.add(e.key)
-        total += calcMonthlyMrr(e.amount, e.billingType)
-      }
+      total += calcMonthlyMrr(amount, billingType)
     }
   }
 

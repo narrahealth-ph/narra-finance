@@ -174,8 +174,8 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
     return amount / 12
   }
 
-  // Only count paid recurring clients toward confirmed MRR (one-off excluded from MRR)
-  const totalConfirmedMrr = useMemo(() => clients.filter(c => !c.isPending && !c.isOneOff && c.countedInMrr !== false).reduce((s, c) => s + Math.round(c.annualAmount / 12), 0), [clients])
+  // Count all paid recurring clients toward confirmed MRR (one-offs and pending excluded)
+  const totalConfirmedMrr = useMemo(() => clients.filter(c => !c.isPending && !c.isOneOff).reduce((s, c) => s + Math.round(c.annualAmount / 12), 0), [clients])
   const totalPendingMrr   = useMemo(() => pendingInvoices.reduce((s, i) => s + calcMonthly(i.amount, i.billingType), 0), [pendingInvoices])
   const totalCosts        = costs.reduce((s, c) => s + c.amount, 0)
   const netRevenue        = totalConfirmedMrr - totalCosts
@@ -215,7 +215,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
     // Recurring: divide annual amount by billing period to get monthly.
     // One-offs: use the full invoice amount (recognised in the month they're issued).
     const monthlyClients = clients
-      .filter(c => c.countedInMrr !== false)
+      .filter(c => !c.isPending)
       .map(c => ({
         name:   c.name,
         amount: c.isOneOff
@@ -506,16 +506,15 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                                    : c.billingType === 'monthly'   ? 'Monthly'
                                    : c.billingType === 'quarterly'  ? 'Quarterly'
                                    : 'Annual'
-                const pct = !c.isOneOff && c.countedInMrr !== false && totalConfirmedMrr > 0 ? (mrr / totalConfirmedMrr * 100).toFixed(0) : '—'
+                const pct = !c.isOneOff && !c.isPending && totalConfirmedMrr > 0 ? (mrr / totalConfirmedMrr * 100).toFixed(0) : '—'
                 const dbClient = dbClients.find((dc: any) => dc.name.toLowerCase() === displayName.toLowerCase())
                 return (
-                  <tr key={i} className={`border-t border-narra-border hover:bg-narra-surface transition-colors ${c.isPending ? 'opacity-75' : ''} ${c.countedInMrr === false ? 'opacity-50' : ''}`}>
+                  <tr key={i} className={`border-t border-narra-border hover:bg-narra-surface transition-colors ${c.isPending ? 'opacity-75' : ''}`}>
                     <td className="px-4 py-2.5 font-mono text-xs text-narra-muted whitespace-nowrap">{c.invoiceId || '—'}</td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {c.isNew && <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">New</span>}
                         {c.isCarryover && <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">↩ Carried over</span>}
-                        {c.countedInMrr === false && <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">Superseded</span>}
                         <span className="font-medium text-narra-dark">{displayName}</span>
                         {hasOverride && <span className="text-xs text-narra-muted italic">({c.name})</span>}
                         <button

@@ -152,7 +152,7 @@ export async function PATCH(req: NextRequest) {
   const session = await requireRole('finance')
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { action, bankTxId, invoiceId, newInvoiceId, periodId: bodyPeriodId } = await req.json()
+  const { action, bankTxId, invoiceId, newInvoiceId, periodId: bodyPeriodId, splits } = await req.json()
   const userEmail = (session as any).email || 'unknown'
 
   // Check period lock via the bank transaction's period
@@ -260,6 +260,48 @@ export async function PATCH(req: NextRequest) {
       flagged: newStatus === 'flagged',
       vendor: newInv.rows[0].vendor,
     })
+  }
+
+  // ── split — replace one bank tx with multiple smaller ones ──────────────────
+  if (action === 'split') {
+    if (!bankTxId || !splits?.length) {
+      return NextResponse.json({ error: 'bankTxId and splits required' }, { status: 400 })
+    }
+
+    const origRes = await query('SELECT * FROM bank_transactions WHERE id = $1', [bankTxId])
+    const orig = origRes.rows[0]
+    if (!orig) return NextResponse.json({ error: 'Transaction not found' }, { status: 404 })
+
+    const originalAmount = parseFloat(orig.amount)
+    const totalSplit = splits.reduce((s: number, r: any) => s + parseFloat(r.amount), 0)
+    if (Math.abs(totalSplit - originalAmount) > 0.02) {
+      return NextResponse.json({
+        error: `Split amounts ($${totalSplit.toFixed(2)}) must equal original ($${originalAmount.toFixed(2)})`
+      }, { status: 400 })
+    }
+
+    // Pro-rate amount_usd for each split piece
+    const origUsd = parseFloat(orig.amount_usd || orig.amount)
+    const usdRate = originalAmount > 0 ? origUsd / originalAmount : 1
+
+    for (const split of splits) {
+      const splitAmount = parseFloat(split.amount)
+      const splitUsd    = Math.round(splitAmount * usdRate * 100) / 100
+      await query(
+        `INSERT INTO bank_transactions
+          (period_id, date, description, amount, currency, amount_usd, type, account, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'unmatched')`,
+        [orig.period_id, orig.date, split.description, splitAmount,
+         orig.currency, splitUsd, orig.type, orig.account]
+      )
+    }
+
+    // Unlink any matched invoice, then delete the original
+    await query("UPDATE invoices SET status='unmatched', matched_bank_id=NULL WHERE matched_bank_id=$1", [bankTxId])
+    await query('DELETE FROM bank_transactions WHERE id=$1', [bankTxId])
+    await writeAudit('bank_transactions', bankTxId, 'split', { amount: originalAmount }, { splits }, userEmail)
+
+    return NextResponse.json({ ok: true, count: splits.length })
   }
 
   // ── rerun — re-run auto-reconcile for the period ──────────────────────────

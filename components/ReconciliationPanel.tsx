@@ -72,6 +72,10 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   const [reassigning,     setReassigning]     = useState<number | null>(null)
   const [rerunning,       setRerunning]       = useState(false)
   const [rerunMsg,        setRerunMsg]        = useState('')
+  const [splitTx,         setSplitTx]         = useState<any | null>(null)
+  const [splitRows,       setSplitRows]       = useState<{ description: string; amount: string }[]>([])
+  const [splitting,       setSplitting]       = useState(false)
+  const [splitError,      setSplitError]      = useState('')
 
   useEffect(() => {
     if (!periodId) return
@@ -104,7 +108,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
         const txs = txData.transactions || []
 
         const matchedTxs      = txs.filter((t: any) => t.status === 'matched' || t.status === 'proposed' || t.status === 'flagged')
-        const unmatchedTxs    = txs.filter((t: any) => t.status === 'unmatched' && t.type === 'expense')
+        const unmatchedTxs    = txs.filter((t: any) => t.status === 'unmatched' && (t.type === 'expense' || t.type === 'revenue'))
         const acknowledgedTxs = txs.filter((t: any) => t.status === 'acknowledged' && t.type === 'expense')
         setAcknowledged(acknowledgedTxs)
 
@@ -256,6 +260,53 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
       setRerunMsg('Error running auto-match.')
     } finally {
       setRerunning(false)
+    }
+  }
+
+  function openSplit(tx: any) {
+    setSplitTx(tx)
+    setSplitError('')
+    const half = (parseFloat(tx.amount || 0) / 2).toFixed(2)
+    setSplitRows([
+      { description: tx.description, amount: half },
+      { description: tx.description, amount: half },
+    ])
+  }
+
+  async function executeSplit() {
+    if (!splitTx) return
+    setSplitError('')
+    const total = splitRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+    const orig  = parseFloat(splitTx.amount || 0)
+    if (Math.abs(total - orig) > 0.02) {
+      setSplitError(`Split total $${total.toFixed(2)} must equal original $${orig.toFixed(2)}`)
+      return
+    }
+    if (splitRows.some(r => !r.description.trim() || !(parseFloat(r.amount) > 0))) {
+      setSplitError('All rows need a description and a positive amount.')
+      return
+    }
+    setSplitting(true)
+    try {
+      const res = await fetch('/api/bank', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          action: 'split',
+          bankTxId: splitTx.id,
+          splits: splitRows.map(r => ({ description: r.description, amount: parseFloat(r.amount) })),
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setSplitError(data.error || 'Split failed'); return }
+      setSplitTx(null)
+      await loadData()
+      onRefresh()
+    } catch (e) {
+      setSplitError('Network error')
+    } finally {
+      setSplitting(false)
     }
   }
 
@@ -661,6 +712,15 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
             <p className="text-xs text-narra-muted">These expenses have no matching invoice — follow up with your team or add the invoice to Drive.</p>
           </div>
 
+          {/* Revenue vs expense breakdown */}
+          {unmatched.length > 0 && (
+            <div className="flex gap-3 text-xs text-narra-muted">
+              <span>{unmatched.filter((t: any) => t.type === 'revenue').length} revenue (distributor payments)</span>
+              <span>·</span>
+              <span>{unmatched.filter((t: any) => t.type === 'expense').length} expense</span>
+            </div>
+          )}
+
           {unmatched.length === 0 && acknowledged.length === 0 ? (
             <div className="bg-green-50 border border-green-200 rounded-xl p-8 text-center">
               <div className="text-3xl mb-2">🎉</div>
@@ -680,7 +740,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-amber-800/10">
-                    {['Date', 'Description', 'Amount', 'Account', 'Action'].map(h => (
+                    {['Type', 'Date', 'Description', 'Amount', 'Account', 'Action'].map(h => (
                       <th key={h} className={`px-4 py-2.5 text-xs font-body text-amber-800/60 uppercase tracking-wider ${h === 'Amount' ? 'text-right' : 'text-left'}`}>{h}</th>
                     ))}
                   </tr>
@@ -689,8 +749,14 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                   {unmatched.map((tx: any, i) => {
                     const availableInvoices = allInvoices.filter(inv => inv.status === 'unmatched')
                     const isLinking = linkingTx === tx.id
+                    const isRevenue = tx.type === 'revenue'
                     return (
-                    <tr key={i} className="border-t border-amber-100 hover:bg-amber-50/50">
+                    <tr key={i} className={`border-t hover:bg-amber-50/50 ${isRevenue ? 'border-blue-100 bg-blue-50/30' : 'border-amber-100'}`}>
+                      <td className="px-4 py-3">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${isRevenue ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {isRevenue ? 'Revenue' : 'Expense'}
+                        </span>
+                      </td>
                       <td className="px-4 py-3 text-amber-700 text-xs whitespace-nowrap">{String(tx.date).split('T')[0]}</td>
                       <td className="px-4 py-3 text-amber-900 font-medium">{tx.description}</td>
                       <td className="px-4 py-3 text-right font-medium text-amber-900 whitespace-nowrap">
@@ -699,7 +765,6 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                       <td className="px-4 py-3 text-amber-600 text-xs">{tx.account || '—'}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-1.5">
-                          {/* Invoice picker */}
                           {isLinking ? (
                             <div className="flex items-center gap-1.5">
                               <select
@@ -716,14 +781,18 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                                   </option>
                                 ))}
                               </select>
-                              <button
-                                onClick={() => setLinkingTx(null)}
-                                className="text-xs text-amber-600 hover:text-amber-900"
-                              >Cancel</button>
+                              <button onClick={() => setLinkingTx(null)} className="text-xs text-amber-600 hover:text-amber-900">Cancel</button>
                             </div>
                           ) : (
-                            <div className="flex items-center gap-1.5">
-                              {availableInvoices.length > 0 && (
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <button
+                                onClick={() => openSplit(tx)}
+                                title="Split this payment across multiple clients/invoices"
+                                className="text-xs px-2 py-1 bg-purple-50 text-purple-700 hover:bg-purple-100 rounded-full transition-all whitespace-nowrap"
+                              >
+                                ⊕ Split
+                              </button>
+                              {!isRevenue && availableInvoices.length > 0 && (
                                 <button
                                   onClick={() => setLinkingTx(tx.id)}
                                   disabled={reassigning === tx.id}
@@ -792,6 +861,93 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── SPLIT MODAL ── */}
+      {splitTx && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setSplitTx(null)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-5">
+            <div>
+              <h3 className="font-heading font-semibold text-narra-dark text-lg">Split Transaction</h3>
+              <p className="text-xs text-narra-muted mt-1">
+                {splitTx.description} · {splitTx.currency} ${parseFloat(splitTx.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })} · {String(splitTx.date).split('T')[0]}
+              </p>
+            </div>
+
+            {/* Split rows */}
+            <div className="space-y-2">
+              {splitRows.map((row, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className="text-xs text-narra-muted w-4 shrink-0">{i + 1}.</span>
+                  <input
+                    value={row.description}
+                    onChange={e => setSplitRows(prev => prev.map((r, j) => j === i ? { ...r, description: e.target.value } : r))}
+                    placeholder="Client / description"
+                    className="flex-1 border border-narra-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-300"
+                  />
+                  <div className="flex items-center border border-narra-border rounded-lg overflow-hidden">
+                    <span className="px-2 text-xs text-narra-muted bg-narra-surface">{splitTx.currency}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={row.amount}
+                      onChange={e => setSplitRows(prev => prev.map((r, j) => j === i ? { ...r, amount: e.target.value } : r))}
+                      className="w-28 px-2 py-2 text-sm outline-none text-right"
+                    />
+                  </div>
+                  {splitRows.length > 2 && (
+                    <button
+                      onClick={() => setSplitRows(prev => prev.filter((_, j) => j !== i))}
+                      className="w-6 h-6 rounded-full bg-red-50 text-red-400 hover:bg-red-500 hover:text-white transition-all text-xs flex items-center justify-center"
+                    >✕</button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setSplitRows(prev => [...prev, { description: splitTx.description, amount: '0' }])}
+              className="text-xs text-purple-700 hover:text-purple-900 flex items-center gap-1"
+            >
+              + Add another split
+            </button>
+
+            {/* Running total */}
+            {(() => {
+              const total = splitRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+              const orig  = parseFloat(splitTx.amount || 0)
+              const diff  = Math.abs(total - orig)
+              const ok    = diff <= 0.02
+              return (
+                <div className={`rounded-lg px-4 py-2.5 text-sm flex justify-between items-center ${ok ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                  <span className={ok ? 'text-green-700' : 'text-red-700'}>
+                    Split total: {splitTx.currency} ${total.toFixed(2)}
+                  </span>
+                  <span className={ok ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
+                    {ok ? '✓ Balanced' : `${total > orig ? '+' : '-'}$${diff.toFixed(2)} off`}
+                  </span>
+                </div>
+              )
+            })()}
+
+            {splitError && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{splitError}</p>
+            )}
+
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setSplitTx(null)}
+                className="px-4 py-2 border border-narra-border rounded-lg text-sm text-narra-muted hover:text-narra-dark transition-all">
+                Cancel
+              </button>
+              <button onClick={executeSplit} disabled={splitting}
+                className="px-4 py-2 bg-purple-700 text-white rounded-lg text-sm font-body hover:bg-purple-800 transition-all disabled:opacity-50">
+                {splitting ? 'Splitting…' : `Split into ${splitRows.length}`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

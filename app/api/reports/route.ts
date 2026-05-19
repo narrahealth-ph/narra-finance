@@ -62,12 +62,19 @@ export async function GET(req: NextRequest) {
   const totalExpenses = invoices.reduce((s: number, r: any) => s + safeUsd(r), 0)
   const revenueRows   = bankTxs.filter((r: any) => r.type === 'revenue')
 
-  // Use accrual MRR revenue (mrr_entries) when synced, otherwise fall back to cash revenue
+  // Revenue: prefer MRR (accrual) when synced, but use bank deposits as a floor.
+  // Using bank deposits as a floor prevents the false-loss scenario where MRR was
+  // only partially synced (e.g. 1 client pushed) and mrrRevenue << actual deposits.
+  // We also surface both numbers so the Reports tab can show them separately.
   const mrrRevenue  = mrrRows.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || 0), 0)
   const bankRevenue = revenueRows.reduce((s: number, r: any) => s + safeUsd(r), 0)
-  const totalRevenue = mrrRevenue > 0 ? mrrRevenue : bankRevenue
+  // Use whichever is larger: if MRR is properly synced it will exceed cash deposits
+  // (because accrual recognises annual contracts monthly); if MRR is missing or
+  // partially synced, the bank deposit total is a better approximation than $0.
+  const totalRevenue = Math.max(mrrRevenue, bankRevenue)
+  const revenueSource = mrrRevenue >= bankRevenue ? 'mrr' : 'bank'
 
-  const netProfit     = totalRevenue - totalExpenses
+  const netProfit = totalRevenue - totalExpenses
 
   const expenseByAccount: Record<string, any[]> = {}
   for (const inv of invoices) {
@@ -83,6 +90,10 @@ export async function GET(req: NextRequest) {
     totalRevenue,
     totalExpenses,
     netProfit,
+    mrrRevenue,
+    bankRevenue,
+    revenueSource,
+    mrrSynced: mrrRevenue > 0,
     operatingMargin: totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : '0.0',
   }
 

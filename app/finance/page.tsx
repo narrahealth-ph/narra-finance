@@ -172,7 +172,13 @@ export default function FinancePage() {
                 <div className="text-narra-green font-heading font-semibold">
                   ${(reportData.pl?.totalRevenue || 0).toLocaleString()}
                 </div>
-                <div className="text-white/30 text-xs">Revenue</div>
+                <div className="text-white/30 text-xs flex items-center gap-1">
+                  Revenue
+                  {!reportData.pl?.mrrSynced && (
+                    <span title="MRR not synced — showing bank deposits. Go to MRR tab and click Sync Revenue to Period for accurate P&L."
+                      className="text-amber-400 cursor-help">⚠</span>
+                  )}
+                </div>
               </div>
               <div className="text-center">
                 <div className={`font-heading font-semibold ${(reportData.pl?.netProfit || 0) >= 0 ? 'text-narra-green' : 'text-red-400'}`}>

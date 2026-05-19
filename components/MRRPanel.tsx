@@ -211,13 +211,16 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
 
   async function syncInvoices() {
     setSyncing(true); setSyncResult(null)
-    // Include all active clients — both paid and pending (sent = committed revenue)
-    // One-off invoices are excluded since they aren't recurring
+    // Include all active clients — both recurring and one-off.
+    // Recurring: divide annual amount by billing period to get monthly.
+    // One-offs: use the full invoice amount (recognised in the month they're issued).
     const monthlyClients = clients
-      .filter(c => !c.isOneOff && c.countedInMrr !== false)
+      .filter(c => c.countedInMrr !== false)
       .map(c => ({
         name:   c.name,
-        amount: Math.round(calcMonthly(c.annualAmount, c.billingType)),
+        amount: c.isOneOff
+          ? Math.round(c.annualAmount)  // full amount — already the invoice total
+          : Math.round(calcMonthly(c.annualAmount, c.billingType)),
       }))
       .filter(c => c.amount > 0)
 

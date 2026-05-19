@@ -31,6 +31,9 @@ export default function ClientsPanel() {
   const [msg,             setMsg]             = useState('')
   const [search,          setSearch]          = useState('')
   const [filterActive,    setFilterActive]    = useState<'all' | 'active' | 'inactive'>('active')
+  const [selectedIds,     setSelectedIds]     = useState<Set<number>>(new Set())
+  const [bulkHoldingId,   setBulkHoldingId]   = useState<string>('')
+  const [bulkSaving,      setBulkSaving]      = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -118,6 +121,33 @@ export default function ClientsPanel() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: c.id, name: c.name, holdingCompanyId: c.holding_company_id, distributor: c.distributor, billingType: c.billing_type, notes: c.notes, active: !c.active }),
     })
+    load()
+  }
+
+  async function bulkAssignHolding() {
+    if (!selectedIds.size) return
+    setBulkSaving(true)
+    const holdingId = bulkHoldingId ? parseInt(bulkHoldingId) : null
+    await Promise.all(
+      Array.from(selectedIds).map(id => {
+        const c = clients.find(x => x.id === id)!
+        return fetch('/api/clients', {
+          method: 'PATCH', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: c.id, name: c.name, holding_company_id: holdingId,
+            distributor: c.distributor, billing_type: c.billing_type,
+            notes: c.notes, active: c.active,
+          }),
+        })
+      })
+    )
+    setBulkSaving(false)
+    setSelectedIds(new Set())
+    setBulkHoldingId('')
+    const label = holdingId ? holdingCos.find(h => h.id === holdingId)?.name : 'no group'
+    setMsg(`${selectedIds.size} client${selectedIds.size !== 1 ? 's' : ''} assigned to ${label}.`)
+    setTimeout(() => setMsg(''), 4000)
     load()
   }
 
@@ -215,11 +245,43 @@ export default function ClientsPanel() {
         </div>
       </div>
 
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 flex-wrap">
+          <span className="text-sm font-medium text-indigo-800">{selectedIds.size} selected</span>
+          <span className="text-indigo-300">·</span>
+          <span className="text-sm text-indigo-700">Assign to holding company:</span>
+          <select value={bulkHoldingId} onChange={e => setBulkHoldingId(e.target.value)}
+            className="border border-indigo-300 rounded-lg px-3 py-1.5 text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-300">
+            <option value="">— Remove from group —</option>
+            {holdingCos.map(hc => <option key={hc.id} value={hc.id}>{hc.name}</option>)}
+          </select>
+          <button onClick={bulkAssignHolding} disabled={bulkSaving}
+            className="px-4 py-1.5 bg-indigo-700 text-white rounded-lg text-sm font-body hover:bg-indigo-800 transition-all disabled:opacity-50">
+            {bulkSaving ? 'Saving…' : 'Apply'}
+          </button>
+          <button onClick={() => setSelectedIds(new Set())}
+            className="text-sm text-indigo-500 hover:text-indigo-800 ml-auto">
+            Clear selection
+          </button>
+        </div>
+      )}
+
       {/* Clients table */}
       <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-narra-dark text-white">
+              <th className="px-4 py-3 w-8">
+                <input type="checkbox"
+                  checked={filtered.length > 0 && filtered.every(c => selectedIds.has(c.id))}
+                  onChange={e => {
+                    if (e.target.checked) setSelectedIds(new Set(filtered.map(c => c.id)))
+                    else setSelectedIds(new Set())
+                  }}
+                  className="rounded accent-narra-green cursor-pointer"
+                />
+              </th>
               {['Client', 'Holding Group', 'Distributor / Payer', 'Billing', 'LTV', 'Notes', 'Status', ''].map(h => (
                 <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'LTV' ? 'text-right' : 'text-left'}`}>{h}</th>
               ))}
@@ -227,13 +289,23 @@ export default function ClientsPanel() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-narra-muted">Loading…</td></tr>
+              <tr><td colSpan={9} className="px-4 py-10 text-center text-narra-muted">Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-narra-muted">
+              <tr><td colSpan={9} className="px-4 py-10 text-center text-narra-muted">
                 {clients.length === 0 ? 'No clients yet — add your first client above.' : 'No results match your filter.'}
               </td></tr>
             ) : filtered.map(c => (
-              <tr key={c.id} className={`border-t border-narra-border hover:bg-narra-surface transition-colors ${!c.active ? 'opacity-50' : ''}`}>
+              <tr key={c.id} className={`border-t border-narra-border hover:bg-narra-surface transition-colors ${!c.active ? 'opacity-50' : ''} ${selectedIds.has(c.id) ? 'bg-indigo-50/60' : ''}`}>
+                <td className="px-4 py-3">
+                  <input type="checkbox" checked={selectedIds.has(c.id)}
+                    onChange={e => {
+                      const next = new Set(selectedIds)
+                      e.target.checked ? next.add(c.id) : next.delete(c.id)
+                      setSelectedIds(next)
+                    }}
+                    className="rounded accent-narra-green cursor-pointer"
+                  />
+                </td>
                 <td className="px-4 py-3">
                   <span className="font-medium text-narra-dark">{c.name}</span>
                 </td>
@@ -277,7 +349,7 @@ export default function ClientsPanel() {
           {filtered.length > 0 && (
             <tfoot>
               <tr className="border-t-2 border-narra-dark bg-narra-surface">
-                <td colSpan={4} className="px-4 py-3 font-heading font-semibold text-narra-dark text-sm">
+                <td colSpan={5} className="px-4 py-3 font-heading font-semibold text-narra-dark text-sm">
                   {filtered.length} client{filtered.length !== 1 ? 's' : ''}
                 </td>
                 <td className="px-4 py-3 text-right font-heading font-semibold text-narra-dark">

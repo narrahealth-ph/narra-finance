@@ -36,15 +36,19 @@ export async function GET(req: NextRequest) {
   const p = periodRes.rows[0]
 
   // ── Raw data for this period ──────────────────────────────────────────────────
-  const [invoicesRes, bankTxsRes, mrrRes] = await Promise.all([
+  const [invoicesRes, bankTxsRes, mrrRes, fxRes] = await Promise.all([
     query('SELECT * FROM invoices WHERE period_id = $1 ORDER BY account_name, date', [periodId]),
     query('SELECT * FROM bank_transactions WHERE period_id = $1 ORDER BY date', [periodId]),
     query('SELECT * FROM mrr_entries WHERE period_id = $1 ORDER BY amount_usd DESC', [periodId]),
+    query(`SELECT DISTINCT ON (currency) currency, rate, date FROM fx_rates
+           WHERE date BETWEEN $1 AND $2 AND currency != 'USD'
+           ORDER BY currency, date DESC`, [p.start_date, p.end_date]).catch(() => ({ rows: [] })),
   ])
 
-  const invoices = invoicesRes.rows
-  const bankTxs  = bankTxsRes.rows
-  const mrrRows  = mrrRes.rows
+  const invoices  = invoicesRes.rows
+  const bankTxs   = bankTxsRes.rows
+  const mrrRows   = mrrRes.rows
+  const fxRates   = (fxRes as any).rows || []
 
   // Safe USD amount: use amount_usd if set, fall back to amount ONLY for USD transactions
   const safeUsd = (r: any) => {
@@ -57,7 +61,12 @@ export async function GET(req: NextRequest) {
   // ── P&L ──────────────────────────────────────────────────────────────────────
   const totalExpenses = invoices.reduce((s: number, r: any) => s + safeUsd(r), 0)
   const revenueRows   = bankTxs.filter((r: any) => r.type === 'revenue')
-  const totalRevenue  = revenueRows.reduce((s: number, r: any) => s + safeUsd(r), 0)
+
+  // Use accrual MRR revenue (mrr_entries) when synced, otherwise fall back to cash revenue
+  const mrrRevenue  = mrrRows.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || 0), 0)
+  const bankRevenue = revenueRows.reduce((s: number, r: any) => s + safeUsd(r), 0)
+  const totalRevenue = mrrRevenue > 0 ? mrrRevenue : bankRevenue
+
   const netProfit     = totalRevenue - totalExpenses
 
   const expenseByAccount: Record<string, any[]> = {}
@@ -121,7 +130,7 @@ export async function GET(req: NextRequest) {
 
     const invRes = await sheets.spreadsheets.values.get({
       spreadsheetId: INVOICE_SHEET_ID,
-      range:         `${tabName}!A2:I200`,
+      range:         `All time!A2:I500`,
     })
     const rows = invRes.data.values || []
 
@@ -291,6 +300,7 @@ export async function GET(req: NextRequest) {
     bs: bsData,
     pl: plData,
     mrr: mrrData,
+    fxRates: fxRates.map((r: any) => ({ currency: r.currency, rate: parseFloat(r.rate), date: r.date })),
     reconciliation: {
       unmatchedInvoices,
       unmatchedBank,

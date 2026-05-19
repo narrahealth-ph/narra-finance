@@ -21,6 +21,9 @@ const MONTH_COLS: { month: string; col: string; year: number }[] = [
   { month: 'Dec 2025', col: 'P',  year: 2025 },
 ]
 
+const MONTH_NAMES_LONG  = ['January','February','March','April','May','June','July','August','September','October','November','December']
+const MONTH_NAMES_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
 function getSheetClient() {
   const auth = new google.auth.GoogleAuth({
     credentials: {
@@ -36,7 +39,7 @@ function calcMonthlyMrr(amount: number, billingType: string): number {
   const t = (billingType || 'annual').toLowerCase().trim()
   if (t === 'monthly')   return amount
   if (t === 'quarterly') return amount / 3
-  return amount / 12 // annual (default)
+  return amount / 12
 }
 
 function colToIndex(col: string): number {
@@ -50,6 +53,79 @@ function parseNum(val: any): number {
   return parseFloat(val.toString().replace(/[$,\s]/g, '')) || 0
 }
 
+function parseDate(str: string): Date | null {
+  if (!str || typeof str !== 'string') return null
+  const s = str.trim()
+  if (!s) return null
+  // ISO or standard JS-parseable
+  const d1 = new Date(s)
+  if (!isNaN(d1.getTime())) return d1
+  // DD/MM/YYYY or DD-MM-YYYY
+  const parts = s.split(/[\/\-]/)
+  if (parts.length === 3) {
+    const attempt = new Date(`${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`)
+    if (!isNaN(attempt.getTime())) return attempt
+  }
+  return null
+}
+
+function contractEnd(issueDate: Date, billingType: string): Date {
+  const end = new Date(issueDate)
+  const t = (billingType || 'annual').toLowerCase().trim()
+  if (t === 'quarterly')    end.setMonth(end.getMonth() + 3)
+  else if (t === 'monthly') end.setMonth(end.getMonth() + 1)
+  else                      end.setMonth(end.getMonth() + 12) // annual default
+  return end
+}
+
+/** Total active MRR from "All time" rows for a given calendar month */
+/** Returns true only for paid or sent/invoiced statuses */
+function isActiveStatus(status: string): boolean {
+  const s = status.toLowerCase().trim()
+  // Whitelist: must explicitly be paid or sent
+  return (
+    s.includes('paid') ||        // "Paid", "Fully paid", "Partially paid"
+    s === 'sent' ||
+    s === 'invoiced' ||
+    s === 'outstanding' ||
+    s === 'due'
+  )
+}
+
+/** Returns true if the invoice is pending (sent but not yet paid) */
+function isPendingStatus(status: string): boolean {
+  const s = status.toLowerCase().trim()
+  return !s.includes('paid') // "Fully paid", "Paid" → confirmed; "Sent" etc → pending
+}
+
+function calcMrrForMonth(invRows: any[][], monthStart: Date, monthEnd: Date): number {
+  const seen = new Set<string>()
+  let total = 0
+  for (const r of invRows) {
+    const clientName   = (r[1] || '').trim()
+    const amount       = parseNum((r[5] || '').toString())
+    const status       = (r[6] || '').toLowerCase().trim()
+    const billingType  = (r[7] || 'annual').toLowerCase().trim()
+    const issueDateStr = (r[4] || '').trim()
+    if (!clientName || !amount) continue
+    if (!isActiveStatus(status)) continue
+
+    const isOneOff = billingType === 'one-off' || billingType === 'one off' || billingType === 'oneoff'
+    if (isOneOff) {
+      const d = parseDate(issueDateStr)
+      if (!d || d < monthStart || d > monthEnd) continue
+      total += amount
+    } else {
+      const d = parseDate(issueDateStr)
+      if (!d || d > monthEnd) continue
+      if (contractEnd(d, billingType) <= monthStart) continue
+      const key = clientName.toLowerCase()
+      if (!seen.has(key)) { seen.add(key); total += calcMonthlyMrr(amount, billingType) }
+    }
+  }
+  return Math.round(total)
+}
+
 export async function GET(req: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -59,133 +135,183 @@ export async function GET(req: NextRequest) {
   try {
     const sheets = getSheetClient()
 
-    // Read entire sheet up to row 40, all relevant columns
-    const res = await sheets.spreadsheets.values.get({
+    // ── 1. 2025 history from MRR Google Sheet ────────────────────────────────
+    const mrrRes = await sheets.spreadsheets.values.get({
       spreadsheetId: MRR_SHEET_ID,
       range: `'${MRR_TAB}'!A1:S40`,
     })
+    const mrrRows = mrrRes.data.values || []
+    const getCell = (row: number, col: string): any => (mrrRows[row - 1] || [])[colToIndex(col)]
 
-    const allRows = res.data.values || []
+    // Build 2025 history — keep ALL months (don't filter out 0-MRR months) so graph is continuous
+    const history: { month: string; year: number; confirmed: number; pending: number; costs: number; net: number }[] =
+      MONTH_COLS.map(({ month, col, year }) => {
+        const confirmed = parseNum(getCell(3, col))
+        const payroll   = parseNum(getCell(29, col))
+        const subs      = parseNum(getCell(30, col))
+        const sleek     = parseNum(getCell(31, col))
+        const costs     = payroll + subs + sleek
+        const net       = parseNum(getCell(37, col)) || (confirmed - costs)
+        return { month, year, confirmed, pending: 0, costs: costs || 0, net: net || 0 }
+      })
 
-    const getCell = (row: number, col: string): any => {
-      return (allRows[row - 1] || [])[colToIndex(col)]
-    }
-
-    // Build monthly history from sheet totals
-    const history = MONTH_COLS.map(({ month, col, year }) => {
-      const confirmed = parseNum(getCell(3, col))   // row 3 = total MRR SUM
-      // For 2025: costs from Sheet. For 2026+: costs come from bank (Sheet may be 0 until pushed)
-      const payroll = parseNum(getCell(29, col))
-      const subs    = parseNum(getCell(30, col))
-      const sleek   = parseNum(getCell(31, col))
-      const costs   = payroll + subs + sleek
-      const net     = parseNum(getCell(37, col)) || (confirmed - costs)
-      return { month, year, confirmed, pending: 0, costs: costs || 0, net: net || 0 }
-    }).filter(d => d.confirmed > 0 || d.costs > 0)
-
-    // Always include Jan 2025 even if MRR=0 (costs only month)
+    // Always keep Jan 2025 even if zero (costs-only first month)
     if (!history.some(h => h.month === 'Jan 2025')) {
       history.unshift({ month: 'Jan 2025', year: 2025, confirmed: 0, pending: 0, costs: 1173, net: -1173 })
     }
 
-    // ── Cumulative cash position ──────────────────────────────────────────────
-    // S37 = closing cash balance end of 2025 (column S = summary column)
     const closing2025    = parseNum(getCell(37, 'S'))
     const cumulativeCash = closing2025
 
-    // Per-client breakdown from outgoing invoice sheet (billing-type-aware)
-    // Outgoing invoice columns: [0]=InvoiceID [1]=ClientName [4]=IssueDate [5]=Amount [6]=Status [7]=BillingType [8]=Notes
-    let clientBreakdown: { name: string; annualAmount: number; billingType: string; isNew: boolean; isPending: boolean; isOneOff: boolean }[] = []
+    // ── 2. Read "All time" invoice sheet ─────────────────────────────────────
+    let invRows: any[][] = []
+    try {
+      const invRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: INVOICE_SHEET_ID,
+        range: `All time!A2:I500`,
+      })
+      invRows = invRes.data.values || []
+      // Debug: log first row so we can verify column mapping
+      if (invRows.length > 0) {
+        console.log(`[mrr/history] All time: ${invRows.length} rows. First row columns:`, invRows[0])
+      } else {
+        console.log('[mrr/history] All time tab: 0 rows returned')
+      }
+    } catch (e: any) {
+      console.error('[mrr/history] Could not read All time tab:', e.message)
+    }
 
-    if (monthParam) {
-      const [, year] = monthParam.split('_')
-      const yearNum  = parseInt(year) || new Date().getFullYear()
-
-      try {
-        const invRes = await sheets.spreadsheets.values.get({
-          spreadsheetId: INVOICE_SHEET_ID,
-          range: `${yearNum}!A2:I200`,
-        })
-        const invRows = invRes.data.values || []
-
-        // Accumulate per-client MRR from invoices
-        // Paid invoices → confirmed; Sent → pending; One-off → excluded
-        // clientMap key = clientName:billingType to keep one-off separate from recurring
-        const clientMap: Record<string, { name: string; monthlyMrr: number; billingType: string; isPending: boolean; isOneOff: boolean }> = {}
-
-        for (const r of invRows) {
-          const clientName  = (r[1] || '').trim()
-          const rawAmount   = (r[5] || '').toString().replace(/[$,\s]/g, '')
-          const amount      = parseFloat(rawAmount) || 0
-          const status      = (r[6] || '').toLowerCase().trim()
-          const billingType = (r[7] || 'Annual').toLowerCase().trim()
-
-          if (!clientName || !amount || !r[0]) continue
-
-          // Only paid (confirmed) and sent (pending) invoices
-          if (status !== 'paid' && status !== 'sent') continue
-
-          const isOneOff = billingType === 'one-off' || billingType === 'one off' || billingType === 'oneoff'
-          // One-off: full invoice amount as revenue for this month (not divided)
-          const monthlyMrr = isOneOff ? amount : calcMonthlyMrr(amount, billingType)
-          // Use unique key per invoice for one-off (each invoice stands alone); group by client for recurring
-          const key = isOneOff ? `${clientName.toLowerCase()}:${r[0]}` : clientName.toLowerCase()
-
-          if (clientMap[key]) {
-            clientMap[key].monthlyMrr += monthlyMrr
-            if (status === 'paid') clientMap[key].isPending = false
-          } else {
-            clientMap[key] = {
-              name:      clientName,
-              monthlyMrr,
-              billingType: isOneOff ? 'one-off' : billingType,
-              isPending: status === 'sent',
-              isOneOff,
-            }
+    // ── 3. Supplement 2025 months that have 0 confirmed from the MRR sheet ──
+    // Use the invoice sheet to fill gaps (in case the MRR sheet is incomplete)
+    if (invRows.length > 0) {
+      for (const pt of history) {
+        if (pt.confirmed === 0 && pt.year === 2025) {
+          const mIdx  = MONTH_NAMES_SHORT.indexOf(pt.month.split(' ')[0])
+          const mStart = new Date(2025, mIdx, 1)
+          const mEnd   = new Date(2025, mIdx + 1, 0)
+          const calc   = calcMrrForMonth(invRows, mStart, mEnd)
+          if (calc > 0) {
+            pt.confirmed = calc
+            pt.net = calc - pt.costs
           }
         }
-
-        clientBreakdown = Object.values(clientMap)
-          .filter(c => c.monthlyMrr > 0)
-          .map(c => ({
-            name:         c.name,
-            // For one-off: annualAmount = invoice amount (displayed as-is, NOT ÷12 in UI)
-            // For recurring: annualAmount = monthlyMrr * 12 (normalised ARR)
-            annualAmount: c.isOneOff ? Math.round(c.monthlyMrr) : Math.round(c.monthlyMrr * 12),
-            billingType:  c.billingType,
-            isNew:        false,
-            isPending:    c.isPending,
-            isOneOff:     c.isOneOff,
-          }))
-
-        // Mark isNew: client has MRR this month but not in the previous month on the MRR sheet
-        const [monthName] = monthParam.split('_')
-        const label    = `${monthName.slice(0, 3)} ${year}`
-        const monthCol = MONTH_COLS.find(m => m.month === label)
-        if (monthCol) {
-          const monthIdx = MONTH_COLS.findIndex(m => m.month === label)
-          const prevCol  = monthIdx > 0 ? MONTH_COLS[monthIdx - 1].col : null
-          if (prevCol) {
-            const clientRows = allRows.slice(3, 24) // MRR sheet rows 4–24
-            const prevNames  = new Set(
-              clientRows
-                .filter((row, i) => parseNum(getCell(4 + i, prevCol)) > 0 && row?.[0])
-                .map(row => (row[0] || '').toLowerCase().trim())
-            )
-            clientBreakdown = clientBreakdown.map(c => ({
-              ...c,
-              isNew: !prevNames.has(c.name.toLowerCase()),
-            }))
-          }
-        }
-      } catch (e) {
-        console.error('Could not load invoice sheet for MRR breakdown:', e)
       }
     }
 
-    // Full year totals for toggle view
+    // ── 4. Generate 2026+ history from invoice sheet ──────────────────────────
+    if (invRows.length > 0) {
+      const today        = new Date()
+      const currentYear  = today.getFullYear()
+      const currentMonth = today.getMonth()
+      const maxYear      = Math.max(currentYear, 2026)
+
+      for (let yr = 2026; yr <= maxYear; yr++) {
+        const lastMonth = yr < currentYear ? 11 : currentMonth
+        for (let m = 0; m <= lastMonth; m++) {
+          const label = `${MONTH_NAMES_SHORT[m]} ${yr}`
+          if (history.some(h => h.month === label)) continue // already have data
+          const monthStart = new Date(yr, m, 1)
+          const monthEnd   = new Date(yr, m + 1, 0)
+          const confirmed  = calcMrrForMonth(invRows, monthStart, monthEnd)
+          // Include even if 0 so graph is continuous
+          history.push({ month: label, year: yr, confirmed, pending: 0, costs: 0, net: confirmed })
+        }
+      }
+    }
+
+    // Sort chronologically
+    history.sort((a, b) => {
+      const [am, ay] = a.month.split(' ')
+      const [bm, by] = b.month.split(' ')
+      return parseInt(ay) !== parseInt(by)
+        ? parseInt(ay) - parseInt(by)
+        : MONTH_NAMES_SHORT.indexOf(am) - MONTH_NAMES_SHORT.indexOf(bm)
+    })
+
+    // ── 5. Client breakdown for selected month ────────────────────────────────
+    // Returns every individual invoice/contract that was live during the selected month,
+    // each with its issue date. Deduplication happens at the MRR-total level (for the sync).
+    let clientBreakdown: {
+      invoiceId: string; name: string; annualAmount: number; billingType: string; issueDate: string
+      isNew: boolean; isPending: boolean; isOneOff: boolean; isCarryover: boolean; countedInMrr: boolean
+    }[] = []
+
+    if (monthParam && invRows.length > 0) {
+      const [monthName, year] = monthParam.split('_')
+      const yearNum            = parseInt(year) || new Date().getFullYear()
+      const selectedMonthIdx   = MONTH_NAMES_LONG.findIndex(m => m === monthName)
+      const selectedMonthStart = new Date(yearNum, selectedMonthIdx, 1)
+      const selectedMonthEnd   = new Date(yearNum, selectedMonthIdx + 1, 0)
+
+      const entries: {
+        invoiceId: string; name: string; monthlyMrr: number; billingType: string
+        isPending: boolean; isOneOff: boolean; isCarryover: boolean; issueDate: string
+      }[] = []
+
+      for (const r of invRows) {
+        const invoiceId    = (r[0] || '').trim()
+        const clientName   = (r[1] || '').trim()
+        const amount       = parseNum((r[5] || '').toString())
+        const status       = (r[6] || '').toLowerCase().trim()
+        const billingType  = (r[7] || 'annual').toLowerCase().trim()
+        const issueDateStr = (r[4] || '').trim()
+
+        if (!clientName || !amount) continue
+        if (!isActiveStatus(status)) continue
+
+        const isOneOff = billingType === 'one-off' || billingType === 'one off' || billingType === 'oneoff'
+        const isPending = isPendingStatus(status)
+
+        if (isOneOff) {
+          const d = parseDate(issueDateStr)
+          if (!d || d < selectedMonthStart || d > selectedMonthEnd) continue
+          entries.push({ invoiceId, name: clientName, monthlyMrr: amount, billingType: 'one-off', isPending, isOneOff: true, isCarryover: false, issueDate: issueDateStr })
+        } else {
+          const d = parseDate(issueDateStr)
+          if (!d) continue
+          if (d > selectedMonthEnd) continue
+          if (contractEnd(d, billingType) <= selectedMonthStart) continue
+          const isCarryover = d.getFullYear() < yearNum
+          entries.push({ invoiceId, name: clientName, monthlyMrr: calcMonthlyMrr(amount, billingType), billingType, isPending, isOneOff: false, isCarryover, issueDate: issueDateStr })
+        }
+      }
+
+      console.log(`[mrr/history] ${monthParam}: ${entries.length} active invoice rows`)
+
+      // Sort by issue date ascending for display; newest-first for countedInMrr dedup
+      const byDateDesc = [...entries].sort((a, b) =>
+        (parseDate(b.issueDate)?.getTime() || 0) - (parseDate(a.issueDate)?.getTime() || 0)
+      )
+      const seenClients = new Set<string>()
+      const countedIds  = new Set<string>()
+      for (const c of byDateDesc) {
+        if (c.isOneOff) { countedIds.add(c.invoiceId || c.issueDate); continue }
+        const key = c.name.toLowerCase()
+        if (!seenClients.has(key)) { seenClients.add(key); countedIds.add(c.invoiceId || c.issueDate) }
+      }
+
+      // Final list sorted oldest → newest for display
+      clientBreakdown = entries
+        .filter(c => c.monthlyMrr > 0)
+        .sort((a, b) => (parseDate(a.issueDate)?.getTime() || 0) - (parseDate(b.issueDate)?.getTime() || 0))
+        .map(c => ({
+          invoiceId:    c.invoiceId,
+          name:         c.name,
+          annualAmount: c.isOneOff ? Math.round(c.monthlyMrr) : Math.round(c.monthlyMrr * 12),
+          billingType:  c.billingType,
+          issueDate:    c.issueDate,
+          isNew:        false,
+          isPending:    c.isPending,
+          isOneOff:     c.isOneOff,
+          isCarryover:  c.isCarryover,
+          countedInMrr: countedIds.has(c.invoiceId || c.issueDate),
+        }))
+    }
+
+    // ── 6. Year totals ────────────────────────────────────────────────────────
     const yearTotals: Record<number, { mrr: number; costs: number; net: number }> = {}
     for (const pt of history) {
+      if (pt.confirmed === 0 && pt.costs === 0) continue // skip empty months for totals
       const yr = parseInt(pt.month.split(' ')[1])
       if (!yearTotals[yr]) yearTotals[yr] = { mrr: 0, costs: 0, net: 0 }
       yearTotals[yr].mrr   += pt.confirmed

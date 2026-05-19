@@ -59,10 +59,14 @@ export async function POST(req: NextRequest) {
     // Total MRR
     data.push({ range: cell(3), values: [[totalMrr]] })
 
-    // Clients
+    // Clients — monthly equivalent in month column, total invoice amount in col V
     for (const client of clients) {
       const row = CLIENT_ROWS[client.name]
-      if (row) data.push({ range: cell(row), values: [[Math.round(client.annualAmount / 12)]] })
+      if (row) {
+        data.push({ range: cell(row), values: [[Math.round(client.annualAmount / 12)]] })
+        // Col V = total annual invoice amount (raw invoice amount, not ÷12)
+        data.push({ range: `'${SHEET_NAME}'!V${row}`, values: [[client.annualAmount || Math.round(client.annualAmount)]] })
+      }
     }
 
     // Costs

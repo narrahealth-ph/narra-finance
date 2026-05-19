@@ -191,10 +191,17 @@ export default function ReportsPanel({ data, loading, period }: { data: any; loa
     </div>
   )
 
-  const { gl, bs, pl } = data
+  const { gl, bs, pl, fxRates } = data
+
+  // Build exchange rate footer for CSV exports
+  const fxFooter = fxRates && fxRates.length > 0
+    ? '\n\nExchange Rates Used\n' + fxRates.map((r: any) =>
+        `${r.currency} → USD,${r.rate},as of ${r.date ? new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}`
+      ).join('\n') + '\nSource: ExchangeRate-API'
+    : ''
 
   function exportGL() {
-    const csv = buildGLCSV(gl, period, bs)
+    const csv = buildGLCSV(gl, period, bs) + fxFooter
     const blob = new Blob([csv], { type: 'text/csv' })
     const url  = URL.createObjectURL(blob)
     const a    = document.createElement('a'); a.href = url
@@ -203,7 +210,7 @@ export default function ReportsPanel({ data, loading, period }: { data: any; loa
   }
 
   function exportBS() {
-    const csv = buildBSCSV(bs, period)
+    const csv = buildBSCSV(bs, period) + fxFooter
     const blob = new Blob([csv], { type: 'text/csv' })
     const url  = URL.createObjectURL(blob)
     const a    = document.createElement('a'); a.href = url
@@ -212,7 +219,7 @@ export default function ReportsPanel({ data, loading, period }: { data: any; loa
   }
 
   function exportPL() {
-    const csv = buildPLCSV(pl, period)
+    const csv = buildPLCSV(pl, period) + fxFooter
     const blob = new Blob([csv], { type: 'text/csv' })
     const url  = URL.createObjectURL(blob)
     const a    = document.createElement('a'); a.href = url

@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 interface Step {
   id: number
@@ -20,7 +20,15 @@ interface Props {
 }
 
 export default function FinancialCloseWizard({ reportData, selectedMonth, onNavigate, onClose }: Props) {
-  const [activeStep, setActiveStep] = useState<number | null>(null)
+  const [activeStep,    setActiveStep]    = useState<number | null>(null)
+  const [clientCount,   setClientCount]   = useState<number | null>(null)
+
+  useEffect(() => {
+    fetch('/api/clients', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : { clients: [] })
+      .then(d => setClientCount((d.clients || []).filter((c: any) => c.active).length))
+      .catch(() => setClientCount(0))
+  }, [])
 
   const r = reportData?.reconciliation || {}
   const invoiceCount  = r.totalInvoices  ?? 0
@@ -29,17 +37,35 @@ export default function FinancialCloseWizard({ reportData, selectedMonth, onNavi
   const proposedCount = r.proposedCount  ?? 0
   const flaggedCount  = r.flaggedMatches?.length ?? 0
 
+  const mrrClientCount = reportData?.mrr?.clientCount ?? 0
+
   const steps: Step[] = [
     {
       id: 1,
-      title: 'Sync Invoices from Drive',
-      description: 'Pull all expense invoices and receipts from your Google Drive folder for this month. Claude AI will extract vendor, amount, and account code from each file.',
+      title: 'Verify Client & Distributor Mappings',
+      description: 'Go to the Clients tab and make sure all active clients are registered with their correct distributor (the bank name that pays on their behalf, e.g. LAWINA for OFII). This ensures payments get matched correctly during reconciliation. Group related companies under their holding company.',
+      tab: 'clients',
+      checkLabel: `${clientCount ?? 0} active client${(clientCount ?? 0) !== 1 ? 's' : ''} registered`,
+      isDone: (clientCount ?? 0) > 0,
+    },
+    {
+      id: 2,
+      title: 'Sync Outgoing Invoices (Revenue)',
+      description: 'Go to the MRR tab. Your active client contracts are pulled from the Google Sheet — including all ongoing annual subscriptions prorated to this month. Click "Sync Revenue to Period" to lock in accrual revenue for the P&L.',
+      tab: 'mrr',
+      checkLabel: `${mrrClientCount} client${mrrClientCount !== 1 ? 's' : ''} synced`,
+      isDone: mrrClientCount > 0,
+    },
+    {
+      id: 3,
+      title: 'Sync Incoming Invoices (Expenses)',
+      description: 'Go to the Invoices tab and pull all expense invoices and receipts from your Google Drive folder for this month. Claude AI will extract vendor, amount, and account code from each file.',
       tab: 'invoices',
       checkLabel: `${invoiceCount} invoice${invoiceCount !== 1 ? 's' : ''} synced`,
       isDone: invoiceCount > 0,
     },
     {
-      id: 2,
+      id: 4,
       title: 'Import Bank Statement',
       description: 'Upload your Sleek multi-currency bank statement (PDF or CSV). Claude AI extracts every transaction. Review the list and delete any duplicates before saving.',
       tab: 'bank',
@@ -47,9 +73,9 @@ export default function FinancialCloseWizard({ reportData, selectedMonth, onNavi
       isDone: bankTxCount > 0,
     },
     {
-      id: 3,
+      id: 5,
       title: 'Run Reconciliation',
-      description: 'Go to the Reconciliation tab. Expand each cost group and delete any duplicates (click ✕). Then use the AI reconcile feature to match bank transactions against invoices.',
+      description: 'Go to the Reconciliation tab. Expand each cost group and delete any duplicates (click ✕). Then use the AI reconcile feature to match bank transactions against invoices. Payments from distributors (e.g. LAWINA) will be matched to the correct client using your Client registry.',
       tab: 'reconcile',
       checkLabel: `${matchedCount} matched`,
       isDone: matchedCount > 0,
@@ -57,7 +83,7 @@ export default function FinancialCloseWizard({ reportData, selectedMonth, onNavi
       issueLabel: `${proposedCount + flaggedCount} need review`,
     },
     {
-      id: 4,
+      id: 6,
       title: 'Review Proposed Matches',
       description: 'In the Reconciliation → Matches tab, approve or decline each proposed match. Approve confirmed pairs and decline anything that looks wrong.',
       tab: 'reconcile',
@@ -67,20 +93,20 @@ export default function FinancialCloseWizard({ reportData, selectedMonth, onNavi
       issueLabel: `${proposedCount + flaggedCount} still pending`,
     },
     {
-      id: 5,
+      id: 7,
       title: 'Check Manual Adjustments',
       description: 'Go to the Adjustments tab and fill in any manual entries: director amounts owed, income tax payable, GST, investments, or any prepayment schedules.',
       tab: 'entries',
       checkLabel: 'Adjustments reviewed',
-      isDone: false, // always manual — user marks this themselves
+      isDone: false,
     },
     {
-      id: 6,
+      id: 8,
       title: 'Export Reports',
-      description: 'Go to the Reports tab. Review the P&L, Balance Sheet, and General Ledger. Download all three CSVs to send to your accountant.',
+      description: 'Go to the Reports tab. Review the P&L, Balance Sheet, and General Ledger. Download all three CSVs — exchange rates used are stamped at the bottom of each file.',
       tab: 'reports',
       checkLabel: 'Reports exported',
-      isDone: false, // always manual
+      isDone: false,
     },
   ]
 
@@ -158,7 +184,7 @@ export default function FinancialCloseWizard({ reportData, selectedMonth, onNavi
                           ⚠ {step.issueLabel}
                         </span>
                       )}
-                      {!step.isDone && !step.hasIssue && step.id <= 4 && bankTxCount === 0 && invoiceCount === 0 && (
+                      {!step.isDone && !step.hasIssue && step.id <= 6 && bankTxCount === 0 && invoiceCount === 0 && (
                         <span className="text-xs text-narra-muted">Not started</span>
                       )}
                     </div>
@@ -179,6 +205,8 @@ export default function FinancialCloseWizard({ reportData, selectedMonth, onNavi
                              step.tab === 'invoices'  ? 'Invoices' :
                              step.tab === 'bank'      ? 'Bank Import' :
                              step.tab === 'entries'   ? 'Adjustments' :
+                             step.tab === 'mrr'       ? 'MRR' :
+                             step.tab === 'clients'   ? 'Clients' :
                              'Reports'} →
                     </button>
                   </div>
@@ -191,7 +219,7 @@ export default function FinancialCloseWizard({ reportData, selectedMonth, onNavi
         {/* Footer */}
         <div className="px-6 py-4 border-t border-narra-border bg-narra-light/30">
           <p className="text-xs text-narra-muted text-center">
-            Steps 1–4 track automatically · Steps 5–6 are manual checkpoints
+            Steps 1–6 track automatically · Steps 7–8 are manual checkpoints
           </p>
         </div>
       </div>

@@ -9,7 +9,7 @@ import { downloadCSV, toCSV } from '@/lib/csv'
 type HistoryPoint = { month: string; confirmed: number; pending: number; costs: number; net: number }
 type PendingInvoice = { invoiceId: string; clientName: string; amount: number; issueDate: string; daysOutstanding: number; billingType: string }
 type PipelineInvoice = { invoiceId: string; clientName: string; amount: number; issueDate: string; billingType: string; notes?: string }
-type Client = { name: string; annualAmount: number; seats: number; billingType: string; isNew: boolean; isPending: boolean; isOneOff: boolean }
+type Client = { invoiceId?: string; name: string; annualAmount: number; seats: number; billingType: string; issueDate?: string; isNew: boolean; isPending: boolean; isOneOff: boolean; isCarryover?: boolean; countedInMrr?: boolean }
 type Cost = { name: string; amount: number }
 
 const DEFAULT_COSTS: Cost[] = [
@@ -57,7 +57,12 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   const [costs,           setCosts]           = useState<Cost[]>([])
   const [pendingInvoices,  setPendingInvoices]  = useState<PendingInvoice[]>([])
   const [pipelineInvoices, setPipelineInvoices] = useState<PipelineInvoice[]>([])
-  const [activeTab,        setActiveTab]        = useState<'revenue' | 'costs' | 'pending' | 'pipeline'>('revenue')
+  const [activeTab,        setActiveTab]        = useState<'outgoing' | 'incoming' | 'pending' | 'pipeline'>('outgoing')
+  const [incomingInvoices, setIncomingInvoices] = useState<any[]>([])
+  const [dbClients,        setDbClients]        = useState<any[]>([])
+  const [overrides,        setOverrides]        = useState<Record<string, string>>({})
+  const [editingInvoice,   setEditingInvoice]   = useState<{ invoiceId: string; currentName: string } | null>(null)
+  const [editName,         setEditName]         = useState('')
   const [pushing,         setPushing]         = useState(false)
   const [pushMsg,         setPushMsg]         = useState('')
   const [syncing,         setSyncing]         = useState(false)
@@ -83,13 +88,17 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
         // Client breakdown from Sheet — this is cumulative (all active contracts)
         if (json.clientBreakdown?.length > 0) {
           setClients(json.clientBreakdown.map((c: any) => ({
+            invoiceId:    c.invoiceId || '',
             name:         c.name,
             annualAmount: c.annualAmount,
             seats:        0,
             billingType:  c.billingType || 'annual',
+            issueDate:    c.issueDate || '',
             isNew:        c.isNew,
             isPending:    c.isPending || false,
             isOneOff:     c.isOneOff || false,
+            isCarryover:  c.isCarryover || false,
+            countedInMrr: c.countedInMrr ?? true,
           })))
         }
 
@@ -110,7 +119,32 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
       .then(r => r.ok ? r.json() : { pending: [] })
       .then(d => setPendingInvoices(d.pending || []))
       .catch(() => {})
-  }, [periodId])
+  }, [periodId, refreshKey])
+
+  // Load incoming (expense) invoices for this period
+  useEffect(() => {
+    if (!periodId) return
+    fetch(`/api/invoices?periodId=${periodId}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : { invoices: [] })
+      .then(d => setIncomingInvoices(d.invoices || []))
+      .catch(() => {})
+  }, [periodId, refreshKey])
+
+  // Load client registry for distributor info
+  useEffect(() => {
+    fetch('/api/clients', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : { clients: [] })
+      .then(d => setDbClients(d.clients || []))
+      .catch(() => {})
+  }, [])
+
+  // Load invoice name overrides
+  useEffect(() => {
+    fetch('/api/mrr/overrides', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : { overrides: {} })
+      .then(d => setOverrides(d.overrides || {}))
+      .catch(() => {})
+  }, [])
 
   // Pipeline invoices (Sales status) — still from invoice tracker
   useEffect(() => {
@@ -141,13 +175,14 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   }
 
   // Only count paid recurring clients toward confirmed MRR (one-off excluded from MRR)
-  const totalConfirmedMrr = useMemo(() => clients.filter(c => !c.isPending && !c.isOneOff).reduce((s, c) => s + Math.round(c.annualAmount / 12), 0), [clients])
+  const totalConfirmedMrr = useMemo(() => clients.filter(c => !c.isPending && !c.isOneOff && c.countedInMrr !== false).reduce((s, c) => s + Math.round(c.annualAmount / 12), 0), [clients])
   const totalPendingMrr   = useMemo(() => pendingInvoices.reduce((s, i) => s + calcMonthly(i.amount, i.billingType), 0), [pendingInvoices])
   const totalCosts        = costs.reduce((s, c) => s + c.amount, 0)
   const netRevenue        = totalConfirmedMrr - totalCosts
   const opMargin          = totalConfirmedMrr > 0 ? ((netRevenue / totalConfirmedMrr) * 100).toFixed(1) : '0'
   const prevMrr           = history.filter(h => h.confirmed > 0).slice(-2)[0]?.confirmed || 0
   const mrrGrowth         = prevMrr > 0 ? ((totalConfirmedMrr - prevMrr) / prevMrr * 100).toFixed(1) : '0'
+  const hasCurrentYearData = history.some(h => !h.month.includes('2025'))
   const last3             = history.slice(-3).map(d => d.costs)
   const avgBurn           = last3.length > 0 ? last3.reduce((s, c) => s + c, 0) / last3.length : 1
   const cumNet            = history.reduce((s, d) => s + d.net, 0)
@@ -158,14 +193,66 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
     return history
   }, [history, chartView])
 
+  async function saveOverride() {
+    if (!editingInvoice || !editName.trim()) return
+    await fetch('/api/mrr/overrides', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invoiceId: editingInvoice.invoiceId, displayName: editName.trim() }),
+    })
+    setOverrides(prev => ({ ...prev, [editingInvoice.invoiceId]: editName.trim() }))
+    setEditingInvoice(null)
+  }
+
+  async function clearOverride(invoiceId: string) {
+    await fetch(`/api/mrr/overrides?invoiceId=${encodeURIComponent(invoiceId)}`, { method: 'DELETE', credentials: 'include' })
+    setOverrides(prev => { const n = { ...prev }; delete n[invoiceId]; return n })
+  }
+
   async function syncInvoices() {
     setSyncing(true); setSyncResult(null)
-    const year = selectedMonth?.split('_')[1] || '2026'
-    const res = await fetch('/api/invoice-revenue', {
+    // Include all active clients — both paid and pending (sent = committed revenue)
+    // One-off invoices are excluded since they aren't recurring
+    const monthlyClients = clients
+      .filter(c => !c.isOneOff && c.countedInMrr !== false)
+      .map(c => ({
+        name:   c.name,
+        amount: Math.round(calcMonthly(c.annualAmount, c.billingType)),
+      }))
+      .filter(c => c.amount > 0)
+
+    const res  = await fetch('/api/invoice-revenue', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ year }),
+      body: JSON.stringify({ periodId, clients: monthlyClients }),
     })
-    setSyncResult(await res.json()); setSyncing(false); onRefresh()
+    const result = await res.json()
+    setSyncResult(result)
+
+    // Immediately update the history graph with this month's synced MRR
+    if (result.totalMrr > 0 && selectedMonth) {
+      const label = selectedMonth.replace('_', ' ')
+      setHistory(prev => {
+        const without = prev.filter(h => h.month !== label)
+        return [...without, {
+          month:     label,
+          confirmed: result.totalMrr,
+          pending:   0,
+          costs:     totalCosts,
+          net:       result.totalMrr - totalCosts,
+        }].sort((a, b) => {
+          // Keep chronological order
+          const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+          const [am, ay] = a.month.split(' ')
+          const [bm, by] = b.month.split(' ')
+          return parseInt(ay) !== parseInt(by)
+            ? parseInt(ay) - parseInt(by)
+            : MONTHS.indexOf(am) - MONTHS.indexOf(bm)
+        })
+      })
+    }
+
+    setSyncing(false)
+    onRefresh()
   }
 
   async function pushToSheet() {
@@ -203,6 +290,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   }
 
   return (
+    <>
     <div className="space-y-6 animate-fade-up">
 
       {/* Header */}
@@ -225,9 +313,10 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
               Full Year
             </button>
           </div>
-          <button onClick={syncInvoices} disabled={syncing}
-            className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-dark hover:bg-narra-light transition-all disabled:opacity-50">
-            {syncing ? '⟳ Syncing…' : '⟳ Sync Invoices'}
+          <button onClick={syncInvoices} disabled={syncing || clients.length === 0 || !periodId}
+            className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-dark hover:bg-narra-light transition-all disabled:opacity-50"
+            title={clients.length === 0 ? 'No clients loaded from invoice tracker yet' : 'Save active client MRR for this period so the P&L uses accrual revenue'}>
+            {syncing ? '⟳ Syncing…' : clients.length === 0 ? '⟳ Loading clients…' : '⟳ Sync Revenue to Period'}
           </button>
           <button onClick={exportMRR}
             className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-dark hover:bg-narra-light transition-all">
@@ -246,10 +335,11 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
         <div className={`rounded-xl px-4 py-3 text-sm ${pushMsg.startsWith('✓') ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>{pushMsg}</div>
       )}
       {syncResult && (
-        <div className="bg-narra-light/60 border border-narra-border rounded-xl px-4 py-3 text-sm text-narra-dark">
-          ✓ Synced {syncResult.invoicesProcessed} invoices —{' '}
-          <span className="text-green-700">{syncResult.fullyPaid?.count} fully paid (${syncResult.fullyPaid?.total?.toLocaleString()})</span>
-          {syncResult.sent?.count > 0 && <span className="text-amber-600 ml-2">· {syncResult.sent?.count} pending</span>}
+        <div className={`border rounded-xl px-4 py-3 text-sm ${syncResult.error ? 'bg-red-50 border-red-200 text-red-700' : 'bg-green-50 border-green-200 text-green-700'}`}>
+          {syncResult.error
+            ? `✗ ${syncResult.error}`
+            : `✓ Synced ${syncResult.saved} client${syncResult.saved !== 1 ? 's' : ''} · Total MRR $${(syncResult.totalMrr || 0).toLocaleString()} — P&L will now use accrual revenue`
+          }
         </div>
       )}
 
@@ -285,16 +375,18 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           {[
             { label: 'Confirmed MRR',  value: `$${totalConfirmedMrr.toLocaleString()}`,           sub: `${parseFloat(mrrGrowth) >= 0 ? '+' : ''}${mrrGrowth}% vs prev month`, vc: 'text-narra-dark',   sc: parseFloat(mrrGrowth) >= 0 ? 'text-green-600' : 'text-red-500' },
             { label: 'Pending MRR',    value: `$${Math.round(totalPendingMrr).toLocaleString()}`,  sub: `${pendingInvoices.length} invoice(s) awaiting payment`,              vc: 'text-amber-600',   sc: 'text-amber-500' },
             { label: 'Net Revenue',    value: `$${netRevenue.toLocaleString()}`,                   sub: `${opMargin}% operating margin`,                                       vc: netRevenue >= 0 ? 'text-green-600' : 'text-red-500', sc: 'text-narra-muted' },
-            { label: 'Cash Runway',    value: runway >= 999 ? '∞' : `${runway} months`,           sub: `$${Math.round(avgBurn).toLocaleString()} avg monthly burn`,            vc: runway < 3 ? 'text-red-500' : runway < 6 ? 'text-amber-600' : 'text-narra-dark', sc: 'text-narra-muted' },
+            { label: 'Cash Runway',    value: hasCurrentYearData ? (runway >= 999 ? '∞' : `${runway} months`) : '—',  sub: hasCurrentYearData ? `$${Math.round(avgBurn).toLocaleString()} avg monthly burn` : 'Sync a month to calculate', vc: !hasCurrentYearData ? 'text-narra-muted' : runway < 3 ? 'text-red-500' : runway < 6 ? 'text-amber-600' : 'text-narra-dark', sc: 'text-narra-muted' },
+            { label: 'Total LTV',      value: dbClients.length > 0 ? `$${dbClients.reduce((s: number, c: any) => s + (c.ltv || 0), 0).toLocaleString()}` : '—', sub: `${dbClients.filter((c: any) => c.ltv > 0).length} clients with revenue`, vc: 'text-narra-dark', sc: 'text-narra-muted' },
+            { label: 'Churn',          value: dbClients.filter((c: any) => !c.active).length > 0 ? `${dbClients.filter((c: any) => !c.active).length}` : '0', sub: dbClients.filter((c: any) => !c.active).length > 0 ? 'inactive clients — check holding groups' : 'No known churn', vc: dbClients.filter((c: any) => !c.active).length > 0 ? 'text-red-500' : 'text-green-600', sc: 'text-narra-muted' },
           ].map(t => (
-            <div key={t.label} className="bg-white border border-narra-border rounded-xl p-5">
+            <div key={t.label} className="bg-white border border-narra-border rounded-xl p-4">
               <div className="text-xs text-narra-muted uppercase tracking-widest mb-2 font-body">{t.label}</div>
-              <div className={`font-heading text-2xl font-semibold ${t.vc}`}>{t.value}</div>
+              <div className={`font-heading text-xl font-semibold ${t.vc}`}>{t.value}</div>
               <div className={`text-xs mt-1 ${t.sc}`}>{t.sub}</div>
             </div>
           ))}
@@ -305,7 +397,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
       <div className="bg-white border border-narra-border rounded-xl p-6">
         <div className="flex items-start justify-between mb-4 flex-wrap gap-3">
           <div>
-            <h3 className="font-heading font-semibold text-narra-dark">MRR History</h3>
+            <h3 className="font-heading font-semibold text-narra-dark">Monthly Recurring Revenue</h3>
             <p className="text-xs text-narra-muted mt-0.5">Hover any point to see exact values</p>
             {/* Legend */}
             <div className="flex gap-5 mt-3 flex-wrap">
@@ -361,10 +453,10 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
       {/* Sub-tabs */}
       <div className="flex gap-1 border-b border-narra-border">
         {[
-          { id: 'revenue',  label: 'Client MRR' },
-          { id: 'costs',    label: 'Costs' },
-          { id: 'pending',  label: `Pending Collection${pendingInvoices.length > 0 ? ` (${pendingInvoices.length})` : ''}` },
-          { id: 'pipeline', label: `Sales Pipeline${pipelineInvoices.length > 0 ? ` (${pipelineInvoices.length})` : ''}` },
+          { id: 'outgoing',  label: `Outgoing · ${clients.length} client${clients.length !== 1 ? 's' : ''}` },
+          { id: 'incoming',  label: `Incoming · ${incomingInvoices.length} invoice${incomingInvoices.length !== 1 ? 's' : ''}` },
+          { id: 'pending',   label: `Pending Collection${pendingInvoices.length > 0 ? ` (${pendingInvoices.length})` : ''}` },
+          { id: 'pipeline',  label: `Pipeline${pipelineInvoices.length > 0 ? ` (${pipelineInvoices.length})` : ''}` },
         ].map(t => (
           <button key={t.id} onClick={() => setActiveTab(t.id as any)}
             className={`px-5 py-2.5 text-sm font-body transition-all border-b-2 -mb-px whitespace-nowrap
@@ -374,8 +466,8 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
         ))}
       </div>
 
-      {/* Client MRR */}
-      {activeTab === 'revenue' && (
+      {/* Outgoing invoices (revenue / client MRR) */}
+      {activeTab === 'outgoing' && (
         <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
           <div className="px-4 py-3 bg-narra-light/40 border-b border-narra-border flex justify-between items-center">
             <div>
@@ -389,18 +481,19 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-narra-dark text-white">
-                {['Client', 'Billing', 'Invoice Amt', 'MRR', 'Payment', '% of MRR'].map(h => (
-                  <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'Client' || h === 'Billing' || h === 'Payment' ? 'text-left' : 'text-right'}`}>{h}</th>
+                {['Invoice #', 'Client', 'Distributor', 'Issued', 'Billing', 'Invoice Amt', 'MRR', 'Payment', '% of MRR'].map(h => (
+                  <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${['Invoice #','Client','Distributor','Issued','Billing','Payment'].includes(h) ? 'text-left' : 'text-right'}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {clients.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-narra-muted text-sm">
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-narra-muted text-sm">
                   Loading from outgoing invoice tracker…
                 </td></tr>
               ) : clients.map((c, i) => {
-                // One-off: annualAmount IS the invoice amount (not ARR); recurring: annualAmount = monthlyMrr*12
+                const displayName = (c.invoiceId && overrides[c.invoiceId]) || c.name
+                const hasOverride = !!(c.invoiceId && overrides[c.invoiceId])
                 const mrr        = c.isOneOff ? c.annualAmount : Math.round(c.annualAmount / 12)
                 const invoiceAmt = c.isOneOff ? c.annualAmount
                                  : c.billingType === 'monthly'  ? mrr
@@ -410,14 +503,32 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                                    : c.billingType === 'monthly'   ? 'Monthly'
                                    : c.billingType === 'quarterly'  ? 'Quarterly'
                                    : 'Annual'
-                const pct = !c.isOneOff && totalConfirmedMrr > 0 ? (mrr / totalConfirmedMrr * 100).toFixed(0) : '—'
+                const pct = !c.isOneOff && c.countedInMrr !== false && totalConfirmedMrr > 0 ? (mrr / totalConfirmedMrr * 100).toFixed(0) : '—'
+                const dbClient = dbClients.find((dc: any) => dc.name.toLowerCase() === displayName.toLowerCase())
                 return (
-                  <tr key={i} className={`border-t border-narra-border hover:bg-narra-surface transition-colors ${c.isPending ? 'opacity-75' : ''}`}>
+                  <tr key={i} className={`border-t border-narra-border hover:bg-narra-surface transition-colors ${c.isPending ? 'opacity-75' : ''} ${c.countedInMrr === false ? 'opacity-50' : ''}`}>
+                    <td className="px-4 py-2.5 font-mono text-xs text-narra-muted whitespace-nowrap">{c.invoiceId || '—'}</td>
                     <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         {c.isNew && <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">New</span>}
-                        <span className="font-medium text-narra-dark">{c.name}</span>
+                        {c.isCarryover && <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">↩ Carried over</span>}
+                        {c.countedInMrr === false && <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">Superseded</span>}
+                        <span className="font-medium text-narra-dark">{displayName}</span>
+                        {hasOverride && <span className="text-xs text-narra-muted italic">({c.name})</span>}
+                        <button
+                          onClick={() => { setEditingInvoice({ invoiceId: c.invoiceId || '', currentName: displayName }); setEditName(displayName) }}
+                          className="text-narra-muted hover:text-narra-dark text-xs ml-0.5"
+                          title="Edit display name">✎</button>
+                        {hasOverride && <button onClick={() => clearOverride(c.invoiceId!)} className="text-xs text-red-400 hover:text-red-600" title="Revert">✕</button>}
                       </div>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {dbClient?.distributor
+                        ? <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">{dbClient.distributor}</span>
+                        : <span className="text-xs text-narra-border">Direct</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-narra-muted text-xs">
+                      {c.issueDate ? new Date(c.issueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
                     </td>
                     <td className="px-4 py-2.5">
                       <span className={`text-xs px-2 py-0.5 rounded-full ${c.isOneOff ? 'bg-purple-100 text-purple-700' : 'bg-narra-light text-narra-muted'}`}>{billingLabel}</span>
@@ -455,7 +566,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                 return (
                   <>
                     <tr className="border-t-2 border-narra-dark bg-narra-surface">
-                      <td className="px-4 py-3 font-heading font-bold text-narra-dark" colSpan={3}>
+                      <td className="px-4 py-3 font-heading font-bold text-narra-dark" colSpan={4}>
                         Confirmed MRR · {confirmedRecurring.length} recurring client{confirmedRecurring.length !== 1 ? 's' : ''} (Paid)
                       </td>
                       <td className="px-4 py-3 text-right font-heading font-bold text-narra-dark">${totalConfirmedMrr.toLocaleString()}/mo</td>
@@ -463,7 +574,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                     </tr>
                     {confirmedOneOffTotal > 0 && (
                       <tr className="border-t border-purple-200 bg-purple-50">
-                        <td className="px-4 py-3 font-medium text-purple-800" colSpan={3}>
+                        <td className="px-4 py-3 font-medium text-purple-800" colSpan={4}>
                           + One-off revenue this month ({confirmedOneOff.length} payment{confirmedOneOff.length !== 1 ? 's' : ''}, Paid)
                         </td>
                         <td className="px-4 py-3 text-right font-medium text-purple-800">${confirmedOneOffTotal.toLocaleString()}</td>
@@ -472,7 +583,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                     )}
                     {pendingMrr > 0 && (
                       <tr className="border-t border-amber-200 bg-amber-50">
-                        <td className="px-4 py-3 font-medium text-amber-700" colSpan={3}>
+                        <td className="px-4 py-3 font-medium text-amber-700" colSpan={4}>
                           + Pending recurring · {pendingRecurring.length} invoice{pendingRecurring.length !== 1 ? 's' : ''} sent, not yet paid
                         </td>
                         <td className="px-4 py-3 text-right font-medium text-amber-700">${pendingMrr.toLocaleString()}/mo</td>
@@ -481,7 +592,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                     )}
                     {pendingOneOffTotal > 0 && (
                       <tr className="border-t border-amber-100 bg-amber-50/50">
-                        <td className="px-4 py-3 font-medium text-amber-600" colSpan={3}>
+                        <td className="px-4 py-3 font-medium text-amber-600" colSpan={4}>
                           + Pending one-off · {pendingOneOff.length} invoice{pendingOneOff.length !== 1 ? 's' : ''} sent, not yet paid
                         </td>
                         <td className="px-4 py-3 text-right font-medium text-amber-600">${pendingOneOffTotal.toLocaleString()}</td>
@@ -499,53 +610,66 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
         </div>
       )}
 
-      {/* Costs */}
-      {activeTab === 'costs' && (
+      {/* Incoming invoices (expense invoices from DB) */}
+      {activeTab === 'incoming' && (
         <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-narra-dark text-white">
-                {['Cost Item', 'Monthly (USD)', 'Annual (USD)', '% of MRR'].map(h => (
-                  <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'Cost Item' ? 'text-left' : 'text-right'}`}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {costs.map((c, i) => (
-                <tr key={i} className="border-t border-narra-border hover:bg-narra-surface">
-                  <td className="px-4 py-2.5">
-                    <input value={c.name} onChange={e => setCosts(p => p.map((co, idx) => idx === i ? { ...co, name: e.target.value } : co))}
-                      className="bg-transparent outline-none border-b border-transparent focus:border-narra-muted w-40 font-medium text-narra-dark" />
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <span className="text-narra-muted text-xs mr-1">$</span>
-                    <input type="number" value={c.amount} onChange={e => setCosts(p => p.map((co, idx) => idx === i ? { ...co, amount: parseFloat(e.target.value) || 0 } : co))}
-                      className="bg-transparent outline-none text-right border-b border-transparent focus:border-narra-muted w-24 font-medium text-red-500" />
-                  </td>
-                  <td className="px-4 py-2.5 text-right text-narra-muted">${(c.amount * 12).toLocaleString()}</td>
-                  <td className="px-4 py-2.5 text-right text-xs text-red-400">{totalConfirmedMrr > 0 ? (c.amount / totalConfirmedMrr * 100).toFixed(1) : 0}%</td>
-                </tr>
-              ))}
-              <tr className="border-t-2 border-narra-dark bg-narra-surface">
-                <td className="px-4 py-3 font-heading font-bold text-narra-dark">Total Costs</td>
-                <td className="px-4 py-3 text-right font-heading font-bold text-red-500">${totalCosts.toLocaleString()}</td>
-                <td className="px-4 py-3 text-right font-heading font-bold text-red-500">${(totalCosts * 12).toLocaleString()}</td>
-                <td className="px-4 py-3 text-right font-heading font-bold text-red-500">{totalConfirmedMrr > 0 ? (totalCosts / totalConfirmedMrr * 100).toFixed(1) : 0}%</td>
-              </tr>
-              <tr className="border-t border-narra-border bg-narra-light/30">
-                <td className="px-4 py-3 font-heading font-semibold text-narra-dark">Net Revenue</td>
-                <td className={`px-4 py-3 text-right font-heading font-bold ${netRevenue >= 0 ? 'text-green-600' : 'text-red-500'}`}>${netRevenue.toLocaleString()}</td>
-                <td className={`px-4 py-3 text-right font-heading font-bold ${netRevenue >= 0 ? 'text-green-600' : 'text-red-500'}`}>${(netRevenue * 12).toLocaleString()}</td>
-                <td className={`px-4 py-3 text-right font-heading font-bold ${netRevenue >= 0 ? 'text-green-600' : 'text-red-500'}`}>{opMargin}% margin</td>
-              </tr>
-            </tbody>
-          </table>
-          <div className="px-4 py-3 border-t border-narra-border">
-            <button onClick={() => setCosts(p => [...p, { name: 'New Cost', amount: 0 }])}
-              className="text-sm text-narra-muted hover:text-narra-dark border border-dashed border-narra-border rounded-lg px-3 py-1.5 transition-all hover:border-narra-muted">
-              + Add cost item
-            </button>
+          <div className="px-4 py-3 bg-narra-light/40 border-b border-narra-border flex justify-between items-center">
+            <div>
+              <span className="text-sm font-heading font-medium text-narra-dark">Incoming Invoices (Expenses)</span>
+              <p className="text-xs text-narra-muted mt-0.5">Expense invoices synced from Google Drive for this period</p>
+            </div>
+            <span className="text-xs text-narra-muted">{incomingInvoices.length} invoice{incomingInvoices.length !== 1 ? 's' : ''} · Total ${incomingInvoices.reduce((s, i) => s + parseFloat(i.amount_usd || i.amount || 0), 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
           </div>
+          {incomingInvoices.length === 0 ? (
+            <div className="px-4 py-10 text-center text-narra-muted text-sm">
+              No expense invoices for this period yet — sync from the Invoices tab first.
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-narra-dark text-white">
+                  {['Vendor', 'Account', 'Date', 'Currency', 'Amount (USD)', 'Status'].map(h => (
+                    <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'Amount (USD)' ? 'text-right' : 'text-left'}`}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {incomingInvoices.map((inv: any, i: number) => (
+                  <tr key={i} className="border-t border-narra-border hover:bg-narra-surface transition-colors">
+                    <td className="px-4 py-2.5 font-medium text-narra-dark">{inv.vendor || inv.drive_file_name || '—'}</td>
+                    <td className="px-4 py-2.5 text-narra-muted text-xs">{inv.account_name || '—'}</td>
+                    <td className="px-4 py-2.5 text-narra-muted">{inv.date ? new Date(inv.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+                    <td className="px-4 py-2.5">
+                      {inv.currency && inv.currency !== 'USD'
+                        ? <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">{inv.currency}</span>
+                        : <span className="text-xs text-narra-muted">USD</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-medium text-narra-dark">
+                      ${parseFloat(inv.amount_usd || inv.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        inv.status === 'matched'  ? 'bg-green-100 text-green-700' :
+                        inv.status === 'proposed' ? 'bg-blue-100 text-blue-700' :
+                        inv.status === 'flagged'  ? 'bg-amber-100 text-amber-700' :
+                        'bg-gray-100 text-gray-600'}`}>
+                        {inv.status || 'unmatched'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-narra-dark bg-narra-surface">
+                  <td colSpan={4} className="px-4 py-3 font-heading font-semibold text-narra-dark">Total Expenses</td>
+                  <td className="px-4 py-3 text-right font-heading font-bold text-red-500">
+                    ${incomingInvoices.reduce((s: number, i: any) => s + parseFloat(i.amount_usd || i.amount || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          )}
         </div>
       )}
 
@@ -698,5 +822,37 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
         </div>
       )}
     </div>
+
+      {/* Edit invoice display name modal */}
+      {editingInvoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setEditingInvoice(null)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <h3 className="font-heading font-semibold text-narra-dark">Edit Invoice Name</h3>
+            <p className="text-xs text-narra-muted">Invoice: <span className="font-mono">{editingInvoice.invoiceId || '(no ID)'}</span></p>
+            <div>
+              <label className="text-xs text-narra-muted uppercase tracking-widest font-body block mb-1">Display Name</label>
+              <input
+                value={editName}
+                onChange={e => setEditName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && saveOverride()}
+                className="w-full border border-narra-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-narra-green/30"
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setEditingInvoice(null)}
+                className="px-4 py-2 border border-narra-border rounded-lg text-sm text-narra-muted hover:text-narra-dark transition-all">
+                Cancel
+              </button>
+              <button onClick={saveOverride} disabled={!editName.trim()}
+                className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50">
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }

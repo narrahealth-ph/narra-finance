@@ -10,6 +10,7 @@ import ReconciliationPanel from '@/components/ReconciliationPanel'
 import AIInsights from '@/components/AIInsights'
 import ManualEntriesPanel from '@/components/ManualEntriesPanel'
 import FinancialCloseWizard from '@/components/FinancialCloseWizard'
+import ClientsPanel from '@/components/ClientsPanel'
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -20,7 +21,7 @@ const MONTHS = [
 const _cy = new Date().getFullYear()
 const YEARS = Array.from({ length: _cy - 2022 }, (_, i) => String(2024 + i))
 
-type Tab = 'mrr' | 'reconcile' | 'invoices' | 'bank' | 'reports' | 'entries' | 'ai'
+type Tab = 'mrr' | 'clients' | 'reconcile' | 'invoices' | 'bank' | 'reports' | 'entries' | 'ai'
 
 export default function FinancePage() {
   const router = useRouter()
@@ -95,6 +96,7 @@ export default function FinancePage() {
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
     { id: 'mrr',       label: 'MRR',             icon: '📈' },
+    { id: 'clients',   label: 'Clients',          icon: '🏢' },
     { id: 'reconcile', label: 'Reconciliation',   icon: '⚖️' },
     { id: 'invoices',  label: 'Invoices',         icon: '📄' },
     { id: 'bank',      label: 'Bank Import',      icon: '🏦' },
@@ -249,6 +251,9 @@ export default function FinancePage() {
                 selectedMonth={selectedMonth}
                 refreshKey={mrrRefreshKey}
               />
+            )}
+            {tab === 'clients' && (
+              <ClientsPanel />
             )}
             {tab === 'reconcile' && (
               <ReconciliationPanel

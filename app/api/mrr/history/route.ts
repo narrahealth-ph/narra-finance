@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { google } from 'googleapis'
+import { query } from '@/lib/db'
 
 const MRR_SHEET_ID     = '1057EJCsrTPT7LFHBYqsqYVVERuwgZ7kScmHy8j1Or8s'
 const MRR_TAB          = '🟩 MRR'
@@ -190,10 +191,26 @@ export async function GET(req: NextRequest) {
         pt.net       = pt.confirmed - pt.costs
       }
 
-      // Add 2026+ months
+      // Add 2026+ months — costs from DB invoices (incoming expense invoices per period)
       const today       = new Date()
       const currentYear = today.getFullYear()
       const maxYear     = Math.max(currentYear, 2026)
+
+      // Load all periods with their total expense costs from DB
+      const costsRes = await query(
+        `SELECT p.start_date, COALESCE(SUM(i.amount_usd), 0) AS total_costs
+         FROM periods p
+         LEFT JOIN invoices i ON i.period_id = p.id
+         WHERE EXTRACT(year FROM p.start_date) >= 2026
+         GROUP BY p.start_date`
+      ).catch(() => ({ rows: [] }))
+      // Key: "YYYY-MM" → total costs in USD
+      const costsByMonth: Record<string, number> = {}
+      for (const row of (costsRes as any).rows) {
+        const d = new Date(row.start_date)
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+        costsByMonth[key] = parseFloat(row.total_costs || 0)
+      }
 
       for (let yr = 2026; yr <= maxYear; yr++) {
         const lastMonth = yr < currentYear ? 11 : today.getMonth()
@@ -203,7 +220,9 @@ export async function GET(req: NextRequest) {
           const mStart    = new Date(yr, m, 1)
           const mEnd      = new Date(yr, m + 1, 0)
           const confirmed = calcMrrForMonth(invRows, mStart, mEnd)
-          history.push({ month: label, year: yr, confirmed, pending: 0, costs: 0, net: confirmed })
+          const key       = `${yr}-${String(m + 1).padStart(2, '0')}`
+          const costs     = costsByMonth[key] || 0
+          history.push({ month: label, year: yr, confirmed, pending: 0, costs, net: confirmed - costs })
         }
       }
     }

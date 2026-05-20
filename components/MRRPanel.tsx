@@ -73,6 +73,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   const [cumulativeCash,       setCumulativeCash]       = useState<number | null>(null)
   const [closing2025,          setClosing2025]          = useState<number>(0)
   const [totalInvoicedByYear,  setTotalInvoicedByYear]  = useState<Record<number, number>>({})
+  const [bankReceivedByYear,   setBankReceivedByYear]   = useState<Record<number, number>>({})
   const [sheetRefreshKey,      setSheetRefreshKey]      = useState(0)
   const selectedYear = selectedMonth?.split('_')[1] || '2026'
 
@@ -112,6 +113,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
         if (json.cumulativeCash        !== undefined) setCumulativeCash(json.cumulativeCash)
         if (json.closing2025           !== undefined) setClosing2025(json.closing2025)
         if (json.totalInvoicedByYear   !== undefined) setTotalInvoicedByYear(json.totalInvoicedByYear)
+        if (json.bankReceivedByYear    !== undefined) setBankReceivedByYear(json.bankReceivedByYear)
       })
       .catch(() => {})
       .finally(() => setHistoryLoading(false))
@@ -359,7 +361,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
 
       {/* KPI tiles — switches between month and year view */}
       {periodView === 'year' && yearTotals[parseInt(selectedYear)] ? (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           {/* Total Invoiced — full cash value of all invoices issued this year */}
           <div className="bg-narra-dark text-white rounded-xl p-5">
             <div className="text-xs text-white/40 uppercase tracking-widest mb-2 font-body">Total Invoiced {selectedYear}</div>
@@ -367,6 +369,14 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
               ${(totalInvoicedByYear[parseInt(selectedYear)] || 0).toLocaleString()}
             </div>
             <div className="text-xs mt-1 text-white/40">Full invoice amounts issued this year</div>
+          </div>
+          {/* Cash received from bank statements */}
+          <div className="bg-narra-dark text-white rounded-xl p-5">
+            <div className="text-xs text-white/40 uppercase tracking-widest mb-2 font-body">Cash Received {selectedYear}</div>
+            <div className="font-heading text-2xl font-semibold text-narra-green">
+              ${(bankReceivedByYear[parseInt(selectedYear)] || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            </div>
+            <div className="text-xs mt-1 text-white/40">Revenue deposits in bank statements</div>
           </div>
           <div className="bg-white border border-narra-border rounded-xl p-5">
             <div className="text-xs text-narra-muted uppercase tracking-widest mb-2 font-body">Accrual MRR {selectedYear}</div>

@@ -323,7 +323,25 @@ export async function GET(req: NextRequest) {
         }))
     }
 
-    // ── 6. Total invoiced per year (cash basis — full invoice amounts issued that year) ──
+    // ── 6. Total cash received per year from bank statements ─────────────────
+    const bankReceivedByYear: Record<number, number> = {}
+    try {
+      const bankRes = await query(
+        `SELECT EXTRACT(year FROM p.start_date)::int AS yr,
+                COALESCE(SUM(bt.amount_usd), 0) AS total
+         FROM bank_transactions bt
+         JOIN periods p ON p.id = bt.period_id
+         WHERE bt.type = 'revenue'
+         GROUP BY yr`
+      )
+      for (const row of bankRes.rows) {
+        bankReceivedByYear[row.yr] = parseFloat(row.total || 0)
+      }
+    } catch (e) {
+      console.error('[mrr/history] bank received query failed:', e)
+    }
+
+    // ── 7. Total invoiced per year (cash basis — full invoice amounts issued that year) ──
     const totalInvoicedByYear: Record<number, number> = {}
     if (invRows.length > 0) {
       const seenKeys = new Set<string>()
@@ -356,7 +374,7 @@ export async function GET(req: NextRequest) {
       yearTotals[yr].net   += pt.net
     }
 
-    return NextResponse.json({ history, clientBreakdown, yearTotals, totalInvoicedByYear, cumulativeCash, closing2025 })
+    return NextResponse.json({ history, clientBreakdown, yearTotals, totalInvoicedByYear, bankReceivedByYear, cumulativeCash, closing2025 })
   } catch (err: any) {
     console.error('MRR history error:', err.message)
     return NextResponse.json({ history: [], clientBreakdown: [], yearTotals: {} })

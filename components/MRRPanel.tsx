@@ -70,8 +70,8 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   const [chartView,    setChartView]    = useState<'all' | '2025'>('all')
   const [periodView,   setPeriodView]   = useState<'month' | 'year'>('month')
   const [yearTotals,   setYearTotals]   = useState<Record<number, { mrr: number; costs: number; net: number }>>({})
-  const [cumulativeCash,       setCumulativeCash]       = useState<number | null>(null)
-  const [closing2025,          setClosing2025]          = useState<number>(0)
+  const [cumulativeCash,       setCumulativeCash]       = useState<number | null>(null)  // kept for legacy compat
+  const [closing2025,          setClosing2025]          = useState<number>(0)            // kept for legacy compat
   const [totalInvoicedByYear,  setTotalInvoicedByYear]  = useState<Record<number, number>>({})
   const [bankReceivedByYear,   setBankReceivedByYear]   = useState<Record<number, number>>({})
   const [sheetRefreshKey,      setSheetRefreshKey]      = useState(0)
@@ -193,6 +193,20 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   const avgBurn           = last3.length > 0 ? last3.reduce((s, c) => s + c, 0) / last3.length : 1
   const cumNet            = history.reduce((s, d) => s + d.net, 0)
   const runway            = avgBurn > 0 ? Math.floor(cumNet / avgBurn) : 999
+
+  // Cash position = cumulative (bank revenue − costs) across all years up to selected year
+  const cashPosition = useMemo(() => {
+    const selectedYearNum = parseInt(selectedYear)
+    const allYears = Array.from(new Set([
+      ...Object.keys(bankReceivedByYear).map(Number),
+      ...Object.keys(yearTotals).map(Number),
+    ])).filter(yr => yr <= selectedYearNum).sort((a, b) => a - b)
+    let running = 0
+    for (const yr of allYears) {
+      running += (bankReceivedByYear[yr] || 0) - (yearTotals[yr]?.costs || 0)
+    }
+    return running
+  }, [bankReceivedByYear, yearTotals, selectedYear])
 
   const chartData = useMemo(() => {
     if (chartView === '2025') return history.filter(h => h.month.includes('2025'))
@@ -395,13 +409,13 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
             </div>
             <div className="text-xs mt-1 text-narra-muted">Accrual revenue minus costs</div>
           </div>
-          <div className={`rounded-xl p-5 border ${cumulativeCash !== null && cumulativeCash >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+          <div className={`rounded-xl p-5 border ${cashPosition >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
             <div className="text-xs text-narra-muted uppercase tracking-widest mb-2 font-body">Cash Position</div>
-            <div className={`font-heading text-2xl font-semibold ${cumulativeCash !== null && cumulativeCash >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-              {cumulativeCash !== null ? `$${Math.abs(cumulativeCash).toLocaleString()}` : '—'}
+            <div className={`font-heading text-2xl font-semibold ${cashPosition >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+              {cashPosition < 0 ? '(' : ''}${Math.abs(cashPosition).toLocaleString(undefined, { maximumFractionDigits: 0 })}{cashPosition < 0 ? ')' : ''}
             </div>
             <div className="text-xs mt-1 text-narra-muted">
-              ${closing2025.toLocaleString()} carried forward + {selectedYear} net
+              Cumulative bank receipts minus all costs to end of {selectedYear}
             </div>
           </div>
         </div>

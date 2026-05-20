@@ -516,7 +516,16 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                                    : c.billingType === 'quarterly'  ? 'Quarterly'
                                    : 'Annual'
                 const pct = !c.isOneOff && !c.isPending && totalConfirmedMrr > 0 ? (mrr / totalConfirmedMrr * 100).toFixed(0) : '—'
-                const dbClient = dbClients.find((dc: any) => dc.name.toLowerCase() === displayName.toLowerCase())
+                const dbClient = dbClients.find((dc: any) => {
+                  const a = dc.name.toLowerCase()
+                  const b = displayName.toLowerCase()
+                  if (a === b) return true
+                  if (a.includes(b) || b.includes(a)) return true
+                  // word overlap: any meaningful word (>3 chars) shared between names
+                  const wordsA = a.split(/\s+/).filter((w: string) => w.length > 3)
+                  const wordsB = b.split(/\s+/).filter((w: string) => w.length > 3)
+                  return wordsA.some((w: string) => wordsB.includes(w))
+                })
                 return (
                   <tr key={i} className={`border-t border-narra-border hover:bg-narra-surface transition-colors ${c.isPending ? 'opacity-75' : ''}`}>
                     <td className="px-4 py-2.5 font-mono text-xs text-narra-muted whitespace-nowrap">{c.invoiceId || '—'}</td>

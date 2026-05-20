@@ -323,7 +323,29 @@ export async function GET(req: NextRequest) {
         }))
     }
 
-    // ── 6. Year totals ────────────────────────────────────────────────────────
+    // ── 6. Total invoiced per year (cash basis — full invoice amounts issued that year) ──
+    const totalInvoicedByYear: Record<number, number> = {}
+    if (invRows.length > 0) {
+      const seenKeys = new Set<string>()
+      for (const r of invRows) {
+        const invoiceId    = (r[0] || '').trim()
+        const clientName   = (r[1] || '').trim()
+        const amount       = parseNum((r[5] || '').toString())
+        const status       = (r[6] || '').toLowerCase().trim()
+        const issueDateStr = (r[4] || '').trim()
+        if (!clientName || !amount) continue
+        if (!isActiveStatus(status)) continue
+        const d = parseDate(issueDateStr)
+        if (!d) continue
+        const key = invoiceId || `${clientName.toLowerCase()}|${issueDateStr}|${amount}`
+        if (seenKeys.has(key)) continue
+        seenKeys.add(key)
+        const yr = d.getFullYear()
+        totalInvoicedByYear[yr] = (totalInvoicedByYear[yr] || 0) + amount
+      }
+    }
+
+    // ── 7. Year totals ────────────────────────────────────────────────────────
     const yearTotals: Record<number, { mrr: number; costs: number; net: number }> = {}
     for (const pt of history) {
       if (pt.confirmed === 0 && pt.costs === 0) continue // skip empty months for totals
@@ -334,7 +356,7 @@ export async function GET(req: NextRequest) {
       yearTotals[yr].net   += pt.net
     }
 
-    return NextResponse.json({ history, clientBreakdown, yearTotals, cumulativeCash, closing2025 })
+    return NextResponse.json({ history, clientBreakdown, yearTotals, totalInvoicedByYear, cumulativeCash, closing2025 })
   } catch (err: any) {
     console.error('MRR history error:', err.message)
     return NextResponse.json({ history: [], clientBreakdown: [], yearTotals: {} })

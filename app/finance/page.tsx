@@ -105,8 +105,18 @@ export default function FinancePage() {
     { id: 'ai',        label: 'AI Insights',      icon: '✨' },
   ]
 
+  const isLoading = loadingReport || !periodId || clearing
+
   return (
     <div className="min-h-screen flex flex-col bg-narra-surface">
+
+      {/* Top loading bar */}
+      {isLoading && (
+        <div className="fixed top-0 left-0 right-0 z-50 h-0.5 bg-narra-dark/20 overflow-hidden">
+          <div className="h-full bg-narra-green animate-loading-bar" />
+        </div>
+      )}
+
       {showWizard && (
         <FinancialCloseWizard
           reportData={reportData}
@@ -249,7 +259,7 @@ export default function FinancePage() {
       </div>
 
       {/* Content */}
-      <main className="flex-1 px-6 py-6 max-w-7xl mx-auto w-full">
+      <main className={`flex-1 px-6 py-6 max-w-7xl mx-auto w-full transition-opacity duration-200 ${loadingReport ? 'opacity-60 pointer-events-none' : 'opacity-100'}`}>
         {!periodId ? (
           <div className="flex items-center justify-center h-64 text-narra-muted">
             Loading period…

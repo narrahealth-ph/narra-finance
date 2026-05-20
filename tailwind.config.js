@@ -19,6 +19,26 @@ module.exports = {
         heading: ['Albert Sans', 'sans-serif'],
         body:    ['Inter', 'sans-serif'],
       },
+      keyframes: {
+        'loading-bar': {
+          '0%':   { transform: 'translateX(-100%)' },
+          '50%':  { transform: 'translateX(0%)' },
+          '100%': { transform: 'translateX(100%)' },
+        },
+        'fade-up': {
+          '0%':   { opacity: '0', transform: 'translateY(8px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        'pulse-soft': {
+          '0%, 100%': { opacity: '1' },
+          '50%':      { opacity: '0.5' },
+        },
+      },
+      animation: {
+        'loading-bar': 'loading-bar 1.2s ease-in-out infinite',
+        'fade-up':     'fade-up 0.3s ease-out both',
+        'pulse-soft':  'pulse-soft 1.5s ease-in-out infinite',
+      },
     },
   },
   plugins: [],

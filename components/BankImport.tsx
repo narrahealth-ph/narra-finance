@@ -32,7 +32,15 @@ interface FileStatus {
 
 const CURRENCY_FLAGS: Record<string, string> = { USD: '🇺🇸', SGD: '🇸🇬', EUR: '🇪🇺', GBP: '🇬🇧', PHP: '🇵🇭' }
 
-export default function BankImport({ periodId, onImport }: { periodId: number; onImport: () => void }) {
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
+const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+export default function BankImport({ periodId, onImport, refreshKey = 0, selectedYear = '' }: {
+  periodId: number
+  onImport: () => void
+  refreshKey?: number
+  selectedYear?: string
+}) {
   const [rows,       setRows]       = useState<BankRow[]>([])
   const [savedTxs,   setSavedTxs]   = useState<SavedTx[]>([])
   const [loadingSaved, setLoadingSaved] = useState(true)
@@ -42,9 +50,17 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
   const [dragging,   setDragging]   = useState(false)
   const [deleting,   setDeleting]   = useState<number | null>(null)
   const [fileStatuses, setFileStatuses] = useState<FileStatus[]>([])
+  const [coverage,   setCoverage]   = useState<Record<string, { txCount: number; revenue: number; expenses: number }>>({})
   const fileRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => { loadSaved() }, [periodId])
+  useEffect(() => { loadSaved() }, [periodId, refreshKey])
+
+  useEffect(() => {
+    fetch('/api/bank?action=coverage', { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => setCoverage(d.coverage || {}))
+      .catch(() => {})
+  }, [refreshKey])
 
   async function loadSaved() {
     setLoadingSaved(true)
@@ -263,6 +279,11 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
     setRows([])
     setFileStatuses([])
     await loadSaved()
+    // refresh coverage grid
+    fetch('/api/bank?action=coverage', { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => setCoverage(d.coverage || {}))
+      .catch(() => {})
     onImport()
   }
 
@@ -288,6 +309,14 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
   // Group rows by source file for display
   const sources = Array.from(new Set(rows.map(r => r.source || 'Unknown')))
 
+  // Which months for the selected year have bank data
+  const yearMonthCoverage = MONTH_NAMES.map((name, i) => {
+    const label = `${name}_${selectedYear}`
+    const info  = coverage[label]
+    return { name, short: MONTH_SHORT[i], label, info: info || null }
+  })
+  const hasCoverage = yearMonthCoverage.some(m => m.info)
+
   return (
     <div className="space-y-6 animate-fade-up">
       <div className="flex items-center justify-between">
@@ -302,6 +331,36 @@ export default function BankImport({ periodId, onImport }: { periodId: number; o
           </button>
         )}
       </div>
+
+      {/* Month coverage grid */}
+      {selectedYear && (
+        <div className="bg-white border border-narra-border rounded-xl p-4">
+          <div className="text-xs text-narra-muted uppercase tracking-widest mb-3 font-body">
+            {selectedYear} — Bank Statement Coverage
+          </div>
+          <div className="grid grid-cols-6 md:grid-cols-12 gap-2">
+            {yearMonthCoverage.map(({ short, info }) => (
+              <div key={short} className={`rounded-lg p-2 text-center transition-all ${
+                info
+                  ? 'bg-narra-green/20 border border-narra-green/40'
+                  : 'bg-narra-surface border border-narra-border'
+              }`}>
+                <div className={`text-xs font-medium ${info ? 'text-narra-dark' : 'text-narra-muted'}`}>{short}</div>
+                {info ? (
+                  <div className="text-[10px] text-narra-muted mt-0.5 leading-tight">
+                    {info.txCount} tx
+                  </div>
+                ) : (
+                  <div className="text-[10px] text-narra-border mt-0.5">—</div>
+                )}
+              </div>
+            ))}
+          </div>
+          {!hasCoverage && (
+            <p className="text-xs text-narra-muted mt-2">No bank statements uploaded for {selectedYear} yet.</p>
+          )}
+        </div>
+      )}
 
       {/* Upload area */}
       <div

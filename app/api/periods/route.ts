@@ -69,14 +69,29 @@ export async function PATCH(req: NextRequest) {
   return NextResponse.json({ error: 'Unknown action — use lock or unlock' }, { status: 400 })
 }
 
-// DELETE /api/periods?periodId=X — wipe all transactional data for a period (keeps the period row)
+const CLEARABLE_TABLES: Record<string, string> = {
+  bank:           'bank_transactions',
+  invoices:       'invoices',
+  mrr:            'mrr_entries',
+  reconciliation: 'reconciliation_sessions',
+  entries:        'manual_entries',
+  ai:             'ai_insights',
+}
+
+// DELETE /api/periods?periodId=X[&type=bank|invoices|mrr|reconciliation|entries|ai]
+// Omitting type clears everything. Keeps the period row itself.
 export async function DELETE(req: NextRequest) {
   const session = await requireRole('finance')
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(req.url)
   const periodId = searchParams.get('periodId')
+  const type     = searchParams.get('type') // optional — clear just one table
+
   if (!periodId) return NextResponse.json({ error: 'periodId required' }, { status: 400 })
+  if (type && !CLEARABLE_TABLES[type]) {
+    return NextResponse.json({ error: `Unknown type. Use one of: ${Object.keys(CLEARABLE_TABLES).join(', ')}` }, { status: 400 })
+  }
 
   const period = await query('SELECT locked, label FROM periods WHERE id = $1', [periodId])
   if (!period.rows[0]) return NextResponse.json({ error: 'Period not found' }, { status: 404 })
@@ -84,19 +99,26 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'Period is locked — unlock before clearing' }, { status: 403 })
   }
 
-  await query('DELETE FROM bank_transactions      WHERE period_id = $1', [periodId])
-  await query('DELETE FROM invoices               WHERE period_id = $1', [periodId])
-  await query('DELETE FROM mrr_entries            WHERE period_id = $1', [periodId])
-  await query('DELETE FROM reconciliation_sessions WHERE period_id = $1', [periodId])
-  await query('DELETE FROM manual_entries         WHERE period_id = $1', [periodId])
-  await query('DELETE FROM ai_insights            WHERE period_id = $1', [periodId])
-
   const userEmail = (session as any).email || 'unknown'
-  await writeAudit('periods', periodId, 'clear',
-    { label: period.rows[0].label },
-    { action: 'All period data cleared by user' },
-    userEmail
-  )
+
+  if (type) {
+    const table = CLEARABLE_TABLES[type]
+    await query(`DELETE FROM ${table} WHERE period_id = $1`, [periodId])
+    await writeAudit('periods', periodId, 'clear',
+      { label: period.rows[0].label },
+      { action: `Cleared ${type} data`, table },
+      userEmail
+    )
+  } else {
+    for (const table of Object.values(CLEARABLE_TABLES)) {
+      await query(`DELETE FROM ${table} WHERE period_id = $1`, [periodId])
+    }
+    await writeAudit('periods', periodId, 'clear',
+      { label: period.rows[0].label },
+      { action: 'All period data cleared by user' },
+      userEmail
+    )
+  }
 
   return NextResponse.json({ ok: true })
 }

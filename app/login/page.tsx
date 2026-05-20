@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Image from 'next/image'
 
 export default function LoginPage() {
   const [password, setPassword] = useState('')
@@ -40,10 +41,15 @@ export default function LoginPage() {
       <div className="relative w-full max-w-sm animate-fade-up">
         {/* Logo */}
         <div className="text-center mb-10">
-          <h1 className="font-heading text-4xl font-light text-white tracking-tight">
-            narra<span className="text-narra-green font-semibold">.</span>
-          </h1>
-          <p className="text-white/40 text-sm mt-2 font-body tracking-widest uppercase">Finance Platform</p>
+          <Image
+            src="/narra-logo.png"
+            alt="Narra Health"
+            width={120}
+            height={44}
+            className="object-contain mx-auto"
+            priority
+          />
+          <p className="text-white/40 text-sm mt-3 font-body tracking-widest uppercase">Finance Platform</p>
         </div>
 
         {/* Card */}

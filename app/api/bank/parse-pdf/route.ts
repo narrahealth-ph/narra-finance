@@ -38,31 +38,55 @@ IMPORTANT:
 
 Return ONLY valid JSON, no markdown:
 {"transactions": [{"date": "2026-04-01", "description": "Payment to vendor", "amount": 100.00, "currency": "USD", "type": "expense", "account": "PayPal"}]}`
-    : `Extract ALL transactions from this bank statement PDF (filename: ${fileName}).
+    : `Extract ALL transactions from this Sleek bank statement PDF (filename: ${fileName}).
 
-This is a Sleek multi-currency bank statement for Narra Health PTE. LTD.
-It has sections for SGD, USD, EUR, and GBP accounts.
+STATEMENT FORMAT:
+- This is a Sleek multi-currency statement for Narra Health PTE. LTD.
+- It is divided into currency sections: EUR, GBP, SGD, USD (each headed "SLEEK / NARRA HEALTH PTE. LTD. XXX - 885413718826")
+- Each section has columns: Date | Description | Deposit | Withdrawal | Balance
+- Descriptions are multi-line blocks — treat everything between two Date entries as one transaction's description
+- Use only the primary vendor/payee name as the description (e.g. "K LINE LOGISTICS PHILS INC", "GOOGLE*GSUITE NARRAMIN", "Stella Regina Pangilinan") — omit reference numbers, bank names, card holder names, card numbers, and "INSTRUCTED AMT" lines
 
-For each transaction row extract:
-- date (format: YYYY-MM-DD)
-- description (vendor/payee name, clean it up)
-- amount (positive number, the actual transaction amount)
-- currency (SGD, USD, EUR, or GBP based on which account section it's in)
-- type: use these rules:
-  * "revenue" if it's a deposit/incoming payment (e.g. LAWINA COMPANY, client payments)
-  * "expense" if it's a withdrawal/outgoing payment (e.g. PLANETSCALE, Google, Slack, Zoom, Calendly, Netlify, Notion, IDEIN SERVICES, SLEEK SUBSCRIPTION, Mailchimp, ChatGPT)
-  * "fx" if it's a currency exchange/conversion between accounts
-  * "transfer" if it's an internal transfer
-- account: the currency account it belongs to (e.g. "SGD", "USD")
+AMOUNT RULES — CRITICAL:
+- ALWAYS use the number in the Deposit or Withdrawal column as the transaction amount
+- NEVER use amounts mentioned inside the description text (e.g. "INSTRUCTED AMT USD 12917.3" or "SENDER CHARGES USD 15" — ignore these; use only the actual column value)
+- If Deposit column has a value → amount = that number, type = "revenue"
+- If Withdrawal column has a value → amount = that number, type = "expense"
+- Amount 0.00 is valid — include the transaction with amount 0.00
 
-IMPORTANT:
-- Do NOT include opening balances or "Balance brought forward" rows
-- Do NOT include "Total Balance Carried Forward" summary rows
-- DO include all actual transactions including payroll (IDEIN SERVICES)
-- For FX conversions, use the SGD amount and mark as "fx"
+TYPE RULES — COLUMN DETERMINES TYPE, NOT VENDOR NAME:
+- type is determined SOLELY by which column has a value: Deposit = "revenue", Withdrawal = "expense"
+- Do NOT assume a vendor is always revenue or always expense based on their name
+- Example: "Lawina Company Limited" usually pays Narra (deposit = revenue), but can also appear as a withdrawal (expense) when Narra pays them for something like health insurance — classify by the column, not the name
+- "fx" — ONLY for rows whose description starts with or contains "Currency Exchange" or "Converted USD to SGD" / "Converted USD X to SGD"
+- "transfer" — internal account transfer not labelled as FX
 
-Return ONLY valid JSON, no markdown:
-{"transactions": [{"date": "2026-04-01", "description": "PLANETSCALE INC", "amount": 60.79, "currency": "SGD", "type": "expense", "account": "SGD"}]}`
+CURRENCY & ACCOUNT:
+- Each transaction's currency = the section it appears in (EUR / GBP / SGD / USD)
+- account field = the currency code (e.g. "SGD", "USD")
+
+CURRENCY EXCHANGE (FX) DEDUPLICATION — CRITICAL:
+- Every FX conversion appears TWICE: as a Deposit in the destination currency section AND as a Withdrawal in the source currency section
+- There can be multiple FX conversions in one month — deduplicate each one individually
+- For each FX conversion: extract it ONLY ONCE using the SGD deposit side (type "fx", currency "SGD", amount = the SGD deposit amount)
+- SKIP every "Currency Exchange" row that appears as a Withdrawal (these are always in the USD section)
+- Matching rule: a USD withdrawal labelled "Currency Exchange" on date X pairs with the SGD deposit labelled "Currency Exchange" on date X — skip the USD side
+
+SAME-DATE SAME-PAYEE RULE:
+- If the same payee appears multiple times on the same date (even with the same amount), extract each row as a SEPARATE transaction — do NOT merge or deduplicate them
+- This applies to reversals/refunds too: e.g. a withdrawal of 1.42 followed by a deposit of 1.42 from the same vendor on the same date = two separate transactions
+
+BANK FEE ROWS:
+- Small withdrawals (typically $5–$35) that appear 1-2 days after a large payment, with just a company name and no payment description, are bank processing fees — include them as type "expense"
+- Examples: "K LINE LOGISTICS PHILS INC" for 7.40, "LAWINA COMPANY LIMITED" for 7.72, "MC1 ENTERPRISES" for 7.53 — these are fees, not the main payment
+
+ROWS TO SKIP (not real transactions):
+- "Balance brought forward" rows
+- "Total Balance Carried Forward" summary rows
+- Any row with no date and no deposit/withdrawal amount
+
+Return ONLY valid JSON, no markdown, no explanation:
+{"transactions": [{"date": "2025-02-20", "description": "K LINE LOGISTICS PHILS INC", "amount": 8257.00, "currency": "USD", "type": "revenue", "account": "USD"}]}`
 
   try {
     const response = await client.messages.create({

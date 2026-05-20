@@ -36,14 +36,42 @@ export async function GET(req: NextRequest) {
   if (!periodRes.rows[0]) return NextResponse.json({ error: 'Period not found' }, { status: 404 })
   const p = periodRes.rows[0]
 
-  // ── Raw data for this period ──────────────────────────────────────────────────
-  const [invoicesRes, bankTxsRes, mrrRes, fxRes] = await Promise.all([
+  // ── Raw data for this period — all queries in parallel ───────────────────────
+  const [invoicesRes, bankTxsRes, mrrRes, fxRes, arSheetRes, retainedRes, prepayRes, manualRes2] = await Promise.all([
     query('SELECT * FROM invoices WHERE period_id = $1 ORDER BY account_name, date', [periodId]),
     query('SELECT * FROM bank_transactions WHERE period_id = $1 ORDER BY date', [periodId]),
     query('SELECT * FROM mrr_entries WHERE period_id = $1 ORDER BY amount_usd DESC', [periodId]),
     query(`SELECT DISTINCT ON (currency) currency, rate, date FROM fx_rates
            WHERE date BETWEEN $1 AND $2 AND currency != 'USD'
            ORDER BY currency, date DESC`, [p.start_date, p.end_date]).catch(() => ({ rows: [] })),
+    // Google Sheets call for AR — in parallel with DB queries
+    (async () => {
+      try {
+        const sheets = getSheetsClient()
+        const res = await sheets.spreadsheets.values.get({
+          spreadsheetId: INVOICE_SHEET_ID,
+          range: `All time!A2:I500`,
+        })
+        return res.data.values || []
+      } catch { return [] }
+    })(),
+    // Retained earnings — single query instead of N+1 loop
+    query(
+      `SELECT
+         (SELECT COALESCE(SUM(bt.amount_usd), 0)
+          FROM bank_transactions bt
+          JOIN periods pp ON pp.id = bt.period_id
+          WHERE pp.start_date < $1 AND bt.type = 'revenue') -
+         (SELECT COALESCE(SUM(i.amount_usd), 0)
+          FROM invoices i
+          JOIN periods pp ON pp.id = i.period_id
+          WHERE pp.start_date < $1) AS retained`,
+      [p.start_date]
+    ).catch(() => ({ rows: [{ retained: 0 }] })),
+    // Prepayment schedules
+    query('SELECT * FROM prepayment_schedules ORDER BY start_date').catch(() => ({ rows: [] })),
+    // Manual entries
+    query('SELECT account_code, value FROM manual_entries WHERE period_id = $1', [periodId]).catch(() => ({ rows: [] })),
   ])
 
   const invoices  = invoicesRes.rows
@@ -135,55 +163,33 @@ export async function GET(req: NextRequest) {
   }
   const totalCash = Object.values(cashByAccount).reduce((s, v) => s + v.amount, 0)
 
-  // 2. Accounts Receivable (600) + Deferred Revenue
-  //    Fetch outgoing invoices from Google Sheet
+  // 2. Accounts Receivable (600) + Deferred Revenue — from parallel arSheetRes
   let arTotal         = 0
   let deferredRevenue = 0
   const arItems: any[] = []
-
-  try {
-    const sheets     = getSheetsClient()
-    const periodEnd  = new Date(p.end_date)
-    const sheetYear  = periodEnd.getFullYear()
-    const tabName    = String(sheetYear)
-
-    const invRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: INVOICE_SHEET_ID,
-      range:         `All time!A2:I500`,
-    })
-    const rows = invRes.data.values || []
-
-    for (const r of rows) {
-      if (!r[0] || !r[5]) continue // skip rows without invoice ID or amount
-      const amount      = parseFloat((r[5] || '0').replace(/[$,\s]/g, '')) || 0
-      const status      = (r[6] || '').toLowerCase().trim()
-      const billingType = (r[7] || 'annual').toLowerCase().trim()
-      const issueDateStr = r[4] || ''
-
-      // AR: invoices that are Sent but not yet Paid
-      if (!['paid', 'cancelled', 'void'].includes(status)) {
-        arTotal += amount
-        arItems.push({ invoiceId: r[0], clientName: r[1], amount, status, billingType })
-      }
-
-      // Deferred Revenue: paid invoices where contract period extends beyond this month
-      if (status === 'paid' && issueDateStr) {
-        const issueDate = new Date(issueDateStr)
-        if (isNaN(issueDate.getTime())) continue
-        const elapsed = monthsBetween(issueDate, periodEnd)
-
-        if (billingType === 'annual') {
-          const remaining = Math.max(0, 12 - elapsed)
-          if (remaining > 0) deferredRevenue += amount * (remaining / 12)
-        } else if (billingType === 'quarterly') {
-          const remaining = Math.max(0, 3 - elapsed)
-          if (remaining > 0) deferredRevenue += amount * (remaining / 3)
-        }
-        // monthly: no deferred revenue
+  const periodEnd = new Date(p.end_date)
+  for (const r of (arSheetRes as any[])) {
+    if (!r[0] || !r[5]) continue
+    const amount       = parseFloat((r[5] || '0').replace(/[$,\s]/g, '')) || 0
+    const status       = (r[6] || '').toLowerCase().trim()
+    const billingType  = (r[7] || 'annual').toLowerCase().trim()
+    const issueDateStr = r[4] || ''
+    if (!['paid', 'cancelled', 'void'].includes(status)) {
+      arTotal += amount
+      arItems.push({ invoiceId: r[0], clientName: r[1], amount, status, billingType })
+    }
+    if (status === 'paid' && issueDateStr) {
+      const issueDate = new Date(issueDateStr)
+      if (isNaN(issueDate.getTime())) continue
+      const elapsed = monthsBetween(issueDate, periodEnd)
+      if (billingType === 'annual') {
+        const remaining = Math.max(0, 12 - elapsed)
+        if (remaining > 0) deferredRevenue += amount * (remaining / 12)
+      } else if (billingType === 'quarterly') {
+        const remaining = Math.max(0, 3 - elapsed)
+        if (remaining > 0) deferredRevenue += amount * (remaining / 3)
       }
     }
-  } catch (err: any) {
-    console.error('[reports/bs] Could not fetch outgoing invoices for AR/Deferred:', err.message)
   }
 
   // 3. Accounts Payable (800): unmatched expense invoices
@@ -191,55 +197,28 @@ export async function GET(req: NextRequest) {
     .filter((r: any) => r.status === 'unmatched')
     .reduce((s: number, r: any) => s + parseFloat(r.amount_usd || 0), 0)
 
-  // 4. Manual entries (prepayments, intangibles, loans, director amounts, etc.)
-  const manualRes = await query(
-    'SELECT account_code, value FROM manual_entries WHERE period_id = $1',
-    [periodId]
-  )
+  // 4. Manual entries — from parallel manualRes2
   const manual: Record<string, number> = {}
-  for (const row of manualRes.rows) manual[row.account_code] = parseFloat(row.value || 0)
+  for (const row of (manualRes2 as any).rows) manual[row.account_code] = parseFloat(row.value || 0)
   const m = (code: string, def = 0) => manual[code] ?? def
 
-  // 5. Retained earnings: cumulative net profit from ALL prior periods
-  //    (current period P&L shown separately as "Provisional Profit/Loss")
-  let retainedEarnings = 0
-  try {
-    const priorRes = await query(
-      `SELECT p.id FROM periods p WHERE p.start_date < $1 ORDER BY p.start_date`,
-      [p.start_date]
-    )
-    for (const pp of priorRes.rows) {
-      const ppExp = await query('SELECT COALESCE(SUM(amount_usd),0) as t FROM invoices WHERE period_id = $1', [pp.id])
-      const ppRev = await query("SELECT COALESCE(SUM(amount_usd),0) as t FROM bank_transactions WHERE period_id = $1 AND type='revenue'", [pp.id])
-      retainedEarnings += parseFloat(ppRev.rows[0].t) - parseFloat(ppExp.rows[0].t)
-    }
-  } catch (err: any) {
-    console.error('[reports/bs] Retained earnings calc error:', err.message)
-  }
+  // 5. Retained earnings — from parallel retainedRes
+  const retainedEarnings = parseFloat((retainedRes as any).rows[0]?.retained || 0)
 
-  // 6. Balance Sheet totals
-
-  // Prepayments (610): auto-calculated from amortization schedules
-  // Falls back to manual entry 610 if no schedules have been created yet
+  // 6. Balance Sheet totals — prepayments from parallel prepayRes
   let prepayments = m('610', 0)
-  try {
-    const scheduleRes = await query('SELECT * FROM prepayment_schedules ORDER BY start_date')
-    if (scheduleRes.rows.length > 0) {
-      prepayments = 0
-      const periodEnd = new Date(p.end_date)
-      for (const s of scheduleRes.rows) {
-        const startDate    = new Date(s.start_date)
-        // monthsElapsed + 1 = months already consumed (including current month)
-        const monthsConsumed = monthsBetween(startDate, periodEnd) + 1
-        const remaining      = Math.max(0, parseInt(s.months) - monthsConsumed)
-        if (remaining > 0) {
-          prepayments += parseFloat(s.total_amount) * (remaining / parseInt(s.months))
-        }
+  const scheduleRows = (prepayRes as any).rows
+  if (scheduleRows.length > 0) {
+    prepayments = 0
+    for (const s of scheduleRows) {
+      const startDate      = new Date(s.start_date)
+      const monthsConsumed = monthsBetween(startDate, periodEnd) + 1
+      const remaining      = Math.max(0, parseInt(s.months) - monthsConsumed)
+      if (remaining > 0) {
+        prepayments += parseFloat(s.total_amount) * (remaining / parseInt(s.months))
       }
-      prepayments = Math.round(prepayments * 100) / 100
     }
-  } catch (err: any) {
-    console.error('[reports/bs] Prepayment schedule error:', err.message)
+    prepayments = Math.round(prepayments * 100) / 100
   }
   const fixedAssets       = m('fixed_assets', 0)
   const intangibleAssets  = m('670', 0)

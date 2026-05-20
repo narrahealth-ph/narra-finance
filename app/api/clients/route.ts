@@ -16,29 +16,34 @@ function getSheetsClient() {
   return google.sheets({ version: 'v4', auth })
 }
 
-async function ensureTables() {
-  await query(`
-    CREATE TABLE IF NOT EXISTS holding_companies (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      notes TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `)
-  await query(`
-    CREATE TABLE IF NOT EXISTS clients (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      holding_company_id INTEGER REFERENCES holding_companies(id) ON DELETE SET NULL,
-      distributor TEXT,
-      billing_type TEXT NOT NULL DEFAULT 'annual',
-      notes TEXT,
-      active BOOLEAN DEFAULT TRUE,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `)
-}
+// Run once at module load — not on every request
+const tablesReady = (async () => {
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS holding_companies (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `)
+    await query(`
+      CREATE TABLE IF NOT EXISTS clients (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        holding_company_id INTEGER REFERENCES holding_companies(id) ON DELETE SET NULL,
+        distributor TEXT,
+        billing_type TEXT NOT NULL DEFAULT 'annual',
+        notes TEXT,
+        active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `)
+  } catch { /* tables already exist */ }
+})()
+
+async function ensureTables() { await tablesReady }
 
 // GET /api/clients — list all clients + holding companies + LTV from mrr_entries
 export async function GET(req: NextRequest) {
@@ -47,7 +52,7 @@ export async function GET(req: NextRequest) {
 
   await ensureTables()
 
-  const [clientsRes, holdingRes, ltvRes] = await Promise.all([
+  const [clientsRes, holdingRes, ltvRes, cashRes] = await Promise.all([
     query(`
       SELECT c.*, hc.name AS holding_company_name
       FROM clients c
@@ -60,14 +65,24 @@ export async function GET(req: NextRequest) {
       FROM mrr_entries
       GROUP BY LOWER(client_name)
     `),
+    query(`
+      SELECT client_id, SUM(amount_usd) AS cash_received
+      FROM bank_transactions
+      WHERE type = 'revenue' AND client_id IS NOT NULL
+      GROUP BY client_id
+    `),
   ])
 
   const ltvMap: Record<string, number> = {}
   for (const row of ltvRes.rows) ltvMap[row.key] = parseFloat(row.ltv || 0)
 
+  const cashMap: Record<number, number> = {}
+  for (const row of cashRes.rows) cashMap[parseInt(row.client_id)] = parseFloat(row.cash_received || 0)
+
   const clients = clientsRes.rows.map((c: any) => ({
     ...c,
-    ltv: ltvMap[c.name?.toLowerCase()] || 0,
+    ltv:           ltvMap[c.name?.toLowerCase()] || 0,
+    cash_received: cashMap[c.id] || 0,
   }))
 
   return NextResponse.json({ clients, holdingCompanies: holdingRes.rows })

@@ -73,9 +73,15 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   const [rerunning,       setRerunning]       = useState(false)
   const [rerunMsg,        setRerunMsg]        = useState('')
   const [splitTx,         setSplitTx]         = useState<any | null>(null)
-  const [splitRows,       setSplitRows]       = useState<{ description: string; amount: string }[]>([])
+  const [splitRows,       setSplitRows]       = useState<{ invoiceId: string; description: string; amount: string; lookingUp: boolean; lookupError: string }[]>([])
   const [splitting,       setSplitting]       = useState(false)
   const [splitError,      setSplitError]      = useState('')
+  const [clients,         setClients]         = useState<{id: number; name: string}[]>([])
+  const [taggingTx,       setTaggingTx]       = useState<number | null>(null)
+  const [acknowledgingAll, setAcknowledgingAll] = useState(false)
+  const [invoiceInputs,   setInvoiceInputs]   = useState<Record<number, string>>({})
+  const [invoiceLookups,  setInvoiceLookups]  = useState<Record<number, { clientName: string; amount: number; error?: string } | null>>({})
+  const [lookingUpInv,    setLookingUpInv]    = useState<number | null>(null)
 
   useEffect(() => {
     if (!periodId) return
@@ -85,14 +91,19 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   async function loadData() {
     setLoading(true)
     try {
-      // Load bank summary (costs grouped by account)
-      const summaryRes = await fetch(`/api/bank?action=summary&periodId=${periodId}`, { credentials: 'include' })
+      // All fetches in parallel
+      const [summaryRes, txRes, invRes, clientsRes] = await Promise.all([
+        fetch(`/api/bank?action=summary&periodId=${periodId}`, { credentials: 'include' }),
+        fetch(`/api/bank?periodId=${periodId}`, { credentials: 'include' }),
+        fetch(`/api/invoices?periodId=${periodId}`, { credentials: 'include' }),
+        fetch('/api/clients', { credentials: 'include' }),
+      ])
+
+      // Bank summary → cost groups
       if (summaryRes.ok) {
         const summary = await summaryRes.json()
         setTotalExpenses(summary.totalExpenses || 0)
         setTotalRevenue(summary.totalRevenue || 0)
-
-        // Build cost groups
         const groups: CostGroup[] = Object.entries(summary.byAccount || {}).map(([code, group]: any) => ({
           accountCode: code,
           total: group.total,
@@ -101,24 +112,29 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
         setCostGroups(groups)
       }
 
-      // Load matched/proposed pairs
-      const txRes = await fetch(`/api/bank?periodId=${periodId}`, { credentials: 'include' })
+      // Clients for revenue tagging
+      if (clientsRes.ok) {
+        const clientsData = await clientsRes.json()
+        setClients((clientsData.clients || []).filter((c: any) => c.active).map((c: any) => ({ id: c.id, name: c.name })))
+      }
+
+      // Bank transactions + invoices → matches / unmatched
       if (txRes.ok) {
-        const txData = await txRes.json()
-        const txs = txData.transactions || []
+        const [txData, invData] = await Promise.all([
+          txRes.json(),
+          invRes.ok ? invRes.json() : Promise.resolve({ invoices: [] }),
+        ])
+        const txs         = txData.transactions || []
+        const invoiceList = invData.invoices || []
+        setAllInvoices(invoiceList)
+
+        const invMap: Record<number, any> = {}
+        for (const inv of invoiceList) invMap[inv.matched_bank_id] = inv
 
         const matchedTxs      = txs.filter((t: any) => t.status === 'matched' || t.status === 'proposed' || t.status === 'flagged')
         const unmatchedTxs    = txs.filter((t: any) => t.status === 'unmatched' && (t.type === 'expense' || t.type === 'revenue'))
         const acknowledgedTxs = txs.filter((t: any) => t.status === 'acknowledged' && t.type === 'expense')
         setAcknowledged(acknowledgedTxs)
-
-        // Load invoices for matched pairs + manual assignment
-        const invRes = await fetch(`/api/invoices?periodId=${periodId}`, { credentials: 'include' })
-        const invData = invRes.ok ? await invRes.json() : { invoices: [] }
-        const invoiceList = invData.invoices || []
-        setAllInvoices(invoiceList)
-        const invMap: Record<number, any> = {}
-        for (const inv of invoiceList) invMap[inv.matched_bank_id] = inv
 
         const pairs: MatchedPair[] = matchedTxs.map((tx: any) => {
           const inv = invMap[tx.id]
@@ -214,6 +230,23 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
     onRefresh()
   }
 
+  async function acknowledgeAll() {
+    const expenseUnmatched = unmatched.filter((t: any) => t.type === 'expense')
+    if (!expenseUnmatched.length) return
+    setAcknowledgingAll(true)
+    await Promise.all(expenseUnmatched.map((tx: any) =>
+      fetch('/api/bank', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action: 'acknowledge', bankTxId: tx.id }),
+      })
+    ))
+    setAcknowledgingAll(false)
+    await loadData()
+    onRefresh()
+  }
+
   async function deleteBankTx(txId: number) {
     setDeletingTx(txId)
     await fetch(`/api/bank?txId=${txId}`, { method: 'DELETE', credentials: 'include' })
@@ -263,14 +296,76 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
     }
   }
 
+  async function tagClient(txId: number, clientId: number | null, invoiceRef?: string) {
+    setTaggingTx(txId)
+    const body: any = { action: 'tag_client', bankTxId: txId, clientId }
+    if (invoiceRef !== undefined) body.invoiceRef = invoiceRef
+    await fetch('/api/bank', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(body),
+    })
+    setUnmatched(prev => prev.map((t: any) =>
+      t.id === txId ? { ...t, client_id: clientId, invoice_ref: invoiceRef ?? t.invoice_ref } : t
+    ))
+    setTaggingTx(null)
+  }
+
+  async function lookupRevenueInvoice(txId: number, invoiceId: string) {
+    const id = invoiceId.trim()
+    if (!id) return
+    setLookingUpInv(txId)
+    setInvoiceLookups(prev => ({ ...prev, [txId]: null }))
+    try {
+      const res  = await fetch(`/api/invoices?action=lookup&invoiceId=${encodeURIComponent(id)}`, { credentials: 'include' })
+      const data = await res.json()
+      if (!res.ok) {
+        setInvoiceLookups(prev => ({ ...prev, [txId]: { clientName: '', amount: 0, error: data.error || 'Not found' } }))
+      } else {
+        setInvoiceLookups(prev => ({ ...prev, [txId]: { clientName: data.clientName, amount: data.amount } }))
+        // Auto-set client if name matches one in the list
+        const matched = clients.find(c => c.name.toLowerCase() === (data.clientName || '').toLowerCase())
+        const tx = unmatched.find((t: any) => t.id === txId)
+        const currentClientId = tx?.client_id || null
+        await tagClient(txId, matched?.id ?? currentClientId, id)
+      }
+    } catch {
+      setInvoiceLookups(prev => ({ ...prev, [txId]: { clientName: '', amount: 0, error: 'Lookup failed' } }))
+    } finally {
+      setLookingUpInv(null)
+    }
+  }
+
   function openSplit(tx: any) {
     setSplitTx(tx)
     setSplitError('')
     const half = (parseFloat(tx.amount || 0) / 2).toFixed(2)
     setSplitRows([
-      { description: tx.description, amount: half },
-      { description: tx.description, amount: half },
+      { invoiceId: '', description: '', amount: half, lookingUp: false, lookupError: '' },
+      { invoiceId: '', description: '', amount: half, lookingUp: false, lookupError: '' },
     ])
+  }
+
+  async function lookupInvoiceId(rowIndex: number, invoiceId: string) {
+    const id = invoiceId.trim()
+    if (!id) return
+    setSplitRows(prev => prev.map((r, i) => i === rowIndex ? { ...r, lookingUp: true, lookupError: '' } : r))
+    try {
+      const res = await fetch(`/api/invoices?action=lookup&invoiceId=${encodeURIComponent(id)}`, { credentials: 'include' })
+      const data = await res.json()
+      if (!res.ok) {
+        setSplitRows(prev => prev.map((r, i) => i === rowIndex ? { ...r, lookingUp: false, lookupError: data.error || 'Not found' } : r))
+        return
+      }
+      setSplitRows(prev => prev.map((r, i) =>
+        i === rowIndex
+          ? { ...r, lookingUp: false, lookupError: '', description: data.clientName || r.description, amount: data.amount ? data.amount.toFixed(2) : r.amount }
+          : r
+      ))
+    } catch {
+      setSplitRows(prev => prev.map((r, i) => i === rowIndex ? { ...r, lookingUp: false, lookupError: 'Lookup failed' } : r))
+    }
   }
 
   async function executeSplit() {
@@ -283,7 +378,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
       return
     }
     if (splitRows.some(r => !r.description.trim() || !(parseFloat(r.amount) > 0))) {
-      setSplitError('All rows need a description and a positive amount.')
+      setSplitError('All rows need a client / description and a positive amount.')
       return
     }
     setSplitting(true)
@@ -707,17 +802,32 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
       {/* ── UNMATCHED ── */}
       {activeTab === 'unmatched' && (
         <div className="space-y-4">
-          <div>
-            <h3 className="font-heading font-semibold text-narra-dark mb-1">Unmatched Bank Transactions</h3>
-            <p className="text-xs text-narra-muted">These expenses have no matching invoice — follow up with your team or add the invoice to Drive.</p>
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <h3 className="font-heading font-semibold text-narra-dark">Unmatched Bank Transactions</h3>
+            {unmatched.filter((t: any) => t.type === 'expense').length > 1 && (
+              <button
+                onClick={acknowledgeAll}
+                disabled={acknowledgingAll}
+                className="text-xs px-3 py-1.5 bg-green-50 text-green-700 hover:bg-green-100 rounded-lg border border-green-200 transition-all disabled:opacity-50 whitespace-nowrap shrink-0"
+              >
+                {acknowledgingAll ? '…' : `✓ I see it all (${unmatched.filter((t: any) => t.type === 'expense').length} expenses)`}
+              </button>
+            )}
           </div>
 
-          {/* Revenue vs expense breakdown */}
+          {/* How-to guide */}
           {unmatched.length > 0 && (
-            <div className="flex gap-3 text-xs text-narra-muted">
-              <span>{unmatched.filter((t: any) => t.type === 'revenue').length} revenue (distributor payments)</span>
-              <span>·</span>
-              <span>{unmatched.filter((t: any) => t.type === 'expense').length} expense</span>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 space-y-1.5">
+                <p className="text-xs font-semibold text-blue-800 uppercase tracking-wider">Revenue rows (blue)</p>
+                <p className="text-xs text-blue-700">Money received in the bank. Use the <strong>Tag client</strong> dropdown to say which client this payment came from — this feeds the Clients page.</p>
+                <p className="text-xs text-blue-600">If it's one payment covering multiple clients, use <strong>⊕ Split</strong> to divide it.</p>
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 space-y-1.5">
+                <p className="text-xs font-semibold text-amber-800 uppercase tracking-wider">Expense rows (amber)</p>
+                <p className="text-xs text-amber-700">Money paid out. If you have an invoice for it, pick it from <strong>Match to invoice</strong>. If it covers multiple invoices, use <strong>⊕ Split</strong>.</p>
+                <p className="text-xs text-amber-600">No invoice? Click <strong>✓ I see it</strong> to mark it as reviewed and clear it from this list.</p>
+              </div>
             </div>
           )}
 
@@ -740,7 +850,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-amber-800/10">
-                    {['Type', 'Date', 'Description', 'Amount', 'Account', 'Action'].map(h => (
+                    {['Type', 'Date', 'Description', 'Amount', 'Account', 'What to do'].map(h => (
                       <th key={h} className={`px-4 py-2.5 text-xs font-body text-amber-800/60 uppercase tracking-wider ${h === 'Amount' ? 'text-right' : 'text-left'}`}>{h}</th>
                     ))}
                   </tr>
@@ -765,23 +875,83 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                       <td className="px-4 py-3 text-amber-600 text-xs">{tx.account || '—'}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-1.5">
-                          {isLinking ? (
-                            <div className="flex items-center gap-1.5">
+                          {isRevenue && (
+                            <div className="flex flex-col gap-1">
+                              {/* Client select */}
+                              {clients.length > 0 && (
+                                <select
+                                  value={tx.client_id || ''}
+                                  onChange={e => tagClient(tx.id, e.target.value ? parseInt(e.target.value) : null)}
+                                  disabled={taggingTx === tx.id}
+                                  className="text-xs border border-blue-300 rounded-lg px-2 py-1 bg-white outline-none max-w-[220px] text-blue-800 disabled:opacity-50"
+                                >
+                                  <option value="">Tag client…</option>
+                                  {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                </select>
+                              )}
+                              {/* Invoice ID input */}
+                              <div className="flex items-center gap-1">
+                                <input
+                                  value={invoiceInputs[tx.id] ?? (tx.invoice_ref || '')}
+                                  onChange={e => setInvoiceInputs(prev => ({ ...prev, [tx.id]: e.target.value }))}
+                                  onBlur={e => { if (e.target.value.trim()) lookupRevenueInvoice(tx.id, e.target.value) }}
+                                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); lookupRevenueInvoice(tx.id, invoiceInputs[tx.id] ?? tx.invoice_ref ?? '') } }}
+                                  placeholder="Invoice ID (e.g. INV-2025-001)"
+                                  className="text-xs border border-blue-200 rounded-lg px-2 py-1 bg-white outline-none w-44 font-mono focus:ring-1 focus:ring-blue-300"
+                                />
+                                {lookingUpInv === tx.id && <span className="text-xs text-blue-400 animate-pulse-soft">…</span>}
+                              </div>
+                              {/* Lookup result */}
+                              {invoiceLookups[tx.id] && (
+                                invoiceLookups[tx.id]?.error
+                                  ? <p className="text-xs text-red-500">{invoiceLookups[tx.id]?.error}</p>
+                                  : <p className="text-xs text-green-700">✓ {invoiceLookups[tx.id]?.clientName} · ${invoiceLookups[tx.id]?.amount?.toLocaleString()}</p>
+                              )}
+                            </div>
+                          )}
+                          {!isRevenue && availableInvoices.length > 0 ? (
+                            /* Expense with available invoices — always show inline picker */
+                            <div className="flex flex-col gap-1.5">
                               <select
-                                className="text-xs border border-amber-300 rounded-lg px-2 py-1 bg-white outline-none max-w-[200px]"
+                                className="text-xs border border-blue-300 rounded-lg px-2 py-1 bg-white outline-none max-w-[220px] text-blue-800"
                                 defaultValue=""
+                                disabled={reassigning === tx.id}
                                 onChange={e => {
                                   if (e.target.value) reassignInvoice(tx.id, null, parseInt(e.target.value))
                                 }}
                               >
-                                <option value="">Select invoice…</option>
+                                <option value="">Match to invoice…</option>
                                 {availableInvoices.map(inv => (
                                   <option key={inv.id} value={inv.id}>
                                     {inv.vendor} · ${parseFloat(inv.amount_usd || inv.amount || 0).toFixed(2)} {inv.currency !== 'USD' ? `(${inv.currency})` : ''}
                                   </option>
                                 ))}
                               </select>
-                              <button onClick={() => setLinkingTx(null)} className="text-xs text-amber-600 hover:text-amber-900">Cancel</button>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <button
+                                  onClick={() => openSplit(tx)}
+                                  title="Split this payment across multiple clients/invoices"
+                                  className="text-xs px-2 py-1 bg-purple-50 text-purple-700 hover:bg-purple-100 rounded-full transition-all whitespace-nowrap"
+                                >
+                                  ⊕ Split
+                                </button>
+                                <button
+                                  onClick={() => acknowledgeTx(tx.id)}
+                                  disabled={acknowledging === tx.id}
+                                  title="I've verified this manually — dismiss the alert"
+                                  className="text-xs px-2 py-1 bg-green-50 text-green-700 hover:bg-green-100 rounded-full transition-all disabled:opacity-30 whitespace-nowrap"
+                                >
+                                  {acknowledging === tx.id ? '…' : '✓ I see it'}
+                                </button>
+                                <button
+                                  onClick={() => deleteBankTx(tx.id)}
+                                  disabled={deletingTx === tx.id}
+                                  title="Delete — use if this is a duplicate or error"
+                                  className="w-6 h-6 rounded-full bg-red-50 text-red-400 hover:bg-red-500 hover:text-white transition-all text-xs flex items-center justify-center disabled:opacity-30"
+                                >
+                                  {deletingTx === tx.id ? '…' : '✕'}
+                                </button>
+                              </div>
                             </div>
                           ) : (
                             <div className="flex items-center gap-1.5 flex-wrap">
@@ -792,16 +962,6 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                               >
                                 ⊕ Split
                               </button>
-                              {!isRevenue && availableInvoices.length > 0 && (
-                                <button
-                                  onClick={() => setLinkingTx(tx.id)}
-                                  disabled={reassigning === tx.id}
-                                  title="Link to an existing invoice"
-                                  className="text-xs px-2 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-full transition-all disabled:opacity-30 whitespace-nowrap"
-                                >
-                                  {reassigning === tx.id ? '…' : '+ Link invoice'}
-                                </button>
-                              )}
                               <button
                                 onClick={() => acknowledgeTx(tx.id)}
                                 disabled={acknowledging === tx.id}
@@ -877,39 +1037,73 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
             </div>
 
             {/* Split rows */}
-            <div className="space-y-2">
+            <div className="space-y-3">
               {splitRows.map((row, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <span className="text-xs text-narra-muted w-4 shrink-0">{i + 1}.</span>
-                  <input
-                    value={row.description}
-                    onChange={e => setSplitRows(prev => prev.map((r, j) => j === i ? { ...r, description: e.target.value } : r))}
-                    placeholder="Client / description"
-                    className="flex-1 border border-narra-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-300"
-                  />
-                  <div className="flex items-center border border-narra-border rounded-lg overflow-hidden">
-                    <span className="px-2 text-xs text-narra-muted bg-narra-surface">{splitTx.currency}</span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={row.amount}
-                      onChange={e => setSplitRows(prev => prev.map((r, j) => j === i ? { ...r, amount: e.target.value } : r))}
-                      className="w-28 px-2 py-2 text-sm outline-none text-right"
-                    />
+                <div key={i} className="border border-narra-border rounded-xl p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-narra-muted">Split {i + 1}</span>
+                    {splitRows.length > 2 && (
+                      <button
+                        onClick={() => setSplitRows(prev => prev.filter((_, j) => j !== i))}
+                        className="w-5 h-5 rounded-full bg-red-50 text-red-400 hover:bg-red-500 hover:text-white transition-all text-xs flex items-center justify-center"
+                      >✕</button>
+                    )}
                   </div>
-                  {splitRows.length > 2 && (
+
+                  {/* Invoice ID lookup row */}
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        value={row.invoiceId}
+                        onChange={e => setSplitRows(prev => prev.map((r, j) => j === i ? { ...r, invoiceId: e.target.value, lookupError: '' } : r))}
+                        onBlur={e => lookupInvoiceId(i, e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); lookupInvoiceId(i, row.invoiceId) } }}
+                        placeholder="Invoice ID (e.g. INV-20250201-001)"
+                        className="w-full border border-narra-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-purple-300 pr-8"
+                      />
+                      {row.lookingUp && (
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-purple-500 animate-pulse-soft">…</span>
+                      )}
+                    </div>
                     <button
-                      onClick={() => setSplitRows(prev => prev.filter((_, j) => j !== i))}
-                      className="w-6 h-6 rounded-full bg-red-50 text-red-400 hover:bg-red-500 hover:text-white transition-all text-xs flex items-center justify-center"
-                    >✕</button>
+                      onClick={() => lookupInvoiceId(i, row.invoiceId)}
+                      disabled={row.lookingUp || !row.invoiceId.trim()}
+                      className="text-xs px-2 py-2 bg-purple-50 text-purple-700 hover:bg-purple-100 rounded-lg transition-all disabled:opacity-30 whitespace-nowrap"
+                    >
+                      Look up
+                    </button>
+                  </div>
+
+                  {row.lookupError && (
+                    <p className="text-xs text-red-500">{row.lookupError}</p>
                   )}
+
+                  {/* Client name + amount row */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={row.description}
+                      onChange={e => setSplitRows(prev => prev.map((r, j) => j === i ? { ...r, description: e.target.value } : r))}
+                      placeholder="Client / description"
+                      className="flex-1 border border-narra-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-300"
+                    />
+                    <div className="flex items-center border border-narra-border rounded-lg overflow-hidden">
+                      <span className="px-2 text-xs text-narra-muted bg-narra-surface">{splitTx.currency}</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={row.amount}
+                        onChange={e => setSplitRows(prev => prev.map((r, j) => j === i ? { ...r, amount: e.target.value } : r))}
+                        className="w-28 px-2 py-2 text-sm outline-none text-right"
+                      />
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
 
             <button
-              onClick={() => setSplitRows(prev => [...prev, { description: splitTx.description, amount: '0' }])}
+              onClick={() => setSplitRows(prev => [...prev, { invoiceId: '', description: '', amount: '0', lookingUp: false, lookupError: '' }])}
               className="text-xs text-purple-700 hover:text-purple-900 flex items-center gap-1"
             >
               + Add another split

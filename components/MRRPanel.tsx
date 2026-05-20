@@ -68,13 +68,16 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   const [syncing,         setSyncing]         = useState(false)
   const [syncResult,      setSyncResult]      = useState<any>(null)
   const [chartView,    setChartView]    = useState<'all' | '2025'>('all')
-  const [periodView,   setPeriodView]   = useState<'month' | 'year'>('month')
+  const [periodView,   setPeriodView]   = useState<'month' | 'year'>('year')
   const [yearTotals,   setYearTotals]   = useState<Record<number, { mrr: number; costs: number; net: number }>>({})
   const [cumulativeCash,       setCumulativeCash]       = useState<number | null>(null)  // kept for legacy compat
   const [closing2025,          setClosing2025]          = useState<number>(0)            // kept for legacy compat
   const [totalInvoicedByYear,  setTotalInvoicedByYear]  = useState<Record<number, number>>({})
   const [bankReceivedByYear,   setBankReceivedByYear]   = useState<Record<number, number>>({})
   const [sheetRefreshKey,      setSheetRefreshKey]      = useState(0)
+  const [showCashDetail,       setShowCashDetail]       = useState(false)
+  const [cashDetailRows,       setCashDetailRows]       = useState<any[]>([])
+  const [cashDetailLoading,    setCashDetailLoading]    = useState(false)
   const selectedYear = selectedMonth?.split('_')[1] || '2026'
 
   // ── Load history + client breakdown from Google Sheet ──────────────────────
@@ -298,6 +301,20 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
     setPushing(false)
   }
 
+  async function openCashDetail() {
+    setShowCashDetail(true)
+    setCashDetailLoading(true)
+    try {
+      const res = await fetch(`/api/bank?action=year_revenue&year=${selectedYear}`, { credentials: 'include' })
+      const data = await res.json()
+      setCashDetailRows(data.transactions || [])
+    } catch {
+      setCashDetailRows([])
+    } finally {
+      setCashDetailLoading(false)
+    }
+  }
+
   function exportMRR() {
     downloadCSV(toCSV([
       ...clients.map(c => ({ Client: c.name, 'MRR (USD)': Math.round(c.annualAmount / 12), 'ARR (USD)': c.annualAmount, Period: selectedMonth || '' })),
@@ -321,7 +338,11 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
         <div>
           <h2 className="font-heading text-xl font-semibold text-narra-dark">Monthly Recurring Revenue</h2>
           <p className="text-sm text-narra-muted mt-0.5">
-            {historyLoading ? 'Loading from Google Sheet…' : `${history.length} months · ${selectedMonth?.replace('_', ' ')}`}
+            {historyLoading
+              ? 'Loading from Google Sheet…'
+              : periodView === 'year'
+                ? `Full Year ${selectedYear}`
+                : `${selectedMonth?.replace('_', ' ')} · ${history.length} months of history`}
           </p>
         </div>
         <div className="flex gap-2 flex-wrap items-center">
@@ -384,14 +405,14 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
             </div>
             <div className="text-xs mt-1 text-white/40">Full invoice amounts issued this year</div>
           </div>
-          {/* Cash received from bank statements */}
-          <div className="bg-narra-dark text-white rounded-xl p-5">
+          {/* Cash received from bank statements — click to drill down */}
+          <button onClick={openCashDetail} className="bg-narra-dark text-white rounded-xl p-5 text-left hover:bg-narra-mid transition-colors group">
             <div className="text-xs text-white/40 uppercase tracking-widest mb-2 font-body">Cash Received {selectedYear}</div>
             <div className="font-heading text-2xl font-semibold text-narra-green">
               ${(bankReceivedByYear[parseInt(selectedYear)] || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </div>
-            <div className="text-xs mt-1 text-white/40">Revenue deposits in bank statements</div>
-          </div>
+            <div className="text-xs mt-1 text-white/40 group-hover:text-white/60">Click to see breakdown →</div>
+          </button>
           <div className="bg-white border border-narra-border rounded-xl p-5">
             <div className="text-xs text-narra-muted uppercase tracking-widest mb-2 font-body">Accrual MRR {selectedYear}</div>
             <div className="font-heading text-2xl font-semibold text-narra-dark">${yearTotals[parseInt(selectedYear)].mrr.toLocaleString()}</div>
@@ -875,6 +896,65 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
         </div>
       )}
     </div>
+
+      {/* Cash Received drill-down modal */}
+      {showCashDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowCashDetail(false)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-narra-border flex items-center justify-between shrink-0">
+              <div>
+                <h3 className="font-heading font-semibold text-narra-dark text-lg">Cash Received — {selectedYear}</h3>
+                <p className="text-xs text-narra-muted mt-0.5">All revenue bank transactions for this year</p>
+              </div>
+              <button onClick={() => setShowCashDetail(false)} className="w-8 h-8 rounded-full bg-narra-surface text-narra-muted hover:text-narra-dark flex items-center justify-center transition-all">✕</button>
+            </div>
+            <div className="overflow-y-auto flex-1">
+              {cashDetailLoading ? (
+                <div className="flex items-center justify-center h-48 text-narra-muted animate-pulse-soft">Loading…</div>
+              ) : cashDetailRows.length === 0 ? (
+                <div className="flex items-center justify-center h-48 text-narra-muted">No revenue transactions found for {selectedYear}.</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0">
+                    <tr className="bg-narra-dark text-white">
+                      {['Month', 'Date', 'Description', 'Account', 'Amount', 'USD'].map(h => (
+                        <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'Amount' || h === 'USD' ? 'text-right' : 'text-left'}`}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cashDetailRows.map((tx: any, i: number) => (
+                      <tr key={i} className="border-t border-narra-border hover:bg-narra-surface transition-colors">
+                        <td className="px-4 py-2.5 text-narra-muted text-xs whitespace-nowrap">{tx.period_label?.replace('_', ' ')}</td>
+                        <td className="px-4 py-2.5 text-narra-muted text-xs whitespace-nowrap">{String(tx.date).split('T')[0]}</td>
+                        <td className="px-4 py-2.5 text-narra-dark font-medium max-w-xs truncate">{tx.description}</td>
+                        <td className="px-4 py-2.5 text-narra-muted text-xs">{tx.account || '—'}</td>
+                        <td className="px-4 py-2.5 text-right text-narra-dark whitespace-nowrap">
+                          {tx.currency !== 'USD' ? `${tx.currency} ` : ''}{parseFloat(tx.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-medium text-green-700 whitespace-nowrap">
+                          ${parseFloat(tx.amount_usd || tx.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="sticky bottom-0">
+                    <tr className="border-t-2 border-narra-dark bg-narra-surface">
+                      <td colSpan={5} className="px-4 py-3 font-heading font-semibold text-narra-dark text-sm">
+                        {cashDetailRows.length} transaction{cashDetailRows.length !== 1 ? 's' : ''}
+                      </td>
+                      <td className="px-4 py-3 text-right font-heading font-bold text-green-700">
+                        ${cashDetailRows.reduce((s: number, tx: any) => s + parseFloat(tx.amount_usd || tx.amount || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit invoice display name modal */}
       {editingInvoice && (

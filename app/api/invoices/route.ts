@@ -3,14 +3,62 @@ import { requireRole } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { writeAudit } from '@/lib/audit'
 import { toUSD } from '@/lib/fx'
+import { google } from 'googleapis'
+
+const INVOICE_SHEET_ID = '1qYn8BxBfSNsYMAXeqN84dsoxIbd7pszglt4YDbsJO2k'
+
+function getSheetClient() {
+  const auth = new google.auth.GoogleAuth({
+    credentials: {
+      client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+      private_key:  process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    },
+    scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+  })
+  return google.sheets({ version: 'v4', auth })
+}
 
 // GET /api/invoices?periodId=1
+// GET /api/invoices?action=lookup&invoiceId=INV-20250201-001
 // Returns all expense invoices for a period (used by ReconciliationPanel for match display)
 export async function GET(req: NextRequest) {
   const session = await requireRole('finance')
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(req.url)
+  const action = searchParams.get('action')
+
+  // ── Invoice lookup by ID from Google Sheet ──────────────────────────────────
+  if (action === 'lookup') {
+    const invoiceId = (searchParams.get('invoiceId') || '').trim().toUpperCase()
+    if (!invoiceId) return NextResponse.json({ error: 'invoiceId required' }, { status: 400 })
+
+    try {
+      const sheets = getSheetClient()
+      const res = await sheets.spreadsheets.values.get({
+        spreadsheetId: INVOICE_SHEET_ID,
+        range: 'All time!A2:I500',
+      })
+      const rows = res.data.values || []
+      const row = rows.find(r => (r[0] || '').toString().trim().toUpperCase() === invoiceId)
+      if (!row) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
+
+      const parseNum = (v: any) => parseFloat((v || '').toString().replace(/[$,\s]/g, '')) || 0
+
+      return NextResponse.json({
+        invoiceId:   row[0] || '',
+        clientName:  row[1] || '',
+        issueDate:   row[2] || '',
+        amount:      parseNum(row[3]),
+        billingType: row[4] || '',
+        status:      row[5] || '',
+        distributor: row[6] || '',
+      })
+    } catch (err: any) {
+      return NextResponse.json({ error: err.message || 'Sheet lookup failed' }, { status: 500 })
+    }
+  }
+
   const periodId = searchParams.get('periodId')
   if (!periodId) return NextResponse.json({ error: 'periodId required' }, { status: 400 })
 

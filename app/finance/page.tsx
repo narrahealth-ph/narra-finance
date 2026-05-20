@@ -37,11 +37,14 @@ export default function FinancePage() {
   const [reportData,    setReportData]    = useState<any>(null)
   const [loadingReport, setLoadingReport] = useState(false)
   const [showWizard,    setShowWizard]    = useState(false)
-  const [clearing,      setClearing]      = useState(false)
-  const [showClearConfirm, setShowClearConfirm] = useState(false)
-  const [mrrRefreshKey, setMrrRefreshKey] = useState(0)
+  const [clearing,        setClearing]        = useState(false)
+  const [showClearMenu,   setShowClearMenu]   = useState(false)
+  const [clearConfirm,    setClearConfirm]    = useState<string | null>(null) // null | 'all' | type key
+  const [mrrRefreshKey,   setMrrRefreshKey]   = useState(0)
+  const [bankRefreshKey,  setBankRefreshKey]  = useState(0)
 
   useEffect(() => {
+    setPeriodId(null) // reset so components don't show stale data during transition
     async function ensurePeriod() {
       const monthIdx  = MONTHS.indexOf(selectedMonthName)
       const startDate = `${selectedYear}-${String(monthIdx + 1).padStart(2, '0')}-01`
@@ -62,10 +65,15 @@ export default function FinancePage() {
   const loadReports = useCallback(async () => {
     if (!periodId) return
     setLoadingReport(true)
-    const res  = await fetch(`/api/reports?periodId=${periodId}`)
-    const data = await res.json()
-    setReportData(data)
-    setLoadingReport(false)
+    try {
+      const res  = await fetch(`/api/reports?periodId=${periodId}`)
+      const data = await res.json()
+      setReportData(data)
+    } catch (err) {
+      console.error('Failed to load reports:', err)
+    } finally {
+      setLoadingReport(false)
+    }
   }, [periodId])
 
   useEffect(() => { loadReports() }, [loadReports])
@@ -75,20 +83,38 @@ export default function FinancePage() {
     router.push('/login')
   }
 
-  async function clearPeriod() {
-    if (!periodId) return
+  const CLEAR_OPTIONS = [
+    { key: 'all',           label: 'Everything',       desc: 'Wipe all data for this month' },
+    { key: 'bank',          label: 'Bank transactions', desc: 'Imported bank statements' },
+    { key: 'invoices',      label: 'Invoices',          desc: 'Expense invoices from Drive' },
+    { key: 'mrr',           label: 'MRR entries',       desc: 'Synced outgoing invoices' },
+    { key: 'reconciliation',label: 'Reconciliation',    desc: 'Match sessions' },
+    { key: 'entries',       label: 'Manual entries',    desc: 'Adjustments & journal entries' },
+    { key: 'ai',            label: 'AI insights',       desc: 'Cached AI analysis' },
+  ]
+
+  async function clearPeriod(type: string) {
+    if (!periodId) { alert('Period not ready yet — please wait a moment and try again.'); return }
     setClearing(true)
-    setShowClearConfirm(false)
+    setClearConfirm(null)
+    setShowClearMenu(false)
     try {
-      const res = await fetch(`/api/periods?periodId=${periodId}`, { method: 'DELETE' })
+      const url = type === 'all'
+        ? `/api/periods?periodId=${periodId}`
+        : `/api/periods?periodId=${periodId}&type=${type}`
+      const res = await fetch(url, { method: 'DELETE' })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        alert(err.error || 'Failed to clear period')
+        alert(err.error || 'Failed to clear')
         return
       }
       setReportData(null)
       setMrrRefreshKey(k => k + 1)
+      setBankRefreshKey(k => k + 1)
       await loadReports()
+    } catch (err) {
+      console.error('Clear failed:', err)
+      alert('Something went wrong. Please refresh and try again.')
     } finally {
       setClearing(false)
     }
@@ -132,7 +158,7 @@ export default function FinancePage() {
         <div className="flex items-center gap-4">
 
           {/* Logo */}
-          <div className="flex items-center gap-3">
+          <button onClick={() => router.push('/home')} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
             <Image
               src="/narra-logo.png"
               alt="Narra Health"
@@ -144,7 +170,7 @@ export default function FinancePage() {
             <span className="text-white/30 text-sm font-light border-l border-white/10 pl-3">
               finance
             </span>
-          </div>
+          </button>
 
           {/* Month selector */}
           <div className="flex items-center gap-2 bg-white/10 rounded-lg px-3 py-1.5">
@@ -176,58 +202,55 @@ export default function FinancePage() {
         </div>
 
         <div className="flex items-center gap-4">
-          {reportData && (
-            <div className="hidden md:flex items-center gap-6 text-sm">
-              <div className="text-center">
-                <div className="text-narra-green font-heading font-semibold">
-                  ${(reportData.pl?.totalRevenue || 0).toLocaleString()}
-                </div>
-                <div className="text-white/30 text-xs flex items-center gap-1">
-                  Gross Revenue
-                  {!reportData.pl?.mrrSynced && (
-                    <span title="MRR not synced — showing bank deposits. Go to MRR tab and click Sync Revenue to Period for accurate P&L."
-                      className="text-amber-400 cursor-help">⚠</span>
-                  )}
-                </div>
+          {/* Clear period — dropdown menu */}
+          <div className="relative">
+            {clearConfirm ? (
+              <div className="flex items-center gap-2">
+                <span className="text-red-400 text-xs whitespace-nowrap">
+                  Clear {clearConfirm === 'all' ? `all ${selectedMonthName}` : CLEAR_OPTIONS.find(o => o.key === clearConfirm)?.label} data?
+                </span>
+                <button
+                  onClick={() => clearPeriod(clearConfirm)}
+                  className="text-xs px-2 py-1 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all"
+                >Yes</button>
+                <button
+                  onClick={() => setClearConfirm(null)}
+                  className="text-xs px-2 py-1 bg-white/10 text-white/60 rounded-lg hover:bg-white/20 transition-all"
+                >No</button>
               </div>
-              <div className="text-center">
-                <div className="text-red-400 font-heading font-semibold">
-                  ${(reportData.pl?.totalExpenses || 0).toLocaleString()}
-                </div>
-                <div className="text-white/30 text-xs">Costs</div>
-              </div>
-              <div className="text-center">
-                <div className="text-narra-green font-heading font-semibold">
-                  ${(reportData.pl?.netProfit || 0).toLocaleString()}
-                </div>
-                <div className="text-white/30 text-xs">Net Revenue</div>
-              </div>
-              <div className="text-center">
-                <div className="text-white font-heading font-semibold">
-                  {reportData.reconciliation?.matchedCount}/{reportData.reconciliation?.totalInvoices}
-                </div>
-                <div className="text-white/30 text-xs">Matched</div>
-              </div>
-            </div>
-          )}
+            ) : (
+              <button
+                onClick={() => setShowClearMenu(v => !v)}
+                disabled={clearing}
+                className="text-white/30 hover:text-red-400 text-xs transition-colors px-3 py-1.5 rounded-lg hover:bg-white/10 flex items-center gap-1"
+              >
+                {clearing ? 'Clearing…' : 'Clear ▾'}
+              </button>
+            )}
 
-          {/* Clear period */}
-          {!showClearConfirm ? (
-            <button
-              onClick={() => setShowClearConfirm(true)}
-              disabled={clearing}
-              title="Delete all data for this month and start over"
-              className="text-white/30 hover:text-red-400 text-xs transition-colors px-3 py-1.5 rounded-lg hover:bg-white/10"
-            >
-              {clearing ? 'Clearing…' : 'Clear month'}
-            </button>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-red-400 text-xs">Clear all {selectedMonthName} data?</span>
-              <button onClick={clearPeriod} className="text-xs px-2 py-1 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all">Yes</button>
-              <button onClick={() => setShowClearConfirm(false)} className="text-xs px-2 py-1 bg-white/10 text-white/60 rounded-lg hover:bg-white/20 transition-all">No</button>
-            </div>
-          )}
+            {showClearMenu && !clearConfirm && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowClearMenu(false)} />
+                <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-narra-border rounded-xl shadow-xl py-1 min-w-[220px]">
+                  <div className="px-3 py-1.5 text-[10px] text-narra-muted uppercase tracking-widest border-b border-narra-border">
+                    Clear {selectedMonthName} data
+                  </div>
+                  {CLEAR_OPTIONS.map(opt => (
+                    <button
+                      key={opt.key}
+                      onClick={() => { setShowClearMenu(false); setClearConfirm(opt.key) }}
+                      className={`w-full text-left px-3 py-2 hover:bg-narra-surface transition-colors ${opt.key === 'all' ? 'border-t border-narra-border mt-1' : ''}`}
+                    >
+                      <div className={`text-sm font-medium ${opt.key === 'all' ? 'text-red-600' : 'text-narra-dark'}`}>
+                        {opt.label}
+                      </div>
+                      <div className="text-xs text-narra-muted">{opt.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
 
           {/* Monthly close wizard */}
           <button
@@ -290,7 +313,7 @@ export default function FinancePage() {
               <InvoiceSync periodId={periodId} monthLabel={selectedMonth} onSync={loadReports} />
             )}
             {tab === 'bank' && (
-              <BankImport periodId={periodId} onImport={loadReports} />
+              <BankImport periodId={periodId} onImport={loadReports} refreshKey={bankRefreshKey} selectedYear={selectedYear} />
             )}
             {tab === 'reports' && (
               <ReportsPanel data={reportData} loading={loadingReport} period={selectedMonth} />

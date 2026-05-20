@@ -12,6 +12,7 @@ type Client = {
   notes: string | null
   active: boolean
   ltv: number
+  cash_received: number
 }
 
 const BILLING_TYPES = ['annual', 'quarterly', 'monthly', 'one-off']
@@ -282,16 +283,16 @@ export default function ClientsPanel() {
                   className="rounded accent-narra-green cursor-pointer"
                 />
               </th>
-              {['Client', 'Holding Group', 'Distributor / Payer', 'Billing', 'LTV', 'Notes', 'Status', ''].map(h => (
-                <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'LTV' ? 'text-right' : 'text-left'}`}>{h}</th>
+              {['Client', 'Holding Group', 'Distributor / Payer', 'Billing', 'LTV', 'Cash Received', 'Notes', 'Status', ''].map(h => (
+                <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'LTV' || h === 'Cash Received' ? 'text-right' : 'text-left'}`}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-narra-muted">Loading…</td></tr>
+              <tr><td colSpan={10} className="px-4 py-10 text-center text-narra-muted">Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-narra-muted">
+              <tr><td colSpan={10} className="px-4 py-10 text-center text-narra-muted">
                 {clients.length === 0 ? 'No clients yet — add your first client above.' : 'No results match your filter.'}
               </td></tr>
             ) : filtered.map(c => (
@@ -325,6 +326,9 @@ export default function ClientsPanel() {
                 <td className="px-4 py-3 text-right font-medium text-narra-dark">
                   {c.ltv > 0 ? `$${c.ltv.toLocaleString()}` : <span className="text-narra-border">—</span>}
                 </td>
+                <td className="px-4 py-3 text-right font-medium text-green-700">
+                  {c.cash_received > 0 ? `$${c.cash_received.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : <span className="text-narra-border font-normal">—</span>}
+                </td>
                 <td className="px-4 py-3 text-narra-muted text-xs max-w-[160px] truncate">{c.notes || '—'}</td>
                 <td className="px-4 py-3">
                   <button onClick={() => toggleActive(c)}
@@ -354,6 +358,9 @@ export default function ClientsPanel() {
                 </td>
                 <td className="px-4 py-3 text-right font-heading font-semibold text-narra-dark">
                   ${filtered.reduce((s, c) => s + (c.ltv || 0), 0).toLocaleString()}
+                </td>
+                <td className="px-4 py-3 text-right font-heading font-semibold text-green-700">
+                  ${filtered.reduce((s, c) => s + (c.cash_received || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                 </td>
                 <td colSpan={3} />
               </tr>

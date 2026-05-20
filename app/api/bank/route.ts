@@ -58,6 +58,50 @@ export async function GET(req: NextRequest) {
   const periodId = searchParams.get('periodId')
   const action   = searchParams.get('action')
 
+  if (action === 'coverage') {
+    // Returns all periods that have bank transactions, with counts
+    const res = await query(
+      `SELECT p.label, p.start_date,
+              COUNT(bt.id)::int                                       AS tx_count,
+              COALESCE(SUM(CASE WHEN bt.type='revenue'  THEN bt.amount_usd ELSE 0 END), 0) AS revenue,
+              COALESCE(SUM(CASE WHEN bt.type='expense'  THEN bt.amount_usd ELSE 0 END), 0) AS expenses
+       FROM periods p
+       LEFT JOIN bank_transactions bt ON bt.period_id = p.id
+       GROUP BY p.id, p.label, p.start_date
+       HAVING COUNT(bt.id) > 0
+       ORDER BY p.start_date`,
+      []
+    )
+    const coverage: Record<string, { txCount: number; revenue: number; expenses: number }> = {}
+    for (const row of res.rows) {
+      coverage[row.label] = {
+        txCount:  row.tx_count,
+        revenue:  parseFloat(row.revenue),
+        expenses: parseFloat(row.expenses),
+      }
+    }
+    return NextResponse.json({ coverage })
+  }
+
+  if (action === 'year_revenue') {
+    const year = searchParams.get('year')
+    if (!year) return NextResponse.json({ error: 'year required' }, { status: 400 })
+    const res = await query(
+      `SELECT bt.id, bt.date, bt.description, bt.amount, bt.currency, bt.amount_usd,
+              bt.account, bt.status, p.label AS period_label
+       FROM bank_transactions bt
+       JOIN periods p ON p.id = bt.period_id
+       WHERE EXTRACT(YEAR FROM bt.date) = $1 AND bt.type = 'revenue'
+       ORDER BY bt.date`,
+      [parseInt(year)]
+    )
+    const total = res.rows.reduce((s: number, r: any) => {
+      const usd = parseFloat(r.amount_usd)
+      return s + (isNaN(usd) ? 0 : usd)
+    }, 0)
+    return NextResponse.json({ transactions: res.rows, total })
+  }
+
   if (action === 'summary') {
     const txs = await query(
       `SELECT bt.*, i.id as invoice_id, i.vendor, i.account_name, i.drive_file_name, i.amount_usd as invoice_amount_usd
@@ -152,7 +196,7 @@ export async function PATCH(req: NextRequest) {
   const session = await requireRole('finance')
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { action, bankTxId, invoiceId, newInvoiceId, periodId: bodyPeriodId, splits } = await req.json()
+  const { action, bankTxId, invoiceId, newInvoiceId, periodId: bodyPeriodId, splits, clientId, invoiceRef } = await req.json()
   const userEmail = (session as any).email || 'unknown'
 
   // Check period lock via the bank transaction's period
@@ -302,6 +346,16 @@ export async function PATCH(req: NextRequest) {
     await writeAudit('bank_transactions', bankTxId, 'split', { amount: originalAmount }, { splits }, userEmail)
 
     return NextResponse.json({ ok: true, count: splits.length })
+  }
+
+  // ── tag_client — link a revenue bank tx to a client ─────────────────────────
+  if (action === 'tag_client') {
+    await query(
+      'UPDATE bank_transactions SET client_id=$1, invoice_ref=$2 WHERE id=$3',
+      [clientId || null, invoiceRef || null, bankTxId]
+    )
+    await writeAudit('bank_transactions', bankTxId, 'tag_client', null, { clientId, invoiceRef }, userEmail)
+    return NextResponse.json({ ok: true })
   }
 
   // ── rerun — re-run auto-reconcile for the period ──────────────────────────

@@ -236,9 +236,9 @@ export async function GET(req: NextRequest) {
         : MONTH_NAMES_SHORT.indexOf(am) - MONTH_NAMES_SHORT.indexOf(bm)
     })
 
-    // ── 5. Client breakdown for selected month ────────────────────────────────
-    // Returns every individual invoice/contract that was live during the selected month,
-    // each with its issue date. Deduplication happens at the MRR-total level (for the sync).
+    // ── 5. Client breakdown for selected month or full year ───────────────────
+    const yearViewParam = new URL(req.url).searchParams.get('yearView') === 'true'
+
     let clientBreakdown: {
       invoiceId: string; name: string; annualAmount: number; billingType: string; issueDate: string
       isNew: boolean; isPending: boolean; isOneOff: boolean; isCarryover: boolean; countedInMrr: boolean
@@ -248,8 +248,15 @@ export async function GET(req: NextRequest) {
       const [monthName, year] = monthParam.split('_')
       const yearNum            = parseInt(year) || new Date().getFullYear()
       const selectedMonthIdx   = MONTH_NAMES_LONG.findIndex(m => m === monthName)
-      const selectedMonthStart = new Date(yearNum, selectedMonthIdx, 1)
-      const selectedMonthEnd   = new Date(yearNum, selectedMonthIdx + 1, 0)
+
+      // Full year view: Jan 1 → Dec 31 of the selected year
+      // Month view: first → last day of the selected month
+      const selectedMonthStart = yearViewParam
+        ? new Date(yearNum, 0, 1)
+        : new Date(yearNum, selectedMonthIdx, 1)
+      const selectedMonthEnd = yearViewParam
+        ? new Date(yearNum, 11, 31)
+        : new Date(yearNum, selectedMonthIdx + 1, 0)
 
       const entries: {
         invoiceId: string; name: string; monthlyMrr: number; billingType: string

@@ -80,7 +80,8 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
     setHistoryLoading(true)
     setClients([])
     setCosts([])
-    fetch(`/api/mrr/history?month=${encodeURIComponent(selectedMonth || '')}`, { credentials: 'include' })
+    const yearView = periodView === 'year'
+    fetch(`/api/mrr/history?month=${encodeURIComponent(selectedMonth || '')}&yearView=${yearView}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : { history: [], clientBreakdown: [], yearTotals: {} })
       .then(json => {
         // History
@@ -112,7 +113,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
       })
       .catch(() => {})
       .finally(() => setHistoryLoading(false))
-  }, [selectedMonth, refreshKey, sheetRefreshKey]) // re-fetch when month changes, after a clear, or manual refresh
+  }, [selectedMonth, refreshKey, sheetRefreshKey, periodView]) // re-fetch when month/year-view/refresh changes
 
   useEffect(() => {
     if (!periodId) return

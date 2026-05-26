@@ -109,7 +109,7 @@ export default function AnnualReportPanel({ selectedYear }: { selectedYear: stri
             Actual money in and out of your bank accounts
           </p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-2 sm:gap-3">
           <button
             onClick={exportPL}
             disabled={!data || loading}
@@ -155,7 +155,7 @@ export default function AnnualReportPanel({ selectedYear }: { selectedYear: stri
       {!loading && data && data.totalPeriods > 0 && (
         <>
           {/* KPI cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             {[
               { label: 'Total Revenue',   value: `$${fmt(data.totals.revenue)}`,   sub: 'Bank receipts',           color: 'text-narra-dark' },
               { label: 'Total Expenses',  value: `$${fmt(data.totals.expenses)}`,  sub: 'Bank payments',           color: 'text-red-600'   },
@@ -214,7 +214,7 @@ export default function AnnualReportPanel({ selectedYear }: { selectedYear: stri
           )}
 
           {/* Monthly breakdown table */}
-          <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
+          <div className="bg-white border border-narra-border rounded-xl overflow-hidden overflow-x-auto">
             <div className="px-5 py-3 border-b border-narra-border bg-narra-dark">
               <h3 className="font-heading font-semibold text-white text-sm">Monthly Breakdown</h3>
             </div>
@@ -264,7 +264,7 @@ export default function AnnualReportPanel({ selectedYear }: { selectedYear: stri
 
           {/* Expense breakdown */}
           {data.expensesByDescription.length > 0 && (
-            <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
+            <div className="bg-white border border-narra-border rounded-xl overflow-hidden overflow-x-auto">
               <div className="px-5 py-3 border-b border-narra-border bg-narra-dark flex items-center justify-between">
                 <h3 className="font-heading font-semibold text-white text-sm">Expense Detail</h3>
                 <span className="text-xs text-white/40 font-body">{data.expensesByDescription.length} line items</span>

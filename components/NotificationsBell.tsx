@@ -87,7 +87,7 @@ export default function NotificationsBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 z-50 w-80 bg-white border border-narra-border rounded-2xl shadow-2xl overflow-hidden">
+        <div className="absolute right-0 top-full mt-2 z-50 w-80 max-w-[calc(100vw-16px)] bg-white border border-narra-border rounded-2xl shadow-2xl overflow-hidden">
           <div className="px-4 py-3 bg-narra-dark flex items-center justify-between">
             <span className="text-white font-heading text-sm font-semibold">Action Required</span>
             <span className="text-white/40 text-xs">{total} issue{total !== 1 ? 's' : ''} in last 6 months</span>

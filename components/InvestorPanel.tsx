@@ -112,7 +112,7 @@ export default function InvestorPanel() {
       </div>
 
       {/* The Story — 3 cards */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {/* Invested */}
         <div className="bg-narra-dark border border-white/10 rounded-2xl p-6 flex flex-col gap-2">
           <div className="text-white/40 text-xs uppercase tracking-widest font-body">Total Raised</div>
@@ -157,7 +157,7 @@ export default function InvestorPanel() {
       </div>
 
       {/* Key metrics row */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white border border-narra-border rounded-2xl p-5">
           <div className="text-narra-muted text-xs uppercase tracking-widest font-body mb-2 flex items-center">
             Avg Monthly Revenue
@@ -263,13 +263,13 @@ export default function InvestorPanel() {
           </p>
           <div className="space-y-3">
             {clients.map((c: any) => (
-              <div key={c.name} className="flex items-center gap-4">
-                <span className="text-narra-dark text-sm font-body w-40 truncate">{c.name}</span>
-                <div className="flex-1 h-1.5 bg-narra-border rounded-full overflow-hidden">
+              <div key={c.name} className="flex items-center gap-3">
+                <span className="text-narra-dark text-sm font-body w-28 sm:w-40 truncate shrink-0">{c.name}</span>
+                <div className="flex-1 h-1.5 bg-narra-border rounded-full overflow-hidden min-w-0">
                   <div className="h-full bg-narra-green rounded-full" style={{ width: `${c.pct}%` }} />
                 </div>
-                <span className="text-narra-muted text-xs w-8 text-right">{c.pct}%</span>
-                <span className="text-narra-dark font-body text-sm w-20 text-right">${fmt(c.mrr)}</span>
+                <span className="text-narra-muted text-xs w-8 text-right shrink-0">{c.pct}%</span>
+                <span className="text-narra-dark font-body text-sm w-16 sm:w-20 text-right shrink-0">${fmt(c.mrr)}</span>
               </div>
             ))}
           </div>

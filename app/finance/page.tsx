@@ -161,31 +161,31 @@ export default function FinancePage() {
       )}
 
       {/* Header */}
-      <header className="bg-narra-dark text-white px-6 py-3 flex items-center justify-between sticky top-0 z-30">
-        <div className="flex items-center gap-4">
+      <header className="bg-narra-dark text-white px-4 sm:px-6 py-3 flex items-center justify-between sticky top-0 z-30 gap-2">
+        <div className="flex items-center gap-2 sm:gap-4 min-w-0">
 
           {/* Logo */}
-          <button onClick={() => router.push('/home')} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+          <button onClick={() => router.push('/finance')} className="flex items-center gap-2 hover:opacity-80 transition-opacity shrink-0">
             <Image
               src="/narra-logo.png"
               alt="Narra Health"
-              width={100}
-              height={36}
+              width={80}
+              height={30}
               className="object-contain"
               priority
             />
-            <span className="text-white/30 text-sm font-light border-l border-white/10 pl-3">
+            <span className="text-white/30 text-xs font-light border-l border-white/10 pl-2 hidden sm:inline">
               finance
             </span>
           </button>
 
           {/* Month selector */}
-          <div className="flex items-center gap-2 bg-white/10 rounded-lg px-3 py-1.5">
-            <span className="text-white/40 text-xs">Month:</span>
+          <div className="flex items-center gap-1.5 bg-white/10 rounded-lg px-2 py-1.5">
+            <span className="text-white/40 text-xs hidden sm:inline">Month:</span>
             <select
               value={selectedMonthName}
               onChange={e => setSelectedMonthName(e.target.value)}
-              className="bg-transparent text-white text-sm font-body outline-none cursor-pointer"
+              className="bg-transparent text-white text-xs font-body outline-none cursor-pointer"
             >
               {MONTHS.map(m => (
                 <option key={m} value={m}>{m}</option>
@@ -194,12 +194,12 @@ export default function FinancePage() {
           </div>
 
           {/* Year selector */}
-          <div className="flex items-center gap-2 bg-white/10 rounded-lg px-3 py-1.5">
-            <span className="text-white/40 text-xs">Year:</span>
+          <div className="flex items-center gap-1.5 bg-white/10 rounded-lg px-2 py-1.5">
+            <span className="text-white/40 text-xs hidden sm:inline">Year:</span>
             <select
               value={selectedYear}
               onChange={e => setSelectedYear(e.target.value)}
-              className="bg-transparent text-white text-sm font-body outline-none cursor-pointer"
+              className="bg-transparent text-white text-xs font-body outline-none cursor-pointer"
             >
               {YEARS.map(y => (
                 <option key={y} value={y}>{y}</option>
@@ -208,12 +208,12 @@ export default function FinancePage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 sm:gap-4 shrink-0">
           {/* Clear period — dropdown menu */}
           <div className="relative">
             {clearConfirm ? (
-              <div className="flex items-center gap-2">
-                <span className="text-red-400 text-xs whitespace-nowrap">
+              <div className="flex items-center gap-1.5">
+                <span className="text-red-400 text-xs hidden sm:inline whitespace-nowrap">
                   Clear {clearConfirm === 'all' ? `all ${selectedMonthName}` : CLEAR_OPTIONS.find(o => o.key === clearConfirm)?.label} data?
                 </span>
                 <button
@@ -229,9 +229,9 @@ export default function FinancePage() {
               <button
                 onClick={() => setShowClearMenu(v => !v)}
                 disabled={clearing}
-                className="text-white/30 hover:text-red-400 text-xs transition-colors px-3 py-1.5 rounded-lg hover:bg-white/10 flex items-center gap-1"
+                className="text-white/30 hover:text-red-400 text-xs transition-colors px-2 sm:px-3 py-1.5 rounded-lg hover:bg-white/10 flex items-center gap-1"
               >
-                {clearing ? 'Clearing…' : 'Clear ▾'}
+                {clearing ? '…' : 'Clear ▾'}
               </button>
             )}
 
@@ -264,34 +264,37 @@ export default function FinancePage() {
           {/* Monthly close wizard */}
           <button
             onClick={() => setShowWizard(true)}
-            className="text-narra-green text-xs font-body px-3 py-1.5 rounded-lg border border-narra-green/30 hover:bg-narra-green/10 transition-all"
+            className="text-narra-green text-xs font-body px-2 sm:px-3 py-1.5 rounded-lg border border-narra-green/30 hover:bg-narra-green/10 transition-all whitespace-nowrap"
           >
-            Close Month
+            <span className="hidden sm:inline">Close Month</span>
+            <span className="sm:hidden">Close</span>
           </button>
 
           <button onClick={signOut}
-            className="text-white/40 hover:text-white text-xs transition-colors px-3 py-1.5 rounded-lg hover:bg-white/10">
+            className="text-white/40 hover:text-white text-xs transition-colors px-2 sm:px-3 py-1.5 rounded-lg hover:bg-white/10 hidden sm:block">
             Sign out
           </button>
         </div>
       </header>
 
-      {/* Tabs */}
-      <div className="bg-narra-dark/95 border-b border-white/10 px-6 flex gap-1 sticky top-[61px] z-20">
+      {/* Tabs — scrollable on mobile */}
+      <div className="bg-narra-dark/95 border-b border-white/10 px-2 sm:px-6 flex gap-0.5 sticky top-[53px] sm:top-[61px] z-20 overflow-x-auto scrollbar-none">
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
-            className={`px-4 py-3 text-sm font-body transition-all border-b-2 whitespace-nowrap rounded-t-md
+            className={`px-2.5 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm font-body transition-all border-b-2 whitespace-nowrap rounded-t-md flex-shrink-0
               ${tab === t.id
                 ? 'text-narra-green border-narra-green bg-white/8 font-medium'
                 : 'text-white/40 border-transparent hover:text-white/70 hover:bg-white/5'
               }`}>
-            <span className="mr-1.5">{t.icon}</span>{t.label}
+            <span className="mr-1">{t.icon}</span>
+            <span className="hidden sm:inline">{t.label}</span>
+            <span className="sm:hidden">{t.label.split(' ')[0]}</span>
           </button>
         ))}
       </div>
 
       {/* Content */}
-      <main className={`flex-1 px-6 py-6 max-w-7xl mx-auto w-full transition-opacity duration-200 ${loadingReport && tab !== 'annual' && tab !== 'investor' && tab !== 'instructions' ? 'opacity-60 pointer-events-none' : 'opacity-100'}`}>
+      <main className={`flex-1 px-4 sm:px-6 py-4 sm:py-6 max-w-7xl mx-auto w-full transition-opacity duration-200 ${loadingReport && tab !== 'annual' && tab !== 'investor' && tab !== 'instructions' ? 'opacity-60 pointer-events-none' : 'opacity-100'}`}>
         {tab === 'instructions' ? (
           <InstructionsPanel />
         ) : tab === 'investor' ? (

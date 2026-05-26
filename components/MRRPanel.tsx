@@ -40,7 +40,10 @@ function CustomTooltip({ active, payload, label }: any) {
       <p className="text-narra-green font-heading font-semibold mb-2">{label}</p>
       {payload.map((entry: any) => (
         <div key={entry.name} className="flex justify-between gap-4 py-0.5">
-          <span style={{ color: entry.color }}>{entry.name}</span>
+          <span className="flex items-center gap-1.5 text-white">
+            <span style={{ background: entry.color }} className="inline-block w-2 h-2 rounded-full flex-shrink-0" />
+            {entry.name}
+          </span>
           <span className="text-white font-medium">${Number(entry.value).toLocaleString()}</span>
         </div>
       ))}

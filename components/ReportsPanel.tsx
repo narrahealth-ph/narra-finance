@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { downloadCSV, toCSV } from '@/lib/csv'
 
 type ReportTab = 'gl' | 'bs' | 'pl'
@@ -178,9 +178,332 @@ function buildPLCSV(pl: any, period: string): string {
   return rows.map(r => r.join(',')).join('\n')
 }
 
-export default function ReportsPanel({ data, loading, period }: { data: any; loading: boolean; period: string }) {
-  const [tab, setTab] = useState<ReportTab>('pl')
+function buildAnnualPLCSV(annualData: any): string {
+  const { year, totals, expensesByDescription } = annualData
+  const rows: string[][] = [
+    ['Report Name', 'Annual Profit and Loss Statement'],
+    ['Company Name', 'NARRA HEALTH PTE. LTD.'],
+    ['Start Date', `${year}-01-01`],
+    ['End Date',   `${year}-12-31`],
+    ['Source', 'Bank transactions (accountant-approved)'],
+    ['', ''],
+    ['Account', year],
+    ['Expenses', fmt(totals.expenses)],
+    ...expensesByDescription.map((e: any) => [
+      `"${(e.description || 'Other').replace(/"/g, '""')}"`,
+      fmt(e.total),
+    ]),
+    [`'Total Expense (Debit)'`, fmt(totals.expenses)],
+    ['', ''],
+    ['Income', fmt(totals.revenue)],
+    ['310 - Service Revenue', fmt(totals.revenue)],
+    [`'Total Income (Credit)'`, fmt(totals.revenue)],
+    ['', ''],
+    [`'Profit for the year'`, totals.net < 0 ? `(${fmt(Math.abs(totals.net))})` : fmt(totals.net)],
+    ['Operating Margin', `${totals.operatingMargin}%`],
+  ]
+  return rows.map(r => r.join(',')).join('\n')
+}
 
+function buildAnnualGLCSV(annualData: any): string {
+  const { year, allTransactions } = annualData
+  const rows: string[][] = [
+    ['Report Name', 'Annual General Ledger', '', '', '', ''],
+    ['Company Name', 'NARRA HEALTH PTE. LTD.', '', '', '', ''],
+    ['Start Date', `${year}-01-01`, '', '', '', ''],
+    ['End Date',   `${year}-12-31`, '', '', '', ''],
+    ['Source', 'Bank transactions', '', '', '', ''],
+    ['', '', '', '', '', ''],
+    ['Date', 'Description', 'Bank Account', 'Type', 'Amount (USD)', 'Running Balance'],
+  ]
+  let balance = 0
+  for (const tx of (allTransactions || [])) {
+    const amt = tx.type === 'revenue' ? tx.amount_usd : -tx.amount_usd
+    balance += amt
+    rows.push([
+      tx.date ? new Date(tx.date).toISOString().split('T')[0] : '',
+      `"${(tx.description || '').replace(/"/g, '""')}"`,
+      tx.account || '',
+      tx.type,
+      tx.type === 'revenue' ? fmt(tx.amount_usd) : `(${fmt(tx.amount_usd)})`,
+      fmt(balance),
+    ])
+  }
+  return rows.map(r => r.join(',')).join('\n')
+}
+
+export default function ReportsPanel({ data, loading, period, selectedYear }: {
+  data: any; loading: boolean; period: string; selectedYear?: string
+}) {
+  const [tab, setTab] = useState<ReportTab>('pl')
+  const [annualMode,    setAnnualMode]    = useState(false)
+  const [annualData,    setAnnualData]    = useState<any>(null)
+  const [annualBS,      setAnnualBS]      = useState<any>(null)
+  const [annualLoading, setAnnualLoading] = useState(false)
+
+  useEffect(() => {
+    if (!annualMode || !selectedYear) return
+    setAnnualLoading(true)
+    setAnnualData(null)
+    setAnnualBS(null)
+    fetch(`/api/annual-report?year=${selectedYear}`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(async (annual) => {
+        setAnnualData(annual)
+        if (annual.lastPeriodId) {
+          const bsRes = await fetch(`/api/reports?periodId=${annual.lastPeriodId}`, { credentials: 'include' })
+          const bsJson = await bsRes.json()
+          setAnnualBS(bsJson?.bs || null)
+        }
+      })
+      .finally(() => setAnnualLoading(false))
+  }, [annualMode, selectedYear])
+
+  // ── Annual mode early returns ──────────────────────────────────────────────
+  if (annualMode) {
+    if (annualLoading) return (
+      <div className="flex items-center justify-center h-64 text-narra-muted animate-pulse-soft">
+        Loading {selectedYear} annual report…
+      </div>
+    )
+
+    const aYear = selectedYear || ''
+
+    function exportAnnualPL() {
+      if (!annualData) return
+      downloadCSV(buildAnnualPLCSV(annualData), `NARRA_HEALTH_PTE__LTD__-_${aYear}_-_Annual_Profit_and_Loss.csv`)
+    }
+    function exportAnnualGL() {
+      if (!annualData) return
+      downloadCSV(buildAnnualGLCSV(annualData), `NARRA_HEALTH_PTE__LTD__-_${aYear}_-_Annual_General_Ledger.csv`)
+    }
+    function exportAnnualBS() {
+      if (!annualBS) return
+      const csv = buildBSCSV(annualBS, `December_${aYear}`)
+      const blob = new Blob([csv], { type: 'text/csv' })
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a'); a.href = url
+      a.download = `NARRA_HEALTH_PTE__LTD__-_${aYear}_-_Annual_Balance_Sheet.csv`
+      a.click(); URL.revokeObjectURL(url)
+    }
+
+    const revenueRows  = (annualData?.allTransactions || []).filter((t: any) => t.type === 'revenue')
+    const expenseRows  = annualData?.expensesByDescription || []
+    const totals       = annualData?.totals || {}
+    const bs           = annualBS
+
+    return (
+      <div className="space-y-6 animate-fade-up">
+        {/* Header + toggle */}
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h2 className="font-heading text-xl font-semibold text-narra-dark">Financial Reports</h2>
+            <p className="text-sm text-narra-muted mt-0.5">{aYear} · NARRA HEALTH PTE. LTD. · Bank-based (accountant-approved)</p>
+          </div>
+          <div className="flex gap-2 flex-wrap items-center">
+            {/* Monthly / Annual toggle */}
+            <div className="flex rounded-lg border border-narra-border overflow-hidden text-xs font-body">
+              <button onClick={() => setAnnualMode(false)} className="px-3 py-2 text-narra-muted hover:bg-narra-light transition-all">Monthly</button>
+              <button className="px-3 py-2 bg-narra-dark text-narra-green">Annual</button>
+            </div>
+            <button onClick={exportAnnualGL}  className="px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">↓ GL CSV</button>
+            <button onClick={exportAnnualBS}  disabled={!annualBS} className="px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all disabled:opacity-40">↓ BS CSV</button>
+            <button onClick={exportAnnualPL}  className="px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">↓ P&L CSV</button>
+          </div>
+        </div>
+
+        {/* Sub-tabs */}
+        <div className="flex gap-1 border-b border-narra-border">
+          {[{ id: 'pl', label: 'P&L Statement' }, { id: 'bs', label: 'Balance Sheet' }, { id: 'gl', label: 'General Ledger' }].map(t => (
+            <button key={t.id} onClick={() => setTab(t.id as ReportTab)}
+              className={`px-5 py-2.5 text-sm font-body transition-all border-b-2 -mb-px
+                ${tab === t.id ? 'text-narra-dark border-narra-dark font-medium' : 'text-narra-muted border-transparent hover:text-narra-dark'}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Annual P&L */}
+        {tab === 'pl' && annualData && (
+          <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-narra-border bg-narra-dark text-white flex justify-between items-start">
+              <div>
+                <div className="text-xs text-white/40 uppercase tracking-widest mb-1">NARRA HEALTH PTE. LTD.</div>
+                <h3 className="font-heading font-semibold text-white">Annual Profit and Loss Statement</h3>
+                <p className="text-xs text-white/50 mt-0.5">1 January {aYear} – 31 December {aYear} · Bank transactions</p>
+              </div>
+              <div className="text-right">
+                <div className={`font-heading text-2xl font-semibold ${totals.net >= 0 ? 'text-narra-green' : 'text-red-400'}`}>
+                  {totals.net < 0 ? '(' : ''}${fmt(Math.abs(totals.net || 0))}{totals.net < 0 ? ')' : ''}
+                </div>
+                <div className="text-xs text-white/40">{totals.net >= 0 ? 'Profit' : 'Loss'} for {aYear}</div>
+              </div>
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-narra-border">
+                  <th className="text-left px-6 py-2.5 text-xs text-narra-muted font-body uppercase tracking-widest">Account</th>
+                  <th className="text-right px-6 py-2.5 text-xs text-narra-muted font-body uppercase tracking-widest">{aYear}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="bg-narra-light/40">
+                  <td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider">
+                    Expenses — ${fmt(totals.expenses)}
+                  </td>
+                </tr>
+                {expenseRows.map((e: any, i: number) => (
+                  <tr key={i} className="border-t border-narra-border/50 hover:bg-narra-surface">
+                    <td className="px-6 py-2.5 text-narra-ink pl-10 truncate max-w-[500px]">{e.description || '—'}</td>
+                    <td className="px-6 py-2.5 text-right font-medium text-narra-dark">{fmt(e.total)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t border-narra-border bg-narra-surface">
+                  <td className="px-6 py-3 font-semibold text-narra-dark">Total Expense (Debit)</td>
+                  <td className="px-6 py-3 text-right font-semibold text-narra-dark">{fmt(totals.expenses)}</td>
+                </tr>
+
+                {totals.revenue > 0 && <>
+                  <tr className="bg-narra-light/40">
+                    <td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider pt-3">
+                      Income — ${fmt(totals.revenue)}
+                    </td>
+                  </tr>
+                  {revenueRows.map((r: any, i: number) => (
+                    <tr key={i} className="border-t border-narra-border/50 hover:bg-narra-surface">
+                      <td className="px-6 py-2.5 text-narra-ink pl-10">310 - Service Revenue · {r.description}</td>
+                      <td className="px-6 py-2.5 text-right font-medium text-green-700">{fmt(r.amount_usd)}</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t border-narra-border bg-narra-surface">
+                    <td className="px-6 py-3 font-semibold text-narra-dark">Total Income (Credit)</td>
+                    <td className="px-6 py-3 text-right font-semibold text-green-700">{fmt(totals.revenue)}</td>
+                  </tr>
+                </>}
+
+                <tr className="border-t-2 border-narra-dark">
+                  <td className="px-6 py-4 font-heading font-bold text-narra-dark text-base">Profit for the year</td>
+                  <td className={`px-6 py-4 text-right font-heading font-bold text-base ${totals.net >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                    {totals.net < 0 ? '(' : ''}${fmt(Math.abs(totals.net || 0))}{totals.net < 0 ? ')' : ''}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Annual BS — year-end (December period) */}
+        {tab === 'bs' && (
+          bs ? (
+            <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-narra-border bg-narra-dark text-white flex justify-between items-start">
+                <div>
+                  <div className="text-xs text-white/40 uppercase tracking-widest mb-1">NARRA HEALTH PTE. LTD.</div>
+                  <h3 className="font-heading font-semibold text-white">Balance Sheet</h3>
+                  <p className="text-xs text-white/50 mt-0.5">As at 31 December {aYear}</p>
+                </div>
+                {!bs.balanceCheck && (
+                  <div className="bg-red-500/20 text-red-300 text-xs px-3 py-1.5 rounded-lg font-body">⚠ Out of balance</div>
+                )}
+              </div>
+              {/* Reuse the same BS table structure */}
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-narra-border">
+                    <th className="text-left px-6 py-2.5 text-xs text-narra-muted font-body uppercase tracking-widest">Account</th>
+                    <th className="text-right px-6 py-2.5 text-xs text-narra-muted font-body uppercase tracking-widest">{aYear}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="bg-narra-light/40"><td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider">Current Assets — ${fmt(bs.totalCurrentAssets||0)}</td></tr>
+                  {Object.entries(bs.cashByAccount||{}).map(([acct,info]:any)=>(
+                    <tr key={acct} className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">BANK {acct}</td><td className="px-6 py-3 text-right font-medium">{fmt(info.amount)}</td></tr>
+                  ))}
+                  {bs.arTotal>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">600 - Accounts Receivable</td><td className="px-6 py-3 text-right">{fmt(bs.arTotal)}</td></tr>}
+                  {bs.prepayments>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">610 - Prepayments</td><td className="px-6 py-3 text-right">{fmt(bs.prepayments)}</td></tr>}
+                  <tr className="border-t border-narra-border bg-narra-surface"><td className="px-6 py-3 font-semibold text-narra-dark">Total Current Assets</td><td className="px-6 py-3 text-right font-semibold">{fmt(bs.totalCurrentAssets||0)}</td></tr>
+                  <tr className="border-t-2 border-narra-dark"><td className="px-6 py-4 font-heading font-bold text-narra-dark">Total Asset (Debit)</td><td className="px-6 py-4 text-right font-heading font-bold">{fmt(bs.totalAssets||0)}</td></tr>
+                  <tr className="bg-narra-light/40"><td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider pt-3">Current Liabilities</td></tr>
+                  {bs.accountsPayable>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">800 - Accounts Payable</td><td className="px-6 py-3 text-right">{fmt(bs.accountsPayable)}</td></tr>}
+                  {bs.deferredRevenue>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">Deferred Revenue</td><td className="px-6 py-3 text-right">{fmt(bs.deferredRevenue)}</td></tr>}
+                  {bs.director835>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">835 - Director Current Account</td><td className="px-6 py-3 text-right">{fmt(bs.director835)}</td></tr>}
+                  {bs.director840>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">840 - Director Current Account</td><td className="px-6 py-3 text-right">{fmt(bs.director840)}</td></tr>}
+                  {bs.director842>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">842 - Director Current Account</td><td className="px-6 py-3 text-right">{fmt(bs.director842)}</td></tr>}
+                  {bs.incomeTax>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">860 - Income Tax Payable</td><td className="px-6 py-3 text-right">{fmt(bs.incomeTax)}</td></tr>}
+                  {bs.gstPayable>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">GST Payable</td><td className="px-6 py-3 text-right">{fmt(bs.gstPayable)}</td></tr>}
+                  <tr className="border-t border-narra-border bg-narra-surface"><td className="px-6 py-3 font-semibold text-narra-dark">Total Current Liabilities</td><td className="px-6 py-3 text-right font-semibold">{fmt(bs.totalCurrentLiabilities||0)}</td></tr>
+                  {bs.totalNonCurrentLiabilities>0&&<>
+                    <tr className="bg-narra-light/40"><td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider pt-3">Non-current Liabilities</td></tr>
+                    {bs.loans>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">851 - Loans</td><td className="px-6 py-3 text-right">{fmt(bs.loans)}</td></tr>}
+                    {bs.investment852>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">852 - Founder Investment</td><td className="px-6 py-3 text-right">{fmt(bs.investment852)}</td></tr>}
+                    {bs.investment853>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">853 - Founder Investment</td><td className="px-6 py-3 text-right">{fmt(bs.investment853)}</td></tr>}
+                    <tr className="border-t border-narra-border bg-narra-surface"><td className="px-6 py-3 font-semibold text-narra-dark">Total Non-current Liabilities</td><td className="px-6 py-3 text-right font-semibold">{fmt(bs.totalNonCurrentLiabilities)}</td></tr>
+                  </>}
+                  <tr className="border-t border-narra-border bg-narra-surface"><td className="px-6 py-3 font-semibold text-narra-dark">Total Liability (Credit)</td><td className="px-6 py-3 text-right font-semibold">{fmt(bs.totalLiabilities||0)}</td></tr>
+                  <tr className="bg-narra-light/40"><td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider pt-3">Equity</td></tr>
+                  <tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">900 - Share Capital</td><td className="px-6 py-3 text-right">{fmt(bs.shareCapital||0)}</td></tr>
+                  <tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">920 - Retained Earnings</td><td className={`px-6 py-3 text-right ${(bs.retainedEarnings||0)<0?'text-red-600':''}`}>{(bs.retainedEarnings||0)<0?'(':''}{ fmt(Math.abs(bs.retainedEarnings||0))}{(bs.retainedEarnings||0)<0?')':''}</td></tr>
+                  <tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">Provisional Profit / Loss (Credit)</td><td className={`px-6 py-3 text-right ${(bs.provisionalPL||0)>=0?'text-green-700':'text-red-600'}`}>{(bs.provisionalPL||0)<0?'(':''}{fmt(Math.abs(bs.provisionalPL||0))}{(bs.provisionalPL||0)<0?')':''}</td></tr>
+                  <tr className="border-t border-narra-border bg-narra-surface"><td className="px-6 py-3 font-semibold text-narra-dark">Total Equity (Credit)</td><td className={`px-6 py-3 text-right font-semibold ${(bs.totalEquity||0)<0?'text-red-600':''}`}>{(bs.totalEquity||0)<0?'(':''}{fmt(Math.abs(bs.totalEquity||0))}{(bs.totalEquity||0)<0?')':''}</td></tr>
+                  <tr className="border-t-2 border-narra-dark"><td className="px-6 py-4 font-heading font-bold text-narra-dark">Total (Credit)</td><td className="px-6 py-4 text-right font-heading font-bold">{fmt(bs.totalAssets||0)}</td></tr>
+                  <tr className={`border-t ${bs.balanceCheck?'bg-green-50':'bg-red-50'}`}><td colSpan={2} className={`px-6 py-2 text-xs font-body ${bs.balanceCheck?'text-green-700':'text-red-600'}`}>{bs.balanceCheck?'✓ Balanced — Assets equal Liabilities + Equity':'⚠ Out of balance — check manual entries in the Adjustments tab'}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-sm text-amber-700">
+              No December period found for {aYear}. Make sure December bank data is imported.
+            </div>
+          )
+        )}
+
+        {/* Annual GL */}
+        {tab === 'gl' && annualData && (
+          <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-narra-border bg-narra-dark text-white">
+              <div className="text-xs text-white/40 uppercase tracking-widest mb-1">NARRA HEALTH PTE. LTD.</div>
+              <h3 className="font-heading font-semibold text-white">Annual General Ledger</h3>
+              <p className="text-xs text-white/50 mt-0.5">{aYear} · {(annualData.allTransactions||[]).length} bank transactions</p>
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-narra-border bg-narra-surface">
+                  <th className="text-left px-4 py-3 text-xs text-narra-muted font-body uppercase tracking-widest">Date</th>
+                  <th className="text-left px-4 py-3 text-xs text-narra-muted font-body uppercase tracking-widest">Description</th>
+                  <th className="text-left px-4 py-3 text-xs text-narra-muted font-body uppercase tracking-widest">Account</th>
+                  <th className="text-right px-4 py-3 text-xs text-narra-muted font-body uppercase tracking-widest">Debit (USD)</th>
+                  <th className="text-right px-4 py-3 text-xs text-narra-muted font-body uppercase tracking-widest">Credit (USD)</th>
+                  <th className="text-right px-4 py-3 text-xs text-narra-muted font-body uppercase tracking-widest">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  let bal = 0
+                  return (annualData.allTransactions || []).map((tx: any, i: number) => {
+                    const amt = tx.amount_usd
+                    if (tx.type === 'revenue') bal += amt
+                    else bal -= amt
+                    return (
+                      <tr key={i} className="border-t border-narra-border/30 hover:bg-narra-surface">
+                        <td className="px-4 py-2.5 text-narra-muted text-xs font-mono">{tx.date ? new Date(tx.date).toISOString().split('T')[0] : '—'}</td>
+                        <td className="px-4 py-2.5 text-narra-ink max-w-[280px] truncate">{tx.description}</td>
+                        <td className="px-4 py-2.5 text-narra-muted text-xs">{tx.account}</td>
+                        <td className="px-4 py-2.5 text-right font-medium text-narra-dark">{tx.type === 'expense' ? fmt(amt) : '—'}</td>
+                        <td className="px-4 py-2.5 text-right font-medium text-green-700">{tx.type === 'revenue' ? fmt(amt) : '—'}</td>
+                        <td className={`px-4 py-2.5 text-right font-medium ${bal >= 0 ? 'text-narra-dark' : 'text-red-600'}`}>{bal < 0 ? '(' : ''}{fmt(Math.abs(bal))}{bal < 0 ? ')' : ''}</td>
+                      </tr>
+                    )
+                  })
+                })()}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── Monthly mode ───────────────────────────────────────────────────────────
   if (loading) return (
     <div className="flex items-center justify-center h-64 text-narra-muted animate-pulse-soft">Generating reports…</div>
   )
@@ -242,7 +565,14 @@ export default function ReportsPanel({ data, loading, period }: { data: any; loa
           <h2 className="font-heading text-xl font-semibold text-narra-dark">Financial Reports</h2>
           <p className="text-sm text-narra-muted mt-0.5">{period.replace('_', ' ')} · NARRA HEALTH PTE. LTD.</p>
         </div>
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap items-center">
+          {/* Monthly / Annual toggle */}
+          {selectedYear && (
+            <div className="flex rounded-lg border border-narra-border overflow-hidden text-xs font-body">
+              <button className="px-3 py-2 bg-narra-dark text-narra-green">Monthly</button>
+              <button onClick={() => setAnnualMode(true)} className="px-3 py-2 text-narra-muted hover:bg-narra-light transition-all">Annual</button>
+            </div>
+          )}
           <button onClick={exportGL}  className="px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">↓ GL CSV</button>
           <button onClick={exportBS}  className="px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">↓ BS CSV</button>
           <button onClick={exportPL}  className="px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">↓ P&L CSV</button>

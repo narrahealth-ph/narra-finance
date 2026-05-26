@@ -8,9 +8,13 @@ import ReportsPanel from '@/components/ReportsPanel'
 import MRRPanel from '@/components/MRRPanel'
 import ReconciliationPanel from '@/components/ReconciliationPanel'
 import AIInsights from '@/components/AIInsights'
+import AnnualReportPanel from '@/components/AnnualReportPanel'
 import ManualEntriesPanel from '@/components/ManualEntriesPanel'
 import FinancialCloseWizard from '@/components/FinancialCloseWizard'
 import ClientsPanel from '@/components/ClientsPanel'
+import InvestorPanel from '@/components/InvestorPanel'
+import InstructionsPanel from '@/components/InstructionsPanel'
+import NotificationsBell from '@/components/NotificationsBell'
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -21,7 +25,7 @@ const MONTHS = [
 const _cy = new Date().getFullYear()
 const YEARS = Array.from({ length: _cy - 2022 }, (_, i) => String(2024 + i))
 
-type Tab = 'mrr' | 'clients' | 'reconcile' | 'invoices' | 'bank' | 'reports' | 'entries' | 'ai'
+type Tab = 'mrr' | 'clients' | 'reconcile' | 'invoices' | 'bank' | 'reports' | 'entries' | 'ai' | 'annual' | 'investor' | 'instructions'
 
 export default function FinancePage() {
   const router = useRouter()
@@ -121,14 +125,17 @@ export default function FinancePage() {
   }
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
-    { id: 'mrr',       label: 'MRR',             icon: '📈' },
     { id: 'clients',   label: 'Clients',          icon: '🏢' },
-    { id: 'reconcile', label: 'Reconciliation',   icon: '⚖️' },
-    { id: 'invoices',  label: 'Invoices',         icon: '📄' },
     { id: 'bank',      label: 'Bank Import',      icon: '🏦' },
-    { id: 'reports',   label: 'Reports',          icon: '📊' },
+    { id: 'mrr',       label: 'Revenue',          icon: '📈' },
+    { id: 'invoices',  label: 'Invoices',         icon: '📄' },
+    { id: 'reconcile', label: 'Reconciliation',   icon: '⚖️' },
     { id: 'entries',   label: 'Adjustments',      icon: '✏️' },
+    { id: 'reports',   label: 'Reports',          icon: '📊' },
+    { id: 'annual',    label: 'Cash Flow',        icon: '💵' },
     { id: 'ai',        label: 'AI Insights',      icon: '✨' },
+    { id: 'investor',     label: 'Investor View',    icon: '📋' },
+    { id: 'instructions', label: 'How to Use',       icon: '📖' },
   ]
 
   const isLoading = loadingReport || !periodId || clearing
@@ -252,6 +259,8 @@ export default function FinancePage() {
             )}
           </div>
 
+          <NotificationsBell />
+
           {/* Monthly close wizard */}
           <button
             onClick={() => setShowWizard(true)}
@@ -271,10 +280,10 @@ export default function FinancePage() {
       <div className="bg-narra-dark/95 border-b border-white/10 px-6 flex gap-1 sticky top-[61px] z-20">
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
-            className={`px-4 py-3 text-sm font-body transition-all border-b-2 whitespace-nowrap
+            className={`px-4 py-3 text-sm font-body transition-all border-b-2 whitespace-nowrap rounded-t-md
               ${tab === t.id
-                ? 'text-narra-green border-narra-green'
-                : 'text-white/40 border-transparent hover:text-white/70'
+                ? 'text-narra-green border-narra-green bg-white/8 font-medium'
+                : 'text-white/40 border-transparent hover:text-white/70 hover:bg-white/5'
               }`}>
             <span className="mr-1.5">{t.icon}</span>{t.label}
           </button>
@@ -282,8 +291,14 @@ export default function FinancePage() {
       </div>
 
       {/* Content */}
-      <main className={`flex-1 px-6 py-6 max-w-7xl mx-auto w-full transition-opacity duration-200 ${loadingReport ? 'opacity-60 pointer-events-none' : 'opacity-100'}`}>
-        {!periodId ? (
+      <main className={`flex-1 px-6 py-6 max-w-7xl mx-auto w-full transition-opacity duration-200 ${loadingReport && tab !== 'annual' && tab !== 'investor' && tab !== 'instructions' ? 'opacity-60 pointer-events-none' : 'opacity-100'}`}>
+        {tab === 'instructions' ? (
+          <InstructionsPanel />
+        ) : tab === 'investor' ? (
+          <InvestorPanel />
+        ) : tab === 'annual' ? (
+          <AnnualReportPanel selectedYear={selectedYear} />
+        ) : !periodId ? (
           <div className="flex items-center justify-center h-64 text-narra-muted">
             Loading period…
           </div>
@@ -316,7 +331,7 @@ export default function FinancePage() {
               <BankImport periodId={periodId} onImport={loadReports} refreshKey={bankRefreshKey} selectedYear={selectedYear} />
             )}
             {tab === 'reports' && (
-              <ReportsPanel data={reportData} loading={loadingReport} period={selectedMonth} />
+              <ReportsPanel data={reportData} loading={loadingReport} period={selectedMonth} selectedYear={selectedYear} />
             )}
             {tab === 'entries' && (
               <ManualEntriesPanel

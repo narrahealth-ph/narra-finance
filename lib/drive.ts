@@ -66,11 +66,13 @@ export async function downloadFileAsBase64(fileId: string, mimeType: string) {
 }
 
 // Find a specific month folder by name e.g. "January_2026"
+// Lists all folders and matches client-side to avoid Drive API exact-match quirks
 export async function findMonthFolder(monthLabel: string) {
-  const drive = getDriveClient()
-  const res = await drive.files.list({
-    q: `'${process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID}' in parents and name='${monthLabel}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-    fields: 'files(id, name)',
-  })
-  return res.data.files?.[0] || null
+  const folders = await listMonthFolders()
+  // Exact match first, then case-insensitive fallback
+  return (
+    folders.find(f => f.name === monthLabel) ||
+    folders.find(f => f.name?.toLowerCase() === monthLabel.toLowerCase()) ||
+    null
+  )
 }

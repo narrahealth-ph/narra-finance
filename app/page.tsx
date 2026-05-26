@@ -4,6 +4,6 @@ import { getSession } from '@/lib/auth'
 export default async function Home() {
   const session = await getSession()
   if (!session) redirect('/login')
-  if (session.role === 'investor') redirect('/investor')
+  if (session.role === 'investor') redirect('/finance')
   redirect('/finance')
 }

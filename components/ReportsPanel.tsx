@@ -269,15 +269,15 @@ export default function ReportsPanel({ data, loading, period, selectedYear }: {
 
     const aYear = selectedYear || ''
 
-    function exportAnnualPL() {
+    const exportAnnualPL = () => {
       if (!annualData) return
       downloadCSV(buildAnnualPLCSV(annualData), `NARRA_HEALTH_PTE__LTD__-_${aYear}_-_Annual_Profit_and_Loss.csv`)
     }
-    function exportAnnualGL() {
+    const exportAnnualGL = () => {
       if (!annualData) return
       downloadCSV(buildAnnualGLCSV(annualData), `NARRA_HEALTH_PTE__LTD__-_${aYear}_-_Annual_General_Ledger.csv`)
     }
-    function exportAnnualBS() {
+    const exportAnnualBS = () => {
       if (!annualBS) return
       const csv = buildBSCSV(annualBS, `December_${aYear}`)
       const blob = new Blob([csv], { type: 'text/csv' })

@@ -70,7 +70,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   const [pushMsg,         setPushMsg]         = useState('')
   const [syncing,         setSyncing]         = useState(false)
   const [syncResult,      setSyncResult]      = useState<any>(null)
-  const [chartView,    setChartView]    = useState<'all' | '2025'>('all')
+  const [chartView,    setChartView]    = useState<string>('all')
   const [periodView,   setPeriodView]   = useState<'month' | 'year'>('year')
   const [yearTotals,   setYearTotals]   = useState<Record<number, { mrr: number; costs: number; net: number }>>({})
   const [cumulativeCash,       setCumulativeCash]       = useState<number | null>(null)  // kept for legacy compat

@@ -1170,6 +1170,8 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
             </div>
           )}
         </div>
+      )}
+
       </>)}
 
       {/* ── SPLIT MODAL ── */}

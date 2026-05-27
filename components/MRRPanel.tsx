@@ -123,6 +123,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
       })
       .catch(() => {})
       .finally(() => setHistoryLoading(false))
+    setChartView('all') // reset chart filter when year changes
   }, [selectedMonth, refreshKey, sheetRefreshKey, periodView]) // re-fetch when month/year-view/refresh changes
 
   useEffect(() => {
@@ -215,7 +216,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   }, [bankReceivedByYear, yearTotals, selectedYear])
 
   const chartData = useMemo(() => {
-    if (chartView === '2025') return history.filter(h => h.month.includes('2025'))
+    if (chartView !== 'all') return history.filter(h => h.month.includes(chartView))
     return history
   }, [history, chartView])
 
@@ -489,7 +490,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
           </div>
           {/* View toggle */}
           <div className="flex bg-narra-surface border border-narra-border rounded-lg overflow-hidden text-xs">
-            {(['all', '2025'] as const).map(v => (
+            {(['all', selectedYear] as const).map(v => (
               <button key={v} onClick={() => setChartView(v)}
                 className={`px-4 py-2 font-body transition-all ${chartView === v ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:text-narra-dark'}`}>
                 {v === 'all' ? 'All Time' : v}

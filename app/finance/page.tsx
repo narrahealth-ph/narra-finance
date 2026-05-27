@@ -29,7 +29,7 @@ type Tab = 'mrr' | 'clients' | 'reconcile' | 'invoices' | 'bank' | 'reports' | '
 
 export default function FinancePage() {
   const router = useRouter()
-  const [tab, setTab] = useState<Tab>('mrr')
+  const [tab, setTab] = useState<Tab>('investor')
 
   const now = new Date()
   const [selectedMonthName, setSelectedMonthName] = useState(MONTHS[now.getMonth()])
@@ -125,6 +125,7 @@ export default function FinancePage() {
   }
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
+    { id: 'investor',     label: 'Business Overview', icon: '📋' },
     { id: 'clients',   label: 'Clients',          icon: '🏢' },
     { id: 'bank',      label: 'Bank Import',      icon: '🏦' },
     { id: 'mrr',       label: 'Revenue',          icon: '📈' },
@@ -134,7 +135,6 @@ export default function FinancePage() {
     { id: 'reports',   label: 'Reports',          icon: '📊' },
     { id: 'annual',    label: 'Cash Flow',        icon: '💵' },
     { id: 'ai',        label: 'AI Insights',      icon: '✨' },
-    { id: 'investor',     label: 'Investor View',    icon: '📋' },
     { id: 'instructions', label: 'How to Use',       icon: '📖' },
   ]
 

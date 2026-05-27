@@ -1,5 +1,6 @@
 'use client'
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { Sparkles, FolderOpen, Landmark } from 'lucide-react'
 
 interface BankRow {
   date: string
@@ -385,18 +386,18 @@ export default function BankImport({ periodId, onImport, refreshKey = 0, selecte
         />
         {isProcessing ? (
           <>
-            <div className="text-4xl mb-3 animate-pulse">✨</div>
+            <div className="mb-3 flex justify-center"><Sparkles size={36} className="text-narra-green animate-pulse" /></div>
             <p className="font-heading font-medium text-narra-dark">Claude is reading your statements…</p>
             <p className="text-narra-muted text-sm mt-1">Extracting transactions from PDFs</p>
           </>
         ) : dragging ? (
           <>
-            <div className="text-4xl mb-3">📂</div>
+            <div className="mb-3 flex justify-center"><FolderOpen size={36} className="text-narra-muted" /></div>
             <p className="font-heading font-medium text-narra-dark">Drop all files here!</p>
           </>
         ) : (
           <>
-            <div className="text-4xl mb-3">🏦</div>
+            <div className="mb-3 flex justify-center"><Landmark size={36} className="text-narra-muted" /></div>
             <p className="font-heading font-medium text-narra-dark">Drop your bank statements here</p>
             <p className="text-narra-muted text-sm mt-1">Multiple files supported · PDF, CSV, or images (PNG/JPG) · Sleek, PayPal, or any bank</p>
             <div className="flex justify-center gap-2 mt-3">

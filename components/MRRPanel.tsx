@@ -5,6 +5,7 @@ import {
   Tooltip, ResponsiveContainer
 } from 'recharts'
 import { downloadCSV, toCSV } from '@/lib/csv'
+import { AlertTriangle, ClipboardList, Target } from 'lucide-react'
 
 type HistoryPoint = { month: string; confirmed: number; pending: number; costs: number; net: number }
 type PendingInvoice = { invoiceId: string; clientName: string; amount: number; issueDate: string; daysOutstanding: number; billingType: string }
@@ -776,7 +777,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
             <div className="bg-white border border-amber-200 rounded-xl overflow-hidden">
               <div className="px-4 py-3 bg-amber-50 border-b border-amber-200">
                 <span className="text-sm font-medium text-amber-800">
-                  ⚠️ {pendingInvoices.length} outstanding · ${Math.round(pendingInvoices.reduce((s, i) => s + i.amount, 0)).toLocaleString()} total
+                  <AlertTriangle size={14} className="inline mr-1" />{pendingInvoices.length} outstanding · ${Math.round(pendingInvoices.reduce((s, i) => s + i.amount, 0)).toLocaleString()} total
                 </span>
               </div>
               <table className="w-full text-sm">
@@ -849,7 +850,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
 
           {pipelineInvoices.length === 0 ? (
             <div className="bg-narra-light/40 border border-narra-border rounded-xl p-8 text-center">
-              <div className="text-3xl mb-2">📋</div>
+              <div className="mb-2 flex justify-center"><ClipboardList size={28} className="text-narra-muted" /></div>
               <p className="font-heading font-semibold text-narra-dark">No pipeline deals</p>
               <p className="text-narra-muted text-sm mt-1">Mark invoices as "Sales" in your invoice tracker to see them here.</p>
             </div>
@@ -857,7 +858,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
             <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
               <div className="px-4 py-3 bg-narra-light/40 border-b border-narra-border">
                 <span className="text-sm font-medium text-narra-dark">
-                  🎯 {pipelineInvoices.length} deal(s) · ${pipelineInvoices.reduce((s, i) => s + i.amount, 0).toLocaleString()} potential ARR
+                  <Target size={14} className="inline mr-1" />{pipelineInvoices.length} deal(s) · ${pipelineInvoices.reduce((s, i) => s + i.amount, 0).toLocaleString()} potential ARR
                 </span>
               </div>
               <table className="w-full text-sm">

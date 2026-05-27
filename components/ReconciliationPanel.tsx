@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { downloadCSV, toCSV } from '@/lib/csv'
+import { AlertTriangle, Landmark, CheckCircle2 } from 'lucide-react'
 
 interface MatchedPair {
   bankTxId: number
@@ -639,7 +640,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
       {proposedMatches.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="text-xl">⚠️</span>
+            <AlertTriangle size={18} className="text-amber-600 shrink-0" />
             <div>
               <p className="font-heading font-semibold text-amber-800 text-sm">
                 {proposedMatches.length} match{proposedMatches.length > 1 ? 'es' : ''} need your review
@@ -678,7 +679,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
 
           {costGroups.length === 0 ? (
             <div className="bg-narra-light/40 border border-narra-border rounded-xl p-8 text-center">
-              <div className="text-3xl mb-2">🏦</div>
+              <div className="mb-2 flex justify-center"><Landmark size={28} className="text-narra-muted" /></div>
               <p className="font-heading font-semibold text-narra-dark">No cost data yet</p>
               <p className="text-narra-muted text-sm mt-1">Upload your bank statement in the Bank Import tab first.</p>
             </div>
@@ -815,7 +816,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
           {proposedMatches.length > 0 && (
             <div>
               <h3 className="font-heading font-semibold text-amber-700 mb-3 flex items-center gap-2">
-                <span className="text-lg">⚠️</span> Proposed Matches — Review Required
+                <AlertTriangle size={16} /> Proposed Matches — Review Required
               </h3>
               <div className="space-y-2">
                 {proposedMatches.map((pair, i) => (
@@ -981,7 +982,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
 
           {unmatched.length === 0 && acknowledged.length === 0 ? (
             <div className="bg-green-50 border border-green-200 rounded-xl p-8 text-center">
-              <div className="text-3xl mb-2">🎉</div>
+              <div className="mb-2 flex justify-center"><CheckCircle2 size={28} className="text-green-600" /></div>
               <p className="font-heading font-semibold text-green-800">All transactions matched!</p>
             </div>
           ) : unmatched.length === 0 && acknowledged.length > 0 ? (
@@ -992,7 +993,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
             <div className="bg-white border border-amber-200 rounded-xl overflow-hidden">
               <div className="px-4 py-3 bg-amber-50 border-b border-amber-200">
                 <span className="text-sm font-medium text-amber-800">
-                  ⚠️ {unmatched.length} unmatched · ${unmatched.reduce((s: number, t: any) => s + parseFloat(t.amount || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2 })} total
+                  <AlertTriangle size={14} className="inline mr-1" />{unmatched.length} unmatched · ${unmatched.reduce((s: number, t: any) => s + parseFloat(t.amount || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2 })} total
                 </span>
               </div>
               <table className="w-full text-sm">

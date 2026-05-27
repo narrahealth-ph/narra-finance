@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { AlertTriangle, Folder, Sparkles } from 'lucide-react'
 
 interface DriveFile {
   id: string
@@ -128,7 +129,7 @@ export default function InvoiceSync({ periodId, monthLabel, onSync }: {
               disabled={syncing}
               className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50"
             >
-              {syncing ? '✨ Extracting…' : `✨ AI Extract All (${files.length})`}
+              <Sparkles size={14} className="inline mr-1" />{syncing ? 'Extracting…' : `AI Extract All (${files.length})`}
             </button>
           )}
         </div>
@@ -136,7 +137,7 @@ export default function InvoiceSync({ periodId, monthLabel, onSync }: {
 
       {folderFound === false && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-700 space-y-1">
-          <p>⚠️ Folder <strong>{monthLabel}</strong> not found in Drive.</p>
+          <p><AlertTriangle size={14} className="inline mr-1" />Folder <strong>{monthLabel}</strong> not found in Drive.</p>
           {availableFolders.length > 0 && (
             <p className="text-xs">
               Found folders: <span className="font-mono">{availableFolders.join(', ')}</span>
@@ -150,7 +151,7 @@ export default function InvoiceSync({ periodId, monthLabel, onSync }: {
 
       {files.length === 0 && folderFound === null && (
         <div className="bg-narra-light/50 border border-narra-border rounded-xl p-12 text-center">
-          <div className="text-4xl mb-3">📁</div>
+          <div className="mb-3 flex justify-center"><Folder size={36} className="text-narra-muted" /></div>
           <p className="text-narra-muted text-sm">
             Click "Refresh from Drive" to load invoices for {monthLabel}
           </p>

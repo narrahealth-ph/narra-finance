@@ -2,6 +2,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
+import {
+  LayoutDashboard, Building2, Landmark, TrendingUp,
+  FileText, Scale, PenLine, BarChart2, Banknote,
+  Sparkles, BookOpen, type LucideIcon
+} from 'lucide-react'
 import InvoiceSync from '@/components/InvoiceSync'
 import BankImport from '@/components/BankImport'
 import ReportsPanel from '@/components/ReportsPanel'
@@ -124,18 +129,18 @@ export default function FinancePage() {
     }
   }
 
-  const tabs: { id: Tab; label: string; icon: string }[] = [
-    { id: 'investor',     label: 'Business Overview', icon: '📋' },
-    { id: 'clients',   label: 'Clients',          icon: '🏢' },
-    { id: 'bank',      label: 'Bank Import',      icon: '🏦' },
-    { id: 'mrr',       label: 'Revenue',          icon: '📈' },
-    { id: 'invoices',  label: 'Invoices',         icon: '📄' },
-    { id: 'reconcile', label: 'Reconciliation',   icon: '⚖️' },
-    { id: 'entries',   label: 'Adjustments',      icon: '✏️' },
-    { id: 'reports',   label: 'Reports',          icon: '📊' },
-    { id: 'annual',    label: 'Cash Flow',        icon: '💵' },
-    { id: 'ai',        label: 'AI Insights',      icon: '✨' },
-    { id: 'instructions', label: 'How to Use',       icon: '📖' },
+  const tabs: { id: Tab; label: string; Icon: LucideIcon }[] = [
+    { id: 'investor',     label: 'Business Overview', Icon: LayoutDashboard },
+    { id: 'clients',      label: 'Clients',            Icon: Building2       },
+    { id: 'bank',         label: 'Bank Import',        Icon: Landmark        },
+    { id: 'mrr',          label: 'Revenue',            Icon: TrendingUp      },
+    { id: 'invoices',     label: 'Invoices',           Icon: FileText        },
+    { id: 'reconcile',    label: 'Reconciliation',     Icon: Scale           },
+    { id: 'entries',      label: 'Adjustments',        Icon: PenLine         },
+    { id: 'reports',      label: 'Reports',            Icon: BarChart2       },
+    { id: 'annual',       label: 'Cash Flow',          Icon: Banknote        },
+    { id: 'ai',           label: 'AI Insights',        Icon: Sparkles        },
+    { id: 'instructions', label: 'How to Use',         Icon: BookOpen        },
   ]
 
   const isLoading = loadingReport || !periodId || clearing
@@ -281,12 +286,12 @@ export default function FinancePage() {
       <div className="bg-narra-dark/95 border-b border-white/10 px-2 sm:px-6 flex gap-0.5 sticky top-[53px] sm:top-[61px] z-20 overflow-x-auto scrollbar-none">
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
-            className={`px-2.5 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm font-body transition-all border-b-2 whitespace-nowrap rounded-t-md flex-shrink-0
+            className={`px-2.5 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm font-body transition-all border-b-2 whitespace-nowrap rounded-t-md flex-shrink-0 flex items-center gap-1.5
               ${tab === t.id
                 ? 'text-narra-green border-narra-green bg-white/8 font-medium'
                 : 'text-white/40 border-transparent hover:text-white/70 hover:bg-white/5'
               }`}>
-            <span className="mr-1">{t.icon}</span>
+            <t.Icon size={14} strokeWidth={1.75} />
             <span className="hidden sm:inline">{t.label}</span>
             <span className="sm:hidden">{t.label.split(' ')[0]}</span>
           </button>

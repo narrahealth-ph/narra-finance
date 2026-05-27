@@ -27,12 +27,14 @@ export default function InvoiceSync({ periodId, monthLabel, onSync }: {
   const [invoices, setInvoices] = useState<ExtractedInvoice[]>([])
   const [syncing, setSyncing] = useState(false)
   const [folderFound, setFolderFound] = useState<boolean | null>(null)
+  const [availableFolders, setAvailableFolders] = useState<string[]>([])
 
   async function loadDriveFiles() {
     setLoading(true)
     const res = await fetch(`/api/drive?action=files&month=${monthLabel}`)
     const data = await res.json()
     setFolderFound(!!data.folder)
+    setAvailableFolders(data.availableFolders || [])
     setFiles(data.files || [])
     setInvoices((data.files || []).map((f: DriveFile) => ({
       fileId: f.id, fileName: f.name, status: 'pending'
@@ -133,8 +135,16 @@ export default function InvoiceSync({ periodId, monthLabel, onSync }: {
       </div>
 
       {folderFound === false && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-700">
-          ⚠️ Folder <strong>{monthLabel}</strong> not found in Drive. Check the folder name matches exactly.
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-700 space-y-1">
+          <p>⚠️ Folder <strong>{monthLabel}</strong> not found in Drive.</p>
+          {availableFolders.length > 0 && (
+            <p className="text-xs">
+              Found folders: <span className="font-mono">{availableFolders.join(', ')}</span>
+            </p>
+          )}
+          {availableFolders.length === 0 && (
+            <p className="text-xs">No folders found in the root Drive folder — check that <code>GOOGLE_DRIVE_ROOT_FOLDER_ID</code> is correct and the service account has access.</p>
+          )}
         </div>
       )}
 

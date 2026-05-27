@@ -37,8 +37,13 @@ export async function GET(req: NextRequest) {
     const month = searchParams.get('month')
     if (!month) return NextResponse.json({ error: 'month required' }, { status: 400 })
     try {
+      const allFolders = await listMonthFolders()
+      console.log(`[drive] Looking for folder "${month}" among: ${allFolders.map(f => f.name).join(', ')}`)
       const folder = await findMonthFolder(month)
-      if (!folder) return NextResponse.json({ files: [], folder: null })
+      if (!folder) {
+        console.log(`[drive] Folder not found for "${month}"`)
+        return NextResponse.json({ files: [], folder: null, availableFolders: allFolders.map(f => f.name) })
+      }
       const files = await listInvoiceFiles(folder.id!)
       return NextResponse.json({ files, folder })
     } catch (err: any) {

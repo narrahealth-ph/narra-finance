@@ -69,10 +69,13 @@ export async function downloadFileAsBase64(fileId: string, mimeType: string) {
 // Lists all folders and matches client-side to avoid Drive API exact-match quirks
 export async function findMonthFolder(monthLabel: string) {
   const folders = await listMonthFolders()
-  // Exact match first, then case-insensitive fallback
+  // Normalise: treat underscores and spaces as equivalent, ignore case
+  const normalise = (s: string) => s.toLowerCase().replace(/_/g, ' ')
+  const needle = normalise(monthLabel)
   return (
     folders.find(f => f.name === monthLabel) ||
     folders.find(f => f.name?.toLowerCase() === monthLabel.toLowerCase()) ||
+    folders.find(f => normalise(f.name || '') === needle) ||
     null
   )
 }

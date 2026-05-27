@@ -82,11 +82,43 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   const [invoiceInputs,   setInvoiceInputs]   = useState<Record<number, string>>({})
   const [invoiceLookups,  setInvoiceLookups]  = useState<Record<number, { clientName: string; amount: number; error?: string } | null>>({})
   const [lookingUpInv,    setLookingUpInv]    = useState<number | null>(null)
+  const [yearView,        setYearView]        = useState(false)
+  const [yearTxns,        setYearTxns]        = useState<any[]>([])
+  const [yearLoading,     setYearLoading]     = useState(false)
+
+  const selectedYear = selectedMonth ? selectedMonth.split('_')[1] : String(new Date().getFullYear())
 
   useEffect(() => {
     if (!periodId) return
     loadData()
   }, [periodId])
+
+  useEffect(() => {
+    if (!yearView) return
+    loadYearData()
+  }, [yearView, selectedYear])
+
+  async function loadYearData() {
+    setYearLoading(true)
+    try {
+      const [txRes, clientsRes] = await Promise.all([
+        fetch(`/api/bank?action=year_all&year=${selectedYear}`, { credentials: 'include' }),
+        fetch('/api/clients', { credentials: 'include' }),
+      ])
+      if (txRes.ok) {
+        const data = await txRes.json()
+        setYearTxns(data.transactions || [])
+      }
+      if (clientsRes.ok) {
+        const cd = await clientsRes.json()
+        setClients((cd.clients || []).filter((c: any) => c.active).map((c: any) => ({ id: c.id, name: c.name })))
+      }
+    } catch (err) {
+      console.error('Year data load error:', err)
+    } finally {
+      setYearLoading(false)
+    }
+  }
 
   async function loadData() {
     setLoading(true)
@@ -448,21 +480,48 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="font-heading text-xl font-semibold text-narra-dark">Reconciliation</h2>
-          <p className="text-sm text-narra-muted mt-0.5">{selectedMonth?.replace('_', ' ')} · Bank vs Invoices</p>
+          <p className="text-sm text-narra-muted mt-0.5">
+            {yearView ? `${selectedYear} · All transactions` : `${selectedMonth?.replace('_', ' ')} · Bank vs Invoices`}
+          </p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <button onClick={rerunAutoMatch} disabled={rerunning}
-            className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50">
-            {rerunning ? '↻ Matching…' : '↻ Run Auto-Match'}
-          </button>
-          <button onClick={() => { loadData(); onRefresh() }}
-            className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">
-            ↻ Refresh
-          </button>
-          <button onClick={exportCosts}
-            className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">
-            ↓ Export Costs CSV
-          </button>
+          {/* Month / Year toggle */}
+          <div className="flex rounded-lg border border-narra-border overflow-hidden text-sm font-body">
+            <button
+              onClick={() => setYearView(false)}
+              className={`px-3 py-1.5 transition-all ${!yearView ? 'bg-narra-dark text-white' : 'text-narra-muted hover:bg-narra-light'}`}
+            >
+              Month
+            </button>
+            <button
+              onClick={() => { setYearView(true) }}
+              className={`px-3 py-1.5 transition-all ${yearView ? 'bg-narra-dark text-white' : 'text-narra-muted hover:bg-narra-light'}`}
+            >
+              Year
+            </button>
+          </div>
+          {!yearView && (
+            <>
+              <button onClick={rerunAutoMatch} disabled={rerunning}
+                className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50">
+                {rerunning ? '↻ Matching…' : '↻ Run Auto-Match'}
+              </button>
+              <button onClick={() => { loadData(); onRefresh() }}
+                className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">
+                ↻ Refresh
+              </button>
+              <button onClick={exportCosts}
+                className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">
+                ↓ Export Costs CSV
+              </button>
+            </>
+          )}
+          {yearView && (
+            <button onClick={loadYearData}
+              className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">
+              ↻ Refresh
+            </button>
+          )}
         </div>
       </div>
 
@@ -470,7 +529,96 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
         <div className="bg-green-50 border border-green-200 text-green-700 rounded-xl px-4 py-3 text-sm">{rerunMsg}</div>
       )}
 
-      {/* KPI tiles */}
+      {/* ── YEAR VIEW ── */}
+      {yearView && (
+        <div className="space-y-4">
+          {yearLoading ? (
+            <div className="flex items-center justify-center h-40 text-narra-muted animate-pulse text-sm">Loading {selectedYear} transactions…</div>
+          ) : (
+            <>
+              {/* Summary row */}
+              <div className="grid grid-cols-3 gap-4">
+                {[
+                  { label: 'Revenue',  value: yearTxns.filter(t => t.type === 'revenue').reduce((s, t) => s + parseFloat(t.amount_usd || 0), 0), color: 'text-green-600' },
+                  { label: 'Expenses', value: yearTxns.filter(t => t.type === 'expense').reduce((s, t) => s + parseFloat(t.amount_usd || 0), 0), color: 'text-red-500' },
+                  { label: 'Tagged',   value: yearTxns.filter(t => t.type === 'revenue' && t.client_id).length, color: 'text-narra-dark', isTxCount: true, total: yearTxns.filter(t => t.type === 'revenue').length },
+                ].map(k => (
+                  <div key={k.label} className="bg-white border border-narra-border rounded-xl p-4">
+                    <div className="text-xs text-narra-muted uppercase tracking-widest mb-1 font-body">{k.label}</div>
+                    <div className={`font-heading text-xl font-semibold ${k.color}`}>
+                      {(k as any).isTxCount
+                        ? `${k.value} / ${(k as any).total} txns`
+                        : `$${(k.value as number).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+                      }
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Transaction table */}
+              <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-narra-dark text-white">
+                      {['Month', 'Date', 'Description', 'Amount', 'Type', 'Tag Client'].map(h => (
+                        <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'Amount' ? 'text-right' : 'text-left'}`}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {yearTxns.map((tx: any, i) => {
+                      const isRevenue = tx.type === 'revenue'
+                      return (
+                        <tr key={tx.id} className={`border-t hover:bg-narra-surface transition-colors ${isRevenue ? 'border-blue-100' : 'border-narra-border/40'}`}>
+                          <td className="px-4 py-2.5 text-xs text-narra-muted whitespace-nowrap">{(tx.period_label || '').replace('_', ' ')}</td>
+                          <td className="px-4 py-2.5 text-xs text-narra-muted whitespace-nowrap">{String(tx.date).split('T')[0]}</td>
+                          <td className="px-4 py-2.5 text-narra-dark max-w-xs">
+                            <div className="truncate">{tx.description}</div>
+                          </td>
+                          <td className={`px-4 py-2.5 text-right font-medium whitespace-nowrap ${isRevenue ? 'text-green-600' : 'text-red-500'}`}>
+                            {tx.currency !== 'USD' && <span className="text-xs text-narra-muted mr-1">{tx.currency}</span>}
+                            ${parseFloat(tx.amount_usd || tx.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${isRevenue ? 'bg-blue-100 text-blue-700' : 'bg-red-50 text-red-600'}`}>
+                              {isRevenue ? 'Revenue' : 'Expense'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            {isRevenue && clients.length > 0 ? (
+                              <select
+                                value={tx.client_id || ''}
+                                onChange={async e => {
+                                  const clientId = e.target.value ? parseInt(e.target.value) : null
+                                  await tagClient(tx.id, clientId)
+                                  setYearTxns(prev => prev.map(t => t.id === tx.id ? { ...t, client_id: clientId } : t))
+                                }}
+                                disabled={taggingTx === tx.id}
+                                className="text-xs border border-blue-300 rounded-lg px-2 py-1 bg-white outline-none max-w-[200px] text-blue-800 disabled:opacity-50"
+                              >
+                                <option value="">Tag client…</option>
+                                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                              </select>
+                            ) : (
+                              <span className="text-xs text-narra-muted">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+                {yearTxns.length === 0 && (
+                  <div className="p-8 text-center text-narra-muted text-sm">No transactions found for {selectedYear}.</div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* KPI tiles — month view only */}
+      {!yearView && (<>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           { label: 'Revenue',       value: `$${totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2 })}`,  color: 'text-green-600' },
@@ -1022,7 +1170,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
             </div>
           )}
         </div>
-      )}
+      </>)}
 
       {/* ── SPLIT MODAL ── */}
       {splitTx && (

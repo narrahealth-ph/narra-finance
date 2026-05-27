@@ -6,8 +6,6 @@ export async function GET(req: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const currentYear = new Date().getFullYear()
-
   const [
     periodsRes,
     mrrHistoryRes,
@@ -15,6 +13,7 @@ export async function GET(req: NextRequest) {
     burnByMonthRes,
     clientsRes,
     totalCashRes,
+    totalInvestedRes,
   ] = await Promise.all([
     // All periods, most recent first
     query(`SELECT * FROM periods ORDER BY start_date DESC LIMIT 24`),
@@ -71,13 +70,20 @@ export async function GET(req: NextRequest) {
       ORDER BY mrr DESC
     `),
 
-    // Total cash from bank (opening + revenue - expenses across all time)
+    // Cash position: opening + revenue + investment - expenses
     query(`
       SELECT
-        COALESCE(SUM(CASE WHEN bt.type = 'opening' THEN bt.amount_usd ELSE 0 END), 0) +
-        COALESCE(SUM(CASE WHEN bt.type = 'revenue' THEN bt.amount_usd ELSE 0 END), 0) -
-        COALESCE(SUM(CASE WHEN bt.type = 'expense' THEN bt.amount_usd ELSE 0 END), 0) AS cash_position
+        COALESCE(SUM(CASE WHEN bt.type = 'opening'    THEN bt.amount_usd ELSE 0 END), 0) +
+        COALESCE(SUM(CASE WHEN bt.type = 'revenue'    THEN bt.amount_usd ELSE 0 END), 0) +
+        COALESCE(SUM(CASE WHEN bt.type = 'investment' THEN bt.amount_usd ELSE 0 END), 0) -
+        COALESCE(SUM(CASE WHEN bt.type = 'expense'    THEN bt.amount_usd ELSE 0 END), 0) AS cash_position
       FROM bank_transactions bt
+    `),
+
+    // Total invested by founders
+    query(`
+      SELECT COALESCE(SUM(amount_usd), 0) AS total
+      FROM bank_transactions WHERE type = 'investment'
     `),
   ])
 
@@ -132,7 +138,10 @@ export async function GET(req: NextRequest) {
   // Runway in months
   const runway = avgBurn > 0 ? Math.floor(cashPosition / avgBurn) : null
 
-  // Total revenue all time
+  // Total invested by founders (through bank)
+  const totalInvested = parseFloat(totalInvestedRes.rows[0]?.total || 0)
+
+  // Total revenue all time (client revenue only, excludes investments)
   const totalRevenueRes = await query(`
     SELECT COALESCE(SUM(amount_usd), 0) AS total
     FROM bank_transactions WHERE type = 'revenue'
@@ -187,6 +196,7 @@ export async function GET(req: NextRequest) {
     cashPosition,
     runway,
     totalRevenue,
+    totalInvested,
     activeClients:  clients.length,
     clients:        clientsWithPct,
     months,

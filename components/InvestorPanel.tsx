@@ -6,7 +6,7 @@ import {
 } from 'recharts'
 import { fmt, shortLabel } from '@/lib/format'
 
-const TOTAL_INVESTED_USD = 60000 // $30k Mike + $30k Rene
+const TOTAL_INVESTED_USD = 60000 // $30k Mike + $30k Rene (remainder paid directly to suppliers)
 
 function KpiTooltip({ text }: { text: string }) {
   return (
@@ -59,6 +59,7 @@ export default function InvestorPanel() {
   const mrrMonth       = data?.mrrMonth       || null
   const revenueMonths  = data?.revenueMonths  || []
   const burnMonths     = data?.burnMonths     || []
+  const totalInvested  = data?.totalInvested  || 0
 
   const revenueVsInvested = TOTAL_INVESTED_USD > 0
     ? Math.min(100, Math.round((totalRevenue / TOTAL_INVESTED_USD) * 100))
@@ -233,26 +234,6 @@ export default function InvestorPanel() {
         </div>
       )}
 
-      {/* MRR growth line */}
-      {chartData.some((d: any) => d.MRR > 0) && (
-        <div className="bg-narra-dark border border-white/10 rounded-2xl p-6">
-          <h3 className="font-heading text-lg font-light text-white mb-1">Contracted Revenue Growth</h3>
-          <p className="text-white/30 text-xs mb-5 font-body">Monthly recurring revenue from signed client contracts</p>
-          <ResponsiveContainer width="100%" height={180}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-              <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.3)' }} />
-              <YAxis tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.3)' }} tickFormatter={v => `$${(v/1000).toFixed(1)}k`} />
-              <Tooltip
-                formatter={(v: number) => [`$${fmt(v)}`, 'MRR']}
-                contentStyle={{ background: '#0d2b30', border: '1px solid rgba(199,233,149,0.2)', borderRadius: 8, fontSize: 12 }}
-                labelStyle={{ color: '#c7e995' }}
-              />
-              <Line type="monotone" dataKey="MRR" stroke="#c7e995" strokeWidth={2.5} dot={{ fill: '#c7e995', r: 3 }} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      )}
 
       {/* Client breakdown */}
       {clients.length > 0 && (
@@ -284,7 +265,7 @@ export default function InvestorPanel() {
       <div className="bg-white border border-narra-border rounded-2xl p-6">
         <h3 className="font-heading text-lg font-semibold text-narra-dark mb-1">Cash Position</h3>
         <p className="text-narra-muted text-xs mb-5 font-body">
-          Total in company bank accounts · all time (opening balance + revenue − expenses)
+          Total in company bank accounts · all time (opening balance + revenue + investments − expenses)
         </p>
         <div className="flex items-end gap-4">
           <div className={`font-heading text-4xl font-light ${cashPosition >= 0 ? 'text-narra-dark' : 'text-red-500'}`}>

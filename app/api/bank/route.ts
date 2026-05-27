@@ -102,6 +102,23 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ transactions: res.rows, total })
   }
 
+  if (action === 'year_all') {
+    const year = searchParams.get('year')
+    if (!year) return NextResponse.json({ error: 'year required' }, { status: 400 })
+    const res = await query(
+      `SELECT bt.id, bt.date, bt.description, bt.amount, bt.currency, bt.amount_usd,
+              bt.account, bt.status, bt.type, bt.client_id, bt.invoice_ref,
+              p.label AS period_label
+       FROM bank_transactions bt
+       JOIN periods p ON p.id = bt.period_id
+       WHERE EXTRACT(YEAR FROM p.start_date) = $1
+         AND bt.type IN ('revenue', 'expense')
+       ORDER BY bt.date`,
+      [parseInt(year)]
+    )
+    return NextResponse.json({ transactions: res.rows })
+  }
+
   if (action === 'summary') {
     const txs = await query(
       `SELECT bt.*, i.id as invoice_id, i.vendor, i.account_name, i.drive_file_name, i.amount_usd as invoice_amount_usd

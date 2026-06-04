@@ -71,11 +71,12 @@ export default function FinancePage() {
     ensurePeriod()
   }, [selectedMonth, selectedMonthName, selectedYear])
 
-  const loadReports = useCallback(async () => {
+  const loadReports = useCallback(async (bust = false) => {
     if (!periodId) return
     setLoadingReport(true)
     try {
-      const res  = await fetch(`/api/reports?periodId=${periodId}`)
+      const url  = `/api/reports?periodId=${periodId}${bust ? '&bust=1' : ''}`
+      const res  = await fetch(url)
       const data = await res.json()
       setReportData(data)
     } catch (err) {
@@ -339,7 +340,7 @@ export default function FinancePage() {
               <BankImport periodId={periodId} onImport={loadReports} refreshKey={bankRefreshKey} selectedYear={selectedYear} />
             )}
             {tab === 'reports' && (
-              <ReportsPanel data={reportData} loading={loadingReport} period={selectedMonth} selectedYear={selectedYear} />
+              <ReportsPanel data={reportData} loading={loadingReport} period={selectedMonth} selectedYear={selectedYear} onRefresh={() => loadReports(true)} />
             )}
             {tab === 'entries' && (
               <ManualEntriesPanel

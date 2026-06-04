@@ -32,28 +32,52 @@ function buildGLCSV(gl: any, period: string, bs: any): string {
     let opening = 0
     rows.push([`'Opening'`, '', fmt(opening), '0.00', fmt(opening), '', '', '', '', '', '', '', '', '', '', '', ''])
     let bal = opening
-    for (const inv of items as any[]) {
-      const amt = parseFloat(inv.amount_usd || 0)
+    for (const tx of items as any[]) {
+      const usd = parseFloat(tx.amount_usd); const amt = (!isNaN(usd) && usd > 0) ? usd : ((tx.currency || 'USD') === 'USD' ? parseFloat(tx.amount || 0) : 0)
       bal += amt
       rows.push([
-        inv.date || '',
+        String(tx.date || '').split('T')[0],
         `${acct} - NARRA HEALTH PTE. LTD.`,
         fmt(amt), '0.00', fmt(bal),
         'Purchase Invoice', 'Purchase Invoice',
-        inv.voucher_no || '',
-        inv.vendor || inv.drive_file_name || '',
+        tx.voucher_no || '',
+        tx.description || tx.vendor || tx.drive_file_name || '',
         '', '', '', '',
         'Main - NARRA HEALTH PTE. LTD.',
         '', '', '',
       ])
     }
-    const total = (items as any[]).reduce((s, i) => s + parseFloat(i.amount_usd || 0), 0)
+    const total = (items as any[]).reduce((s, i) => { const u = parseFloat(i.amount_usd); return s + ((!isNaN(u) && u > 0) ? u : ((i.currency || 'USD') === 'USD' ? parseFloat(i.amount || 0) : 0)) }, 0)
     rows.push([`'Total'`, '', fmt(total), '0.00', fmt(total), '', '', '', '', '', '', '', '', '', '', '', ''])
     rows.push([`'Closing (Opening + Total)'`, '', fmt(opening + total), '0.00', fmt(opening + total), '', '', '', '', '', '', '', '', '', '', '', ''])
     rows.push(['', '', '', '', '0.00', '', '', '', '', '', '', '', '', '', '', '', ''])
   }
 
-  // Revenue rows (Bank / Accounts Receivable)
+  // 600 - Accounts Receivable
+  if (bs.arItems?.length > 0) {
+    rows.push([`'Opening'`, '', '0.00', '0.00', '0.00', '', '', '', '', '', '', '', '', '', '', '', ''])
+    let bal = 0
+    for (const item of bs.arItems as any[]) {
+      bal += item.amount
+      rows.push([
+        '',
+        `600 - Accounts Receivable - NARRA HEALTH PTE. LTD.`,
+        fmt(item.amount), '0.00', fmt(bal),
+        'Sales Invoice', 'Sales Invoice',
+        item.invoiceId || '',
+        item.clientName || '',
+        'Customer', item.clientName || '',
+        '', '', 'Main - NARRA HEALTH PTE. LTD.',
+        '', '', '',
+      ])
+    }
+    const arTotal = bs.arTotal || 0
+    rows.push([`'Total'`, '', fmt(arTotal), '0.00', fmt(arTotal), '', '', '', '', '', '', '', '', '', '', '', ''])
+    rows.push([`'Closing (Opening + Total)'`, '', fmt(arTotal), '0.00', fmt(arTotal), '', '', '', '', '', '', '', '', '', '', '', ''])
+    rows.push(['', '', '', '', '0.00', '', '', '', '', '', '', '', '', '', '', '', ''])
+  }
+
+  // Revenue rows — Credit to income account (DR Bank / CR Revenue)
   if (gl.revenueRows?.length > 0) {
     rows.push([`'Opening'`, '', '0.00', '0.00', '0.00', '', '', '', '', '', '', '', '', '', '', '', ''])
     let bal = 0
@@ -61,10 +85,10 @@ function buildGLCSV(gl: any, period: string, bs: any): string {
       const amt = parseFloat(r.amount_usd || r.amount || 0)
       bal += amt
       rows.push([
-        r.date || '',
-        'BANK Sleek Business Account USD - NARRA HEALTH PTE. LTD.',
-        fmt(amt), '0.00', fmt(bal),
-        'Payment Entry', '', '',
+        String(r.date || '').split('T')[0],
+        '310 - Service Revenue - NARRA HEALTH PTE. LTD.',
+        '0.00', fmt(amt), fmt(bal),          // Debit=0, Credit=revenue (correct double-entry)
+        'Payment Entry', 'Sales Invoice', '',
         r.description || '',
         'Customer', r.description || '',
         '', '', 'Main - NARRA HEALTH PTE. LTD.',
@@ -72,8 +96,8 @@ function buildGLCSV(gl: any, period: string, bs: any): string {
       ])
     }
     const revTotal = gl.revenueRows.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || r.amount || 0), 0)
-    rows.push([`'Total'`, '', fmt(revTotal), '0.00', fmt(revTotal), '', '', '', '', '', '', '', '', '', '', '', ''])
-    rows.push([`'Closing (Opening + Total)'`, '', fmt(revTotal), '0.00', fmt(revTotal), '', '', '', '', '', '', '', '', '', '', '', ''])
+    rows.push([`'Total'`, '', '0.00', fmt(revTotal), fmt(revTotal), '', '', '', '', '', '', '', '', '', '', '', ''])
+    rows.push([`'Closing (Opening + Total)'`, '', '0.00', fmt(revTotal), fmt(revTotal), '', '', '', '', '', '', '', '', '', '', '', ''])
     rows.push(['', '', '', '', '0.00', '', '', '', '', '', '', '', '', '', '', '', ''])
   }
 
@@ -149,43 +173,55 @@ function buildBSCSV(bs: any, period: string): string {
 }
 
 function buildPLCSV(pl: any, period: string): string {
+  const MONTH_LIST = ['January','February','March','April','May','June','July','August','September','October','November','December']
   const [month, year] = period.split('_')
+  const mIdx = MONTH_LIST.indexOf(month) + 1
+  const lastDay = new Date(parseInt(year), mIdx, 0).getDate()
+  const startDate = `${year}-${String(mIdx).padStart(2,'0')}-01`
+  const endDate   = `${year}-${String(mIdx).padStart(2,'0')}-${lastDay}`
+  const fmtNet = (n: number) => n < 0 ? `-${fmt(Math.abs(n))}` : fmt(n)
+
   const rows: string[][] = [
     ['Report Name', 'Profit and Loss Statement'],
     ['Company Name', 'NARRA HEALTH PTE. LTD.'],
-    ['Start Date', `${year}-${String(['January','February','March','April','May','June','July','August','September','October','November','December'].indexOf(month) + 1).padStart(2,'0')}-01`],
-    ['End Date',   `${year}-${String(['January','February','March','April','May','June','July','August','September','October','November','December'].indexOf(month) + 1).padStart(2,'0')}-${new Date(parseInt(year), ['January','February','March','April','May','June','July','August','September','October','November','December'].indexOf(month) + 1, 0).getDate()}`],
+    ['Start Date', startDate],
+    ['End Date',   endDate],
     ['', ''],
     ['Account', year],
-    ['Expenses', fmt(pl.totalExpenses || 0)],
   ]
 
+  // Expenses
+  rows.push(['Expenses', fmt(pl.totalExpenses || 0)])
   for (const [acct, items] of Object.entries(pl.expenseByAccount as Record<string, any[]>)) {
-    const sub = (items as any[]).reduce((s, i) => s + parseFloat(i.amount_usd || 0), 0)
+    const sub = (items as any[]).reduce((s, i) => {
+      const u = parseFloat(i.amount_usd); return s + ((!isNaN(u) && u > 0) ? u : ((i.currency || 'USD') === 'USD' ? parseFloat(i.amount || 0) : 0))
+    }, 0)
     rows.push([acct, fmt(sub)])
   }
-
   rows.push([`'Total Expense (Debit)'`, fmt(pl.totalExpenses || 0)])
   rows.push(['', ''])
+
+  // Income (only if non-zero)
   if (pl.totalRevenue > 0) {
     rows.push(['Income', fmt(pl.totalRevenue)])
     rows.push(['310 - Service Revenue', fmt(pl.totalRevenue)])
     rows.push([`'Total Income (Credit)'`, fmt(pl.totalRevenue)])
     rows.push(['', ''])
   }
-  rows.push([`'Profit for the year'`, pl.netProfit < 0 ? `(${fmt(Math.abs(pl.netProfit))})` : fmt(pl.netProfit)])
+
+  rows.push([`'Profit for the year'`, fmtNet(pl.netProfit)])
 
   return rows.map(r => r.join(',')).join('\n')
 }
 
 function buildAnnualPLCSV(annualData: any): string {
   const { year, totals, expensesByDescription } = annualData
+  const fmtNet = (n: number) => n < 0 ? `-${fmt(Math.abs(n))}` : fmt(n)
   const rows: string[][] = [
-    ['Report Name', 'Annual Profit and Loss Statement'],
+    ['Report Name', 'Profit and Loss Statement'],
     ['Company Name', 'NARRA HEALTH PTE. LTD.'],
     ['Start Date', `${year}-01-01`],
     ['End Date',   `${year}-12-31`],
-    ['Source', 'Bank transactions (accountant-approved)'],
     ['', ''],
     ['Account', year],
     ['Expenses', fmt(totals.expenses)],
@@ -195,12 +231,13 @@ function buildAnnualPLCSV(annualData: any): string {
     ]),
     [`'Total Expense (Debit)'`, fmt(totals.expenses)],
     ['', ''],
-    ['Income', fmt(totals.revenue)],
-    ['310 - Service Revenue', fmt(totals.revenue)],
-    [`'Total Income (Credit)'`, fmt(totals.revenue)],
-    ['', ''],
-    [`'Profit for the year'`, totals.net < 0 ? `(${fmt(Math.abs(totals.net))})` : fmt(totals.net)],
-    ['Operating Margin', `${totals.operatingMargin}%`],
+    ...(totals.revenue > 0 ? [
+      ['Income', fmt(totals.revenue)],
+      ['310 - Service Revenue', fmt(totals.revenue)],
+      [`'Total Income (Credit)'`, fmt(totals.revenue)],
+      ['', ''],
+    ] : []),
+    [`'Profit for the year'`, fmtNet(totals.net)],
   ]
   return rows.map(r => r.join(',')).join('\n')
 }
@@ -232,9 +269,17 @@ function buildAnnualGLCSV(annualData: any): string {
   return rows.map(r => r.join(',')).join('\n')
 }
 
-export default function ReportsPanel({ data, loading, period, selectedYear }: {
-  data: any; loading: boolean; period: string; selectedYear?: string
+export default function ReportsPanel({ data, loading, period, selectedYear, onRefresh }: {
+  data: any; loading: boolean; period: string; selectedYear?: string; onRefresh?: () => void
 }) {
+  const [refreshing, setRefreshing] = useState(false)
+
+  async function handleRefresh() {
+    if (!onRefresh) return
+    setRefreshing(true)
+    await onRefresh()
+    setRefreshing(false)
+  }
   const [tab, setTab] = useState<ReportTab>('pl')
   const [annualMode,    setAnnualMode]    = useState(false)
   const [annualData,    setAnnualData]    = useState<any>(null)
@@ -419,9 +464,9 @@ export default function ReportsPanel({ data, loading, period, selectedYear }: {
                   {Object.entries(bs.cashByAccount||{}).map(([acct,info]:any)=>(
                     <tr key={acct} className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">BANK {acct}</td><td className="px-6 py-3 text-right font-medium">{fmt(info.amount)}</td></tr>
                   ))}
-                  {bs.arTotal>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">600 - Accounts Receivable</td><td className="px-6 py-3 text-right">{fmt(bs.arTotal)}</td></tr>}
                   {bs.prepayments>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">610 - Prepayments</td><td className="px-6 py-3 text-right">{fmt(bs.prepayments)}</td></tr>}
                   <tr className="border-t border-narra-border bg-narra-surface"><td className="px-6 py-3 font-semibold text-narra-dark">Total Current Assets</td><td className="px-6 py-3 text-right font-semibold">{fmt(bs.totalCurrentAssets||0)}</td></tr>
+                  {bs.arTotal>0&&<tr className="border-t border-narra-border/30 hover:bg-narra-surface"><td className="px-6 py-2.5 text-narra-muted pl-10 italic text-xs">600 - Accounts Receivable (memo — cash basis)</td><td className="px-6 py-2.5 text-right text-narra-muted text-xs italic">{fmt(bs.arTotal)}</td></tr>}
                   <tr className="border-t-2 border-narra-dark"><td className="px-6 py-4 font-heading font-bold text-narra-dark">Total Asset (Debit)</td><td className="px-6 py-4 text-right font-heading font-bold">{fmt(bs.totalAssets||0)}</td></tr>
                   <tr className="bg-narra-light/40"><td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider pt-3">Current Liabilities</td></tr>
                   {bs.accountsPayable>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">800 - Accounts Payable</td><td className="px-6 py-3 text-right">{fmt(bs.accountsPayable)}</td></tr>}
@@ -577,6 +622,15 @@ export default function ReportsPanel({ data, loading, period, selectedYear }: {
           <button onClick={exportBS}  className="px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">↓ BS CSV</button>
           <button onClick={exportPL}  className="px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">↓ P&L CSV</button>
           <button onClick={exportAll} className="px-3 py-2 bg-narra-dark text-narra-green rounded-lg text-xs font-body hover:bg-narra-mid transition-all">↓ Export All</button>
+          {onRefresh && (
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all disabled:opacity-50 flex items-center gap-1"
+            >
+              {refreshing ? '↻ Refreshing…' : '↻ Refresh'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -615,30 +669,10 @@ export default function ReportsPanel({ data, loading, period, selectedYear }: {
               </tr>
             </thead>
             <tbody>
-              {/* Expenses section */}
-              <tr className="bg-narra-light/40">
-                <td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider">
-                  Expenses — ${fmt(pl.totalExpenses)}
-                </td>
-              </tr>
-              {Object.entries(pl.expenseByAccount as Record<string, any[]>).map(([acct, items]) => {
-                const sub = (items as any[]).reduce((s, i) => s + parseFloat(i.amount_usd || 0), 0)
-                return (
-                  <tr key={acct} className="border-t border-narra-border/50 hover:bg-narra-surface">
-                    <td className="px-6 py-3 text-narra-ink pl-10">{acct}</td>
-                    <td className="px-6 py-3 text-right font-medium text-narra-dark">{fmt(sub)}</td>
-                  </tr>
-                )
-              })}
-              <tr className="border-t border-narra-border bg-narra-surface">
-                <td className="px-6 py-3 font-semibold text-narra-dark">Total Expense (Debit)</td>
-                <td className="px-6 py-3 text-right font-semibold text-narra-dark">{fmt(pl.totalExpenses)}</td>
-              </tr>
-
-              {/* Income section */}
+              {/* Income section — always first per accounting standard */}
               {pl.totalRevenue > 0 && <>
                 <tr className="bg-narra-light/40">
-                  <td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider pt-3">
+                  <td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider">
                     Income — ${fmt(pl.totalRevenue)}
                   </td>
                 </tr>
@@ -654,9 +688,34 @@ export default function ReportsPanel({ data, loading, period, selectedYear }: {
                 </tr>
               </>}
 
+              {/* Expenses section */}
+              <tr className="bg-narra-light/40">
+                <td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider pt-3">
+                  Expenses — ${fmt(pl.totalExpenses)}
+                </td>
+              </tr>
+              {Object.entries(pl.expenseByAccount as Record<string, any[]>).map(([acct, items]) => {
+                const sub = (items as any[]).reduce((s, i) => {
+                  const usd = parseFloat(i.amount_usd)
+                  if (!isNaN(usd) && usd > 0) return s + usd
+                  if ((i.currency || 'USD') === 'USD') return s + parseFloat(i.amount || 0)
+                  return s
+                }, 0)
+                return (
+                  <tr key={acct} className="border-t border-narra-border/50 hover:bg-narra-surface">
+                    <td className="px-6 py-3 text-narra-ink pl-10">{acct}</td>
+                    <td className="px-6 py-3 text-right font-medium text-narra-dark">{fmt(sub)}</td>
+                  </tr>
+                )
+              })}
+              <tr className="border-t border-narra-border bg-narra-surface">
+                <td className="px-6 py-3 font-semibold text-narra-dark">Total Expense (Debit)</td>
+                <td className="px-6 py-3 text-right font-semibold text-narra-dark">{fmt(pl.totalExpenses)}</td>
+              </tr>
+
               {/* Bottom line */}
               <tr className="border-t-2 border-narra-dark">
-                <td className="px-6 py-4 font-heading font-bold text-narra-dark text-base">Profit for the year</td>
+                <td className="px-6 py-4 font-heading font-bold text-narra-dark text-base">Net Profit / (Loss) for the period</td>
                 <td className={`px-6 py-4 text-right font-heading font-bold text-base ${pl.netProfit >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                   {pl.netProfit < 0 ? '(' : ''}${fmt(Math.abs(pl.netProfit))}{pl.netProfit < 0 ? ')' : ''}
                 </td>
@@ -675,11 +734,36 @@ export default function ReportsPanel({ data, loading, period, selectedYear }: {
               <h3 className="font-heading font-semibold text-white">Balance Sheet</h3>
               <p className="text-xs text-white/50 mt-0.5">As at end of {period.replace('_', ' ')}</p>
             </div>
-            {!bs.balanceCheck && (
-              <div className="bg-red-500/20 text-red-300 text-xs px-3 py-1.5 rounded-lg font-body">
-                ⚠ Out of balance — check manual entries
-              </div>
-            )}
+            {!bs.balanceCheck && (() => {
+              const f2 = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+              const diff = bs.totalAssets - (bs.totalLiabilities + bs.totalEquity)
+              return (
+                <div className="relative group">
+                  <div className="bg-red-500/20 text-red-300 text-xs px-3 py-1.5 rounded-lg font-body cursor-default">
+                    ⚠ Out of balance — check manual entries
+                  </div>
+                  <div className="absolute right-0 top-full mt-1 z-50 hidden group-hover:block bg-narra-dark text-red-200 text-xs px-4 py-3 rounded-xl shadow-xl font-body w-64 space-y-1">
+                    <div className="font-semibold text-red-300 pb-1">Off by ${f2(Math.abs(diff))}</div>
+                    <div className="text-white/60 space-y-0.5">
+                      <div className="flex justify-between"><span>Cash</span><span>${f2(bs.totalCash)}</span></div>
+                      <div className="flex justify-between"><span>Prepayments</span><span>${f2(bs.prepayments)}</span></div>
+                      <div className="flex justify-between"><span>Intangibles (670)</span><span>${f2(bs.intangibleAssets)}</span></div>
+                      <div className="flex justify-between font-semibold text-white border-t border-white/10 pt-1"><span>Total Assets</span><span>${f2(bs.totalAssets)}</span></div>
+                    </div>
+                    <div className="text-white/60 space-y-0.5 pt-1">
+                      <div className="flex justify-between"><span>All Liabilities</span><span>${f2(bs.totalLiabilities)}</span></div>
+                      <div className="flex justify-between"><span>Share Capital</span><span>${f2(bs.shareCapital)}</span></div>
+                      <div className="flex justify-between"><span>Retained Earnings</span><span>${f2(bs.retainedEarnings)}</span></div>
+                      <div className="flex justify-between"><span>Current P&L</span><span>${f2(bs.provisionalPL)}</span></div>
+                      <div className="flex justify-between font-semibold text-white border-t border-white/10 pt-1"><span>Total L+E</span><span>${f2(bs.totalLiabilities + bs.totalEquity)}</span></div>
+                    </div>
+                    <div className="text-red-300 border-t border-white/10 pt-1">
+                      {diff > 0 ? 'Assets too high' : 'Liabilities/Equity too high'}
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
           </div>
           <table className="w-full text-sm">
             <thead>
@@ -701,12 +785,6 @@ export default function ReportsPanel({ data, loading, period, selectedYear }: {
                   <td className="px-6 py-3 text-right font-medium">{fmt(info.amount)}</td>
                 </tr>
               ))}
-              {bs.arTotal > 0 && (
-                <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
-                  <td className="px-6 py-3 text-narra-ink pl-10">600 - Accounts Receivable</td>
-                  <td className="px-6 py-3 text-right font-medium">{fmt(bs.arTotal)}</td>
-                </tr>
-              )}
               {bs.prepayments > 0 && (
                 <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
                   <td className="px-6 py-3 text-narra-ink pl-10">610 - Prepayments</td>
@@ -717,6 +795,12 @@ export default function ReportsPanel({ data, loading, period, selectedYear }: {
                 <td className="px-6 py-3 font-semibold text-narra-dark">Total Current Assets</td>
                 <td className="px-6 py-3 text-right font-semibold">{fmt(bs.totalCurrentAssets || 0)}</td>
               </tr>
+              {bs.arTotal > 0 && (
+                <tr className="border-t border-narra-border/30 hover:bg-narra-surface">
+                  <td className="px-6 py-2 text-narra-muted pl-10 italic text-xs">600 - Accounts Receivable (memo — cash basis)</td>
+                  <td className="px-6 py-2 text-right text-narra-muted text-xs italic">{fmt(bs.arTotal)}</td>
+                </tr>
+              )}
 
               {/* ── Non-current Assets ── */}
               {bs.totalNonCurrentAssets > 0 && <>
@@ -897,7 +981,8 @@ export default function ReportsPanel({ data, loading, period, selectedYear }: {
             <tbody>
               {Object.entries(gl.expenseByAccount as Record<string, any[]>).map(([acct, items]) => {
                 let bal = 0
-                const total = (items as any[]).reduce((s, i) => s + parseFloat(i.amount_usd || 0), 0)
+                const safeAmt = (i: any) => { const u = parseFloat(i.amount_usd); return (!isNaN(u) && u > 0) ? u : ((i.currency || 'USD') === 'USD' ? parseFloat(i.amount || 0) : 0) }
+                const total = (items as any[]).reduce((s, i) => s + safeAmt(i), 0)
                 return [
                   // Account header row
                   <tr key={`open-${acct}`} className="bg-narra-light/50 border-t border-narra-border">
@@ -908,13 +993,14 @@ export default function ReportsPanel({ data, loading, period, selectedYear }: {
                   </tr>,
 
                   // Transaction rows
-                  ...(items as any[]).map((inv: any, i: number) => {
-                    bal += parseFloat(inv.amount_usd || 0)
+                  ...(items as any[]).map((tx: any, i: number) => {
+                    const amt = (() => { const u = parseFloat(tx.amount_usd); return (!isNaN(u) && u > 0) ? u : ((tx.currency || 'USD') === 'USD' ? parseFloat(tx.amount || 0) : 0) })()
+                    bal += amt
                     return (
                       <tr key={`${acct}-${i}`} className="border-t border-narra-border/30 hover:bg-narra-surface">
-                        <td className="px-4 py-2.5 text-narra-muted text-xs font-mono">{inv.date}</td>
-                        <td className="px-4 py-2.5 text-narra-ink">{inv.vendor || inv.drive_file_name}</td>
-                        <td className="px-4 py-2.5 text-right font-medium text-narra-dark">{fmt(inv.amount_usd)}</td>
+                        <td className="px-4 py-2.5 text-narra-muted text-xs font-mono">{String(tx.date).split('T')[0]}</td>
+                        <td className="px-4 py-2.5 text-narra-ink">{tx.description || tx.vendor || tx.drive_file_name}</td>
+                        <td className="px-4 py-2.5 text-right font-medium text-narra-dark">{fmt(amt)}</td>
                         <td className="px-4 py-2.5 text-right text-narra-muted">0.00</td>
                         <td className="px-4 py-2.5 text-right font-medium text-narra-dark">{fmt(bal)}</td>
                       </tr>
@@ -938,6 +1024,49 @@ export default function ReportsPanel({ data, loading, period, selectedYear }: {
                   </tr>,
                 ]
               })}
+
+              {/* 600 - Accounts Receivable */}
+              {bs.arItems?.length > 0 && (() => {
+                let bal = 0
+                const total = bs.arTotal || 0
+                return [
+                  <tr key="ar-open" className="bg-narra-light/50 border-t-2 border-narra-dark">
+                    <td className="px-4 py-2 text-xs text-narra-muted italic">'Opening'</td>
+                    <td colSpan={2} className="px-4 py-2 font-heading font-semibold text-narra-dark text-xs">600 - Accounts Receivable — NARRA HEALTH PTE. LTD.</td>
+                    <td className="px-4 py-2 text-right text-xs text-narra-muted">0.00</td>
+                    <td className="px-4 py-2 text-right text-xs text-narra-muted">0.00</td>
+                  </tr>,
+                  ...(bs.arItems as any[]).map((item: any, i: number) => {
+                    bal += item.amount
+                    return (
+                      <tr key={`ar-${i}`} className="border-t border-narra-border/30 hover:bg-narra-surface">
+                        <td className="px-4 py-2.5 text-narra-muted text-xs font-mono">—</td>
+                        <td className="px-4 py-2.5 text-narra-ink">
+                          {item.clientName}
+                          <span className="ml-2 text-xs text-narra-muted">#{item.invoiceId} · {item.billingType} · {item.status}</span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-medium text-narra-dark">{fmt(item.amount)}</td>
+                        <td className="px-4 py-2.5 text-right text-narra-muted">0.00</td>
+                        <td className="px-4 py-2.5 text-right font-medium text-narra-dark">{fmt(bal)}</td>
+                      </tr>
+                    )
+                  }),
+                  <tr key="ar-total" className="border-t border-narra-border bg-narra-surface text-xs">
+                    <td className="px-4 py-2 text-narra-muted italic">'Total'</td>
+                    <td className="px-4 py-2" />
+                    <td className="px-4 py-2 text-right font-medium text-narra-dark">{fmt(total)}</td>
+                    <td className="px-4 py-2 text-right text-narra-muted">0.00</td>
+                    <td className="px-4 py-2 text-right font-medium text-narra-dark">{fmt(total)}</td>
+                  </tr>,
+                  <tr key="ar-close" className="border-t border-narra-border/20 bg-narra-surface text-xs">
+                    <td className="px-4 py-2 text-narra-muted italic">'Closing (Opening + Total)'</td>
+                    <td className="px-4 py-2" />
+                    <td className="px-4 py-2 text-right font-semibold text-narra-dark">{fmt(total)}</td>
+                    <td className="px-4 py-2 text-right text-narra-muted">0.00</td>
+                    <td className="px-4 py-2 text-right font-semibold text-narra-dark">{fmt(total)}</td>
+                  </tr>,
+                ]
+              })()}
 
               {/* Revenue rows */}
               {gl.revenueRows?.length > 0 && (() => {

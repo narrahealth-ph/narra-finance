@@ -123,7 +123,7 @@ export async function GET(req: NextRequest) {
     const txs = await query(
       `SELECT bt.*, i.id as invoice_id, i.vendor, i.account_name, i.drive_file_name, i.amount_usd as invoice_amount_usd
        FROM bank_transactions bt
-       LEFT JOIN invoices i ON i.matched_bank_id = bt.id
+       LEFT JOIN invoices i ON bt.matched_invoice_id = i.id
        WHERE bt.period_id = $1
        ORDER BY bt.date`,
       [periodId]
@@ -141,7 +141,7 @@ export async function GET(req: NextRequest) {
 
     const byAccount: Record<string, { total: number; items: any[] }> = {}
     for (const tx of expenses) {
-      const acct = tx.account_name || tx.account || 'Uncategorized'
+      const acct = tx.account || tx.account_name || 'Uncategorized'
       if (!byAccount[acct]) byAccount[acct] = { total: 0, items: [] }
       const amt = safeUsd(tx)
       byAccount[acct].total += amt
@@ -213,7 +213,7 @@ export async function PATCH(req: NextRequest) {
   const session = await requireRole('finance')
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { action, bankTxId, invoiceId, newInvoiceId, periodId: bodyPeriodId, splits, clientId, invoiceRef } = await req.json()
+  const { action, bankTxId, invoiceId, newInvoiceId, periodId: bodyPeriodId, splits, clientId, clientIds, invoiceRef, account: bodyAccount, amount: bodyAmount } = await req.json()
   const userEmail = (session as any).email || 'unknown'
 
   // Check period lock via the bank transaction's period
@@ -233,10 +233,24 @@ export async function PATCH(req: NextRequest) {
       [bankTxId]
     )
     if (invoiceId) {
-      await query(
-        "UPDATE invoices SET status='unmatched', matched_bank_id=NULL WHERE id=$1",
-        [invoiceId]
+      // Only reset the invoice if no other bank txs are still linked to it
+      const remaining = await query(
+        "SELECT id FROM bank_transactions WHERE matched_invoice_id=$1 AND id!=$2 AND status!='unmatched'",
+        [invoiceId, bankTxId]
       )
+      if (remaining.rows.length === 0) {
+        await query(
+          "UPDATE invoices SET status='unmatched', matched_bank_id=NULL WHERE id=$1",
+          [invoiceId]
+        )
+      } else {
+        // Keep matched_bank_id pointing to a remaining linked tx
+        await query(
+          `UPDATE invoices SET matched_bank_id=$1
+           WHERE id=$2 AND matched_bank_id=$3`,
+          [remaining.rows[0].id, invoiceId, bankTxId]
+        )
+      }
     }
     await writeAudit('bank_transactions', bankTxId, 'unmatch',
       { status: old.rows[0]?.status, matched_invoice_id: old.rows[0]?.matched_invoice_id },
@@ -252,6 +266,25 @@ export async function PATCH(req: NextRequest) {
       [bankTxId]
     )
     await writeAudit('bank_transactions', bankTxId, 'acknowledge', null, { status: 'acknowledged' }, userEmail)
+    return NextResponse.json({ ok: true })
+  }
+
+  // ── retag — update the account category on a bank transaction ───────────────
+  if (action === 'retag') {
+    if (!bodyAccount) return NextResponse.json({ error: 'account required' }, { status: 400 })
+    await query('UPDATE bank_transactions SET account=$1 WHERE id=$2', [bodyAccount, bankTxId])
+    await writeAudit('bank_transactions', bankTxId, 'retag', null, { account: bodyAccount }, userEmail)
+    return NextResponse.json({ ok: true })
+  }
+
+  // ── tag_transfer — categorize as bank fee / FX cost and dismiss ──────────────
+  if (action === 'tag_transfer') {
+    const acct = bodyAccount || '452 - Bank Fees'
+    await query(
+      "UPDATE bank_transactions SET status='acknowledged', account=$1 WHERE id=$2",
+      [acct, bankTxId]
+    )
+    await writeAudit('bank_transactions', bankTxId, 'tag_transfer', null, { account: acct, status: 'acknowledged' }, userEmail)
     return NextResponse.json({ ok: true })
   }
 
@@ -304,8 +337,11 @@ export async function PATCH(req: NextRequest) {
       "UPDATE bank_transactions SET status=$1, matched_invoice_id=$2, discrepancy_pct=$3 WHERE id=$4",
       [newStatus, newInvoiceId, diff > 0 ? (diff * 100).toFixed(4) : null, bankTxId]
     )
+    // Only set matched_bank_id on the invoice if it doesn't already have one (preserve first link)
     await query(
-      "UPDATE invoices SET status=$1, matched_bank_id=$2 WHERE id=$3",
+      `UPDATE invoices SET status=$1,
+        matched_bank_id = CASE WHEN matched_bank_id IS NULL THEN $2 ELSE matched_bank_id END
+       WHERE id=$3`,
       [newStatus, bankTxId, newInvoiceId]
     )
 
@@ -365,13 +401,17 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ ok: true, count: splits.length })
   }
 
-  // ── tag_client — link a revenue bank tx to a client ─────────────────────────
+  // ── tag_client — link a revenue bank tx to one or more clients ──────────────
   if (action === 'tag_client') {
+    const ids: number[] = Array.isArray(clientIds)
+      ? clientIds.filter(Boolean)
+      : clientId != null ? [clientId] : []
+    const primaryId = ids[0] ?? null
     await query(
-      'UPDATE bank_transactions SET client_id=$1, invoice_ref=$2 WHERE id=$3',
-      [clientId || null, invoiceRef || null, bankTxId]
+      'UPDATE bank_transactions SET client_id=$1, client_ids=$2, invoice_ref=$3 WHERE id=$4',
+      [primaryId, ids, invoiceRef || null, bankTxId]
     )
-    await writeAudit('bank_transactions', bankTxId, 'tag_client', null, { clientId, invoiceRef }, userEmail)
+    await writeAudit('bank_transactions', bankTxId, 'tag_client', null, { clientIds: ids, invoiceRef }, userEmail)
     return NextResponse.json({ ok: true })
   }
 
@@ -379,6 +419,22 @@ export async function PATCH(req: NextRequest) {
   if (action === 'rerun') {
     if (!bodyPeriodId) return NextResponse.json({ error: 'periodId required' }, { status: 400 })
     await autoReconcile(bodyPeriodId)
+    return NextResponse.json({ ok: true })
+  }
+
+  if (action === 'update_amount') {
+    const newAmount = parseFloat(bodyAmount)
+    if (isNaN(newAmount) || newAmount <= 0) return NextResponse.json({ error: 'Invalid amount' }, { status: 400 })
+    const old = await query('SELECT amount, amount_usd FROM bank_transactions WHERE id=$1', [bankTxId])
+    await query(
+      'UPDATE bank_transactions SET amount=$1, amount_usd=$1 WHERE id=$2',
+      [newAmount, bankTxId]
+    )
+    await writeAudit('bank_transactions', bankTxId, 'update',
+      { amount: old.rows[0]?.amount, amount_usd: old.rows[0]?.amount_usd },
+      { amount: newAmount, amount_usd: newAmount },
+      userEmail
+    )
     return NextResponse.json({ ok: true })
   }
 
@@ -442,7 +498,9 @@ async function autoReconcile(periodId: number) {
     const status = isFlagged ? 'flagged' : confidence === 'high' ? 'matched' : 'proposed'
 
     await query(
-      "UPDATE invoices SET status=$1, matched_bank_id=$2 WHERE id=$3",
+      `UPDATE invoices SET status=$1,
+        matched_bank_id = CASE WHEN matched_bank_id IS NULL THEN $2 ELSE matched_bank_id END
+       WHERE id=$3`,
       [status, matchedTx.id, inv.id]
     )
     await query(

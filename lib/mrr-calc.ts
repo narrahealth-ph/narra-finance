@@ -1,4 +1,5 @@
 import { google } from 'googleapis'
+import { cachedSheet } from '@/lib/sheets-cache'
 
 const INVOICE_SHEET_ID = '1qYn8BxBfSNsYMAXeqN84dsoxIbd7pszglt4YDbsJO2k'
 
@@ -97,14 +98,16 @@ export function calcMrrForMonth(invRows: any[][], monthStart: Date, monthEnd: Da
   return Math.round(total)
 }
 
-/** Fetch all invoice rows from the "All time" tab */
+/** Fetch all invoice rows from the "All time" tab (shared 90s cache) */
 export async function fetchAllTimeRows(): Promise<any[][]> {
-  const sheets = getSheetClient()
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: INVOICE_SHEET_ID,
-    range: 'All time!A2:I500',
+  return cachedSheet('invoice-sheet', async () => {
+    const sheets = getSheetClient()
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: INVOICE_SHEET_ID,
+      range: 'All time!A2:I500',
+    })
+    return res.data.values || []
   })
-  return res.data.values || []
 }
 
 /** Calculate MRR for a period directly from the invoice sheet (no DB sync required) */

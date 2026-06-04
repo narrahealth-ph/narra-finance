@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { google } from 'googleapis'
-import { calcMrrForPeriod } from '@/lib/mrr-calc'
+import { cachedSheet, clearSheetCache } from '@/lib/sheets-cache'
 
 const INVOICE_SHEET_ID = '1qYn8BxBfSNsYMAXeqN84dsoxIbd7pszglt4YDbsJO2k'
 const MONTHS = ['January','February','March','April','May','June',
@@ -32,46 +32,55 @@ export async function GET(req: NextRequest) {
   const periodId = searchParams.get('periodId')
   if (!periodId) return NextResponse.json({ error: 'periodId required' }, { status: 400 })
 
+  if (searchParams.get('bust') === '1') clearSheetCache('invoice-sheet')
+
   const periodRes = await query('SELECT * FROM periods WHERE id = $1', [periodId])
   if (!periodRes.rows[0]) return NextResponse.json({ error: 'Period not found' }, { status: 404 })
   const p = periodRes.rows[0]
 
   // ── Raw data for this period — all queries in parallel ───────────────────────
-  const [invoicesRes, bankTxsRes, mrrRes, fxRes, arSheetRes, retainedRes, prepayRes, manualRes2] = await Promise.all([
+  const [invoicesRes, bankTxsRes, mrrRes, fxRes, arSheetRes, retainedRes, prepayRes, manualRes2, cumulativeCashRes] = await Promise.all([
     query('SELECT * FROM invoices WHERE period_id = $1 ORDER BY account_name, date', [periodId]),
     query('SELECT * FROM bank_transactions WHERE period_id = $1 ORDER BY date', [periodId]),
     query('SELECT * FROM mrr_entries WHERE period_id = $1 ORDER BY amount_usd DESC', [periodId]),
     query(`SELECT DISTINCT ON (currency) currency, rate, date FROM fx_rates
            WHERE date BETWEEN $1 AND $2 AND currency != 'USD'
            ORDER BY currency, date DESC`, [p.start_date, p.end_date]).catch(() => ({ rows: [] })),
-    // Google Sheets call for AR — in parallel with DB queries
-    (async () => {
-      try {
-        const sheets = getSheetsClient()
-        const res = await sheets.spreadsheets.values.get({
-          spreadsheetId: INVOICE_SHEET_ID,
-          range: `All time!A2:I500`,
-        })
-        return res.data.values || []
-      } catch { return [] }
-    })(),
-    // Retained earnings — single query instead of N+1 loop
+    // Google Sheets call for AR — shared cache with /api/mrr/history
+    cachedSheet('invoice-sheet', async () => {
+      const sheets = getSheetsClient()
+      const res = await sheets.spreadsheets.values.get({
+        spreadsheetId: INVOICE_SHEET_ID,
+        range: `All time!A2:I500`,
+      })
+      return res.data.values || []
+    }).catch(() => []),
+    // Retained earnings — use bank transactions for both sides (consistent with current period P&L)
     query(
       `SELECT
          (SELECT COALESCE(SUM(bt.amount_usd), 0)
           FROM bank_transactions bt
           JOIN periods pp ON pp.id = bt.period_id
           WHERE pp.start_date < $1 AND bt.type = 'revenue') -
-         (SELECT COALESCE(SUM(i.amount_usd), 0)
-          FROM invoices i
-          JOIN periods pp ON pp.id = i.period_id
-          WHERE pp.start_date < $1) AS retained`,
+         (SELECT COALESCE(SUM(bt.amount_usd), 0)
+          FROM bank_transactions bt
+          JOIN periods pp ON pp.id = bt.period_id
+          WHERE pp.start_date < $1 AND bt.type = 'expense') AS retained`,
       [p.start_date]
     ).catch(() => ({ rows: [{ retained: 0 }] })),
     // Prepayment schedules
     query('SELECT * FROM prepayment_schedules ORDER BY start_date').catch(() => ({ rows: [] })),
     // Manual entries
     query('SELECT account_code, value FROM manual_entries WHERE period_id = $1', [periodId]).catch(() => ({ rows: [] })),
+    // Cumulative bank transactions for balance sheet cash (all periods up to and including current)
+    query(
+      `SELECT bt.account, bt.type, bt.amount, bt.currency, bt.amount_usd
+       FROM bank_transactions bt
+       JOIN periods pp ON pp.id = bt.period_id
+       WHERE pp.end_date <= $1 AND bt.type IN ('opening','revenue','expense')
+       ORDER BY pp.start_date ASC, bt.date ASC`,
+      [p.end_date]
+    ).catch(() => ({ rows: [] })),
   ])
 
   const invoices  = invoicesRes.rows
@@ -88,35 +97,25 @@ export async function GET(req: NextRequest) {
   }
 
   // ── P&L ──────────────────────────────────────────────────────────────────────
-  const totalExpenses = invoices.reduce((s: number, r: any) => s + safeUsd(r), 0)
+  // Bank transactions are the source of truth — use expense txs for costs, revenue txs for income
   const revenueRows   = bankTxs.filter((r: any) => r.type === 'revenue')
+  const expenseRows   = bankTxs.filter((r: any) => r.type === 'expense')
+  const totalExpenses = expenseRows.reduce((s: number, r: any) => s + safeUsd(r), 0)
 
-  // Revenue: prefer synced mrr_entries (accrual), fall back to invoice sheet calc,
-  // then bank deposits as a last resort.
-  let mrrRevenue  = mrrRows.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || 0), 0)
+  const mrrRevenue  = mrrRows.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || 0), 0)
   const bankRevenue = revenueRows.reduce((s: number, r: any) => s + safeUsd(r), 0)
 
-  // If MRR hasn't been synced to the DB yet, calculate it live from the invoice sheet
-  // so carryover contracts from prior years are still reflected in the P&L.
-  if (mrrRevenue === 0) {
-    try {
-      mrrRevenue = await calcMrrForPeriod(p.start_date, p.end_date)
-    } catch (e) {
-      console.error('[reports] live MRR calc failed:', e)
-    }
-  }
-
-  // Use whichever is larger to avoid a false loss from partial syncs
-  const totalRevenue  = Math.max(mrrRevenue, bankRevenue)
-  const revenueSource = mrrRevenue >= bankRevenue ? 'mrr' : 'bank'
+  // Bank transactions are the source of truth for revenue
+  const totalRevenue  = bankRevenue
+  const revenueSource = 'bank'
 
   const netProfit = totalRevenue - totalExpenses
 
   const expenseByAccount: Record<string, any[]> = {}
-  for (const inv of invoices) {
-    const acct = inv.account_name || 'Uncategorized'
+  for (const tx of expenseRows) {
+    const acct = tx.account || tx.account_name || 'Uncategorized'
     if (!expenseByAccount[acct]) expenseByAccount[acct] = []
-    expenseByAccount[acct].push(inv)
+    expenseByAccount[acct].push(tx)
   }
 
   const plData = {
@@ -152,14 +151,21 @@ export async function GET(req: NextRequest) {
 
   // ── Balance Sheet ─────────────────────────────────────────────────────────────
 
-  // 1. Cash per bank account (converted to USD)
+  // 1. Cash per bank account — cumulative across all periods up to current
+  //    Only the FIRST opening balance per account is used (avoids double-counting when
+  //    each period's opening = prior period's closing).
   const cashByAccount: Record<string, { amount: number; label: string }> = {}
-  for (const tx of bankTxs) {
+  const seenOpening = new Set<string>()
+  for (const tx of (cumulativeCashRes as any).rows) {
     const acct = tx.account || 'Main'
     if (!cashByAccount[acct]) cashByAccount[acct] = { amount: 0, label: acct }
-    if (tx.type === 'opening')       cashByAccount[acct].amount += safeUsd(tx)
-    else if (tx.type === 'revenue')  cashByAccount[acct].amount += safeUsd(tx)
-    else if (tx.type === 'expense')  cashByAccount[acct].amount -= safeUsd(tx)
+    if (tx.type === 'opening') {
+      if (!seenOpening.has(acct)) { seenOpening.add(acct); cashByAccount[acct].amount += safeUsd(tx) }
+    } else if (tx.type === 'revenue') {
+      cashByAccount[acct].amount += safeUsd(tx)
+    } else if (tx.type === 'expense') {
+      cashByAccount[acct].amount -= safeUsd(tx)
+    }
   }
   const totalCash = Object.values(cashByAccount).reduce((s, v) => s + v.amount, 0)
 
@@ -174,9 +180,11 @@ export async function GET(req: NextRequest) {
     const status       = (r[6] || '').toLowerCase().trim()
     const billingType  = (r[7] || 'annual').toLowerCase().trim()
     const issueDateStr = r[4] || ''
-    if (!['paid', 'cancelled', 'void'].includes(status)) {
+    const issueDate    = issueDateStr ? new Date(issueDateStr) : null
+    // Only include invoices issued on or before the period end date
+    if (!['paid', 'cancelled', 'void'].includes(status) && (!issueDate || issueDate <= periodEnd)) {
       arTotal += amount
-      arItems.push({ invoiceId: r[0], clientName: r[1], amount, status, billingType })
+      arItems.push({ invoiceId: r[0], clientName: r[1], amount, status, billingType, issueDate: issueDateStr })
     }
     if (status === 'paid' && issueDateStr) {
       const issueDate = new Date(issueDateStr)
@@ -192,7 +200,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 3. Accounts Payable (800): unmatched expense invoices
+  // 3. Accounts Payable (800): invoices received but not yet paid (bills owed to suppliers)
   const apTotal = invoices
     .filter((r: any) => r.status === 'unmatched')
     .reduce((s: number, r: any) => s + parseFloat(r.amount_usd || 0), 0)
@@ -232,7 +240,11 @@ export async function GET(req: NextRequest) {
   const incomeTax         = m('860', 0)
   const gstPayable        = m('gst', 0)
 
-  const totalCurrentAssets     = totalCash + arTotal + prepayments
+  // AR is shown informally but excluded from the balance sheet equation because
+  // P&L is cash-basis — revenue is only recognised when cash is received (bank tx).
+  // Including accrual AR in assets without a matching credit in equity would break
+  // the accounting equation. AR is passed through as a memo item for display only.
+  const totalCurrentAssets     = totalCash + prepayments
   const totalNonCurrentAssets  = fixedAssets + intangibleAssets
   const totalAssets            = totalCurrentAssets + totalNonCurrentAssets
 

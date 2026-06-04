@@ -70,6 +70,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   const [showAcknowledged, setShowAcknowledged] = useState(false)
   const [allInvoices,     setAllInvoices]     = useState<any[]>([])
   const [linkingTx,       setLinkingTx]       = useState<number | null>(null)
+  const [txCountByInvoice, setTxCountByInvoice] = useState<Record<number, number>>({})
   const [reassigning,     setReassigning]     = useState<number | null>(null)
   const [rerunning,       setRerunning]       = useState(false)
   const [rerunMsg,        setRerunMsg]        = useState('')
@@ -79,6 +80,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   const [splitError,      setSplitError]      = useState('')
   const [clients,         setClients]         = useState<{id: number; name: string}[]>([])
   const [taggingTx,       setTaggingTx]       = useState<number | null>(null)
+  const [clientIdMap,     setClientIdMap]     = useState<Record<number, number[]>>({})
   const [acknowledgingAll, setAcknowledgingAll] = useState(false)
   const [invoiceInputs,   setInvoiceInputs]   = useState<Record<number, string>>({})
   const [invoiceLookups,  setInvoiceLookups]  = useState<Record<number, { clientName: string; amount: number; error?: string } | null>>({})
@@ -108,7 +110,16 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
       ])
       if (txRes.ok) {
         const data = await txRes.json()
-        setYearTxns(data.transactions || [])
+        const txs = data.transactions || []
+        setYearTxns(txs)
+        const initMap: Record<number, number[]> = {}
+        for (const tx of txs) {
+          const ids = Array.isArray(tx.client_ids) && tx.client_ids.length > 0
+            ? tx.client_ids.filter(Boolean)
+            : tx.client_id ? [tx.client_id] : []
+          if (ids.length > 0) initMap[tx.id] = ids
+        }
+        setClientIdMap(prev => ({ ...prev, ...initMap }))
       }
       if (clientsRes.ok) {
         const cd = await clientsRes.json()
@@ -161,13 +172,32 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
         const invoiceList = invData.invoices || []
         setAllInvoices(invoiceList)
 
+        // Build invMap from bank txs' matched_invoice_id so multiple bank txs can share one invoice
+        const invoiceById: Record<number, any> = {}
+        for (const inv of invoiceList) invoiceById[inv.id] = inv
         const invMap: Record<number, any> = {}
-        for (const inv of invoiceList) invMap[inv.matched_bank_id] = inv
+        const counts: Record<number, number> = {}
+        for (const tx of txs) {
+          if (tx.matched_invoice_id) {
+            invMap[tx.id] = invoiceById[tx.matched_invoice_id]
+            counts[tx.matched_invoice_id] = (counts[tx.matched_invoice_id] || 0) + 1
+          }
+        }
+        setTxCountByInvoice(counts)
 
         const matchedTxs      = txs.filter((t: any) => t.status === 'matched' || t.status === 'proposed' || t.status === 'flagged')
         const unmatchedTxs    = txs.filter((t: any) => t.status === 'unmatched' && (t.type === 'expense' || t.type === 'revenue'))
         const acknowledgedTxs = txs.filter((t: any) => t.status === 'acknowledged' && t.type === 'expense')
         setAcknowledged(acknowledgedTxs)
+
+        const initMap: Record<number, number[]> = {}
+        for (const tx of txs) {
+          const ids = Array.isArray(tx.client_ids) && tx.client_ids.length > 0
+            ? tx.client_ids.filter(Boolean)
+            : tx.client_id ? [tx.client_id] : []
+          if (ids.length > 0) initMap[tx.id] = ids
+        }
+        setClientIdMap(initMap)
 
         const pairs: MatchedPair[] = matchedTxs.map((tx: any) => {
           const inv = invMap[tx.id]
@@ -240,12 +270,24 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
     }
   }
 
-  async function retagInvoice(invoiceId: number, accountName: string) {
-    await fetch('/api/invoices', {
+  async function updateAmount(txId: number, newAmount: number) {
+    if (isNaN(newAmount) || newAmount <= 0) return
+    await fetch('/api/bank', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ id: invoiceId, accountName }),
+      body: JSON.stringify({ action: 'update_amount', bankTxId: txId, amount: newAmount }),
+    })
+    await loadData()
+    onRefresh()
+  }
+
+  async function retagBankTx(bankTxId: number, account: string) {
+    await fetch('/api/bank', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ action: 'retag', bankTxId, account }),
     })
     await loadData()
   }
@@ -329,9 +371,9 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
     }
   }
 
-  async function tagClient(txId: number, clientId: number | null, invoiceRef?: string) {
+  async function tagClient(txId: number, clientIds: number[], invoiceRef?: string) {
     setTaggingTx(txId)
-    const body: any = { action: 'tag_client', bankTxId: txId, clientId }
+    const body: any = { action: 'tag_client', bankTxId: txId, clientIds, clientId: clientIds[0] ?? null }
     if (invoiceRef !== undefined) body.invoiceRef = invoiceRef
     await fetch('/api/bank', {
       method: 'PATCH',
@@ -339,9 +381,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
       credentials: 'include',
       body: JSON.stringify(body),
     })
-    setUnmatched(prev => prev.map((t: any) =>
-      t.id === txId ? { ...t, client_id: clientId, invoice_ref: invoiceRef ?? t.invoice_ref } : t
-    ))
+    setClientIdMap(prev => ({ ...prev, [txId]: clientIds }))
     setTaggingTx(null)
   }
 
@@ -357,11 +397,11 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
         setInvoiceLookups(prev => ({ ...prev, [txId]: { clientName: '', amount: 0, error: data.error || 'Not found' } }))
       } else {
         setInvoiceLookups(prev => ({ ...prev, [txId]: { clientName: data.clientName, amount: data.amount } }))
-        // Auto-set client if name matches one in the list
+        // Auto-add matched client to the list (without removing existing tags)
         const matched = clients.find(c => c.name.toLowerCase() === (data.clientName || '').toLowerCase())
-        const tx = unmatched.find((t: any) => t.id === txId)
-        const currentClientId = tx?.client_id || null
-        await tagClient(txId, matched?.id ?? currentClientId, id)
+        const current = clientIdMap[txId] || []
+        const newIds = matched && !current.includes(matched.id) ? [...current, matched.id] : current
+        await tagClient(txId, newIds, id)
       }
     } catch {
       setInvoiceLookups(prev => ({ ...prev, [txId]: { clientName: '', amount: 0, error: 'Lookup failed' } }))
@@ -578,7 +618,16 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                           </td>
                           <td className={`px-4 py-2.5 text-right font-medium whitespace-nowrap ${isRevenue ? 'text-green-600' : 'text-red-500'}`}>
                             {tx.currency !== 'USD' && <span className="text-xs text-narra-muted mr-1">{tx.currency}</span>}
-                            ${parseFloat(tx.amount_usd || tx.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            $<input
+                              defaultValue={parseFloat(tx.amount_usd || tx.amount || 0).toFixed(2)}
+                              onBlur={e => {
+                                const val = parseFloat(e.target.value)
+                                const cur = parseFloat(tx.amount_usd || tx.amount || 0)
+                                if (!isNaN(val) && val > 0 && Math.abs(val - cur) > 0.001) updateAmount(tx.id, val)
+                              }}
+                              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                              className={`w-24 text-right bg-transparent border-b border-transparent hover:border-current focus:border-current outline-none ${isRevenue ? 'text-green-600' : 'text-red-500'}`}
+                            />
                           </td>
                           <td className="px-4 py-2.5">
                             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${isRevenue ? 'bg-blue-100 text-blue-700' : 'bg-red-50 text-red-600'}`}>
@@ -587,19 +636,48 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                           </td>
                           <td className="px-4 py-2.5">
                             {isRevenue && clients.length > 0 ? (
-                              <select
-                                value={tx.client_id || ''}
-                                onChange={async e => {
-                                  const clientId = e.target.value ? parseInt(e.target.value) : null
-                                  await tagClient(tx.id, clientId)
-                                  setYearTxns(prev => prev.map(t => t.id === tx.id ? { ...t, client_id: clientId } : t))
-                                }}
-                                disabled={taggingTx === tx.id}
-                                className="text-xs border border-blue-300 rounded-lg px-2 py-1 bg-white outline-none max-w-[200px] text-blue-800 disabled:opacity-50"
-                              >
-                                <option value="">Tag client…</option>
-                                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                              </select>
+                              <div className="flex flex-col gap-1">
+                                {(clientIdMap[tx.id] || []).length > 0 && (
+                                  <div className="flex flex-wrap gap-1">
+                                    {(clientIdMap[tx.id] || []).map(cid => {
+                                      const cl = clients.find(c => c.id === cid)
+                                      if (!cl) return null
+                                      return (
+                                        <span key={cid} className="flex items-center gap-1 text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
+                                          {cl.name}
+                                          <button
+                                            onClick={() => {
+                                              const updated = (clientIdMap[tx.id] || []).filter(id => id !== cid)
+                                              tagClient(tx.id, updated)
+                                            }}
+                                            className="text-blue-400 hover:text-blue-700 ml-0.5 leading-none"
+                                          >×</button>
+                                        </span>
+                                      )
+                                    })}
+                                  </div>
+                                )}
+                                <select
+                                  value=""
+                                  onChange={async e => {
+                                    if (!e.target.value) return
+                                    const cid = parseInt(e.target.value)
+                                    const select = e.currentTarget
+                                    const current = clientIdMap[tx.id] || []
+                                    if (!current.includes(cid)) await tagClient(tx.id, [...current, cid])
+                                    select.value = ''
+                                  }}
+                                  disabled={taggingTx === tx.id}
+                                  className="text-xs border border-blue-300 rounded-lg px-2 py-1 bg-white outline-none max-w-[200px] text-blue-800 disabled:opacity-50"
+                                >
+                                  <option value="">
+                                    {(clientIdMap[tx.id] || []).length > 0 ? '+ Add client…' : 'Tag client…'}
+                                  </option>
+                                  {clients
+                                    .filter(c => !(clientIdMap[tx.id] || []).includes(c.id))
+                                    .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                </select>
+                              </div>
                             ) : (
                               <span className="text-xs text-narra-muted">—</span>
                             )}
@@ -732,7 +810,15 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                                 )}
                               </td>
                               <td className="px-4 py-2.5 text-right font-medium text-red-500 whitespace-nowrap">
-                                ${item.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                <input
+                                  defaultValue={item.amount.toFixed(2)}
+                                  onBlur={e => {
+                                    const val = parseFloat(e.target.value)
+                                    if (!isNaN(val) && val > 0 && val !== item.amount) updateAmount(item.id, val)
+                                  }}
+                                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                                  className="w-24 text-right bg-transparent border-b border-transparent hover:border-red-300 focus:border-red-400 outline-none text-red-500 font-medium"
+                                />
                               </td>
                               <td className="px-4 py-2.5">
                                 {item.matchedInvoice ? (
@@ -746,21 +832,17 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                                 )}
                               </td>
                               <td className="px-4 py-2.5">
-                                {item.invoiceId ? (
-                                  <select
-                                    defaultValue={item.accountCode}
-                                    onChange={e => retagInvoice(item.invoiceId!, e.target.value)}
-                                    className="text-xs bg-narra-light border border-narra-border rounded-lg px-2 py-1 outline-none cursor-pointer text-narra-dark hover:border-narra-muted transition-colors"
-                                    title="Retag this invoice's account category"
-                                  >
-                                    {ACCOUNT_OPTIONS.map(a => <option key={a} value={a}>{a}</option>)}
-                                    {!ACCOUNT_OPTIONS.includes(item.accountCode) && (
-                                      <option value={item.accountCode}>{item.accountCode}</option>
-                                    )}
-                                  </select>
-                                ) : (
-                                  <span className="text-xs text-narra-muted">{item.accountCode}</span>
-                                )}
+                                <select
+                                  defaultValue={item.accountCode}
+                                  onChange={e => retagBankTx(item.id, e.target.value)}
+                                  className="text-xs bg-narra-light border border-narra-border rounded-lg px-2 py-1 outline-none cursor-pointer text-narra-dark hover:border-narra-muted transition-colors"
+                                  title="Retag this expense's account category"
+                                >
+                                  {ACCOUNT_OPTIONS.map(a => <option key={a} value={a}>{a}</option>)}
+                                  {!ACCOUNT_OPTIONS.includes(item.accountCode) && (
+                                    <option value={item.accountCode}>{item.accountCode}</option>
+                                  )}
+                                </select>
                               </td>
                               <td className="px-4 py-2.5">
                                 <span className={`text-xs px-2 py-0.5 rounded-full ${
@@ -897,7 +979,15 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                         </td>
                         <td className="px-4 py-3 text-narra-muted text-xs whitespace-nowrap">{pair.bankDate}</td>
                         <td className="px-4 py-3 text-right font-medium text-narra-dark whitespace-nowrap">
-                          {pair.bankCurrency} ${pair.bankAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          {pair.bankCurrency} $<input
+                            defaultValue={pair.bankAmount.toFixed(2)}
+                            onBlur={e => {
+                              const val = parseFloat(e.target.value)
+                              if (!isNaN(val) && val > 0 && Math.abs(val - pair.bankAmount) > 0.001) updateAmount(pair.bankTxId, val)
+                            }}
+                            onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                            className="w-24 text-right bg-transparent border-b border-transparent hover:border-narra-muted focus:border-narra-dark outline-none text-narra-dark font-medium"
+                          />
                         </td>
                         <td className="px-4 py-3 text-sm">
                           {pair.invoiceVendor ? (
@@ -1019,23 +1109,66 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                       <td className="px-4 py-3 text-amber-700 text-xs whitespace-nowrap">{String(tx.date).split('T')[0]}</td>
                       <td className="px-4 py-3 text-amber-900 font-medium">{tx.description}</td>
                       <td className="px-4 py-3 text-right font-medium text-amber-900 whitespace-nowrap">
-                        {tx.currency} ${parseFloat(tx.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        <span className="text-xs text-amber-600 mr-1">{tx.currency}</span>
+                        <input
+                          defaultValue={parseFloat(tx.amount || 0).toFixed(2)}
+                          onBlur={e => {
+                            const val = parseFloat(e.target.value)
+                            if (!isNaN(val) && val > 0 && val !== parseFloat(tx.amount)) updateAmount(tx.id, val)
+                          }}
+                          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                          className="w-24 text-right bg-transparent border-b border-transparent hover:border-amber-400 focus:border-amber-500 outline-none font-medium text-amber-900"
+                        />
                       </td>
                       <td className="px-4 py-3 text-amber-600 text-xs">{tx.account || '—'}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-1.5">
                           {isRevenue && (
                             <div className="flex flex-col gap-1">
-                              {/* Client select */}
+                              {/* Tagged clients */}
+                              {(clientIdMap[tx.id] || []).length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {(clientIdMap[tx.id] || []).map(cid => {
+                                    const cl = clients.find(c => c.id === cid)
+                                    if (!cl) return null
+                                    return (
+                                      <span key={cid} className="flex items-center gap-1 text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
+                                        {cl.name}
+                                        <button
+                                          onClick={() => {
+                                            const updated = (clientIdMap[tx.id] || []).filter(id => id !== cid)
+                                            tagClient(tx.id, updated, invoiceInputs[tx.id] ?? tx.invoice_ref)
+                                          }}
+                                          className="text-blue-400 hover:text-blue-700 ml-0.5 leading-none"
+                                        >×</button>
+                                      </span>
+                                    )
+                                  })}
+                                </div>
+                              )}
+                              {/* Add client dropdown */}
                               {clients.length > 0 && (
                                 <select
-                                  value={tx.client_id || ''}
-                                  onChange={e => tagClient(tx.id, e.target.value ? parseInt(e.target.value) : null)}
+                                  value=""
+                                  onChange={e => {
+                                    if (!e.target.value) return
+                                    const cid = parseInt(e.target.value)
+                                    const select = e.currentTarget
+                                    const current = clientIdMap[tx.id] || []
+                                    if (!current.includes(cid)) {
+                                      tagClient(tx.id, [...current, cid], invoiceInputs[tx.id] ?? tx.invoice_ref)
+                                    }
+                                    select.value = ''
+                                  }}
                                   disabled={taggingTx === tx.id}
                                   className="text-xs border border-blue-300 rounded-lg px-2 py-1 bg-white outline-none max-w-[220px] text-blue-800 disabled:opacity-50"
                                 >
-                                  <option value="">Tag client…</option>
-                                  {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                  <option value="">
+                                    {(clientIdMap[tx.id] || []).length > 0 ? '+ Add client…' : 'Tag client…'}
+                                  </option>
+                                  {clients
+                                    .filter(c => !(clientIdMap[tx.id] || []).includes(c.id))
+                                    .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                 </select>
                               )}
                               {/* Invoice ID input */}
@@ -1058,8 +1191,8 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                               )}
                             </div>
                           )}
-                          {!isRevenue && availableInvoices.length > 0 ? (
-                            /* Expense with available invoices — always show inline picker */
+                          {!isRevenue && allInvoices.length > 0 ? (
+                            /* Expense — show all invoices, already-linked ones show link count */
                             <div className="flex flex-col gap-1.5">
                               <select
                                 className="text-xs border border-blue-300 rounded-lg px-2 py-1 bg-white outline-none max-w-[220px] text-blue-800"
@@ -1070,11 +1203,14 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                                 }}
                               >
                                 <option value="">Match to invoice…</option>
-                                {availableInvoices.map(inv => (
-                                  <option key={inv.id} value={inv.id}>
-                                    {inv.vendor} · ${parseFloat(inv.amount_usd || inv.amount || 0).toFixed(2)} {inv.currency !== 'USD' ? `(${inv.currency})` : ''}
-                                  </option>
-                                ))}
+                                {allInvoices.map(inv => {
+                                  const linked = txCountByInvoice[inv.id] || 0
+                                  return (
+                                    <option key={inv.id} value={inv.id}>
+                                      {inv.vendor} · ${parseFloat(inv.amount_usd || inv.amount || 0).toFixed(2)}{inv.currency !== 'USD' ? ` (${inv.currency})` : ''}{linked > 0 ? ` · ${linked} linked` : ''}
+                                    </option>
+                                  )
+                                })}
                               </select>
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <button
@@ -1084,6 +1220,23 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                                 >
                                   ⊕ Split
                                 </button>
+                                <select
+                                  defaultValue=""
+                                  onChange={async e => {
+                                    if (!e.target.value) return
+                                    await fetch('/api/bank', {
+                                      method: 'PATCH', credentials: 'include',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ action: 'tag_transfer', bankTxId: tx.id, account: e.target.value }),
+                                    })
+                                    await loadData(); onRefresh()
+                                  }}
+                                  className="text-xs px-2 py-1 bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-full transition-all border border-amber-200 outline-none cursor-pointer whitespace-nowrap"
+                                >
+                                  <option value="">↳ Tag as transfer…</option>
+                                  <option value="452 - Bank Fees">Bank Fee</option>
+                                  <option value="525 - FX Gains/Losses">FX Transfer Cost</option>
+                                </select>
                                 <button
                                   onClick={() => acknowledgeTx(tx.id)}
                                   disabled={acknowledging === tx.id}
@@ -1111,6 +1264,23 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                               >
                                 ⊕ Split
                               </button>
+                              <select
+                                defaultValue=""
+                                onChange={async e => {
+                                  if (!e.target.value) return
+                                  await fetch('/api/bank', {
+                                    method: 'PATCH', credentials: 'include',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: 'tag_transfer', bankTxId: tx.id, account: e.target.value }),
+                                  })
+                                  await loadData(); onRefresh()
+                                }}
+                                className="text-xs px-2 py-1 bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-full transition-all border border-amber-200 outline-none cursor-pointer whitespace-nowrap"
+                              >
+                                <option value="">↳ Tag as transfer…</option>
+                                <option value="452 - Bank Fees">Bank Fee</option>
+                                <option value="525 - FX Gains/Losses">FX Transfer Cost</option>
+                              </select>
                               <button
                                 onClick={() => acknowledgeTx(tx.id)}
                                 disabled={acknowledging === tx.id}

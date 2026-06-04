@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { google } from 'googleapis'
 import { query } from '@/lib/db'
+import { cachedSheet } from '@/lib/sheets-cache'
 
 const MRR_SHEET_ID     = '1057EJCsrTPT7LFHBYqsqYVVERuwgZ7kScmHy8j1Or8s'
 const MRR_TAB          = '🟩 MRR'
@@ -137,46 +138,38 @@ export async function GET(req: NextRequest) {
   try {
     const sheets = getSheetClient()
 
-    // ── 1. 2025 history from MRR Google Sheet ────────────────────────────────
-    const mrrRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: MRR_SHEET_ID,
-      range: `'${MRR_TAB}'!A1:S40`,
-    })
-    const mrrRows = mrrRes.data.values || []
+    // ── 1 & 2. Fetch both sheets in parallel, with caching ───────────────────
+    const [mrrRows, invRows] = await Promise.all([
+      cachedSheet('mrr-sheet', async () => {
+        const res = await sheets.spreadsheets.values.get({
+          spreadsheetId: MRR_SHEET_ID,
+          range: `'${MRR_TAB}'!A1:S40`,
+        })
+        return res.data.values || []
+      }),
+      cachedSheet('invoice-sheet', async () => {
+        const res = await sheets.spreadsheets.values.get({
+          spreadsheetId: INVOICE_SHEET_ID,
+          range: `All time!A2:I500`,
+        })
+        return res.data.values || []
+      }),
+    ])
+
     const getCell = (row: number, col: string): any => (mrrRows[row - 1] || [])[colToIndex(col)]
 
     // Build 2025 history — confirmed MRR from invoice tracker, costs from MRR sheet
-    // (Invoice tracker is the source of truth for revenue; MRR sheet has payroll/subs/costs)
     const history: { month: string; year: number; confirmed: number; pending: number; costs: number; net: number }[] =
       MONTH_COLS.map(({ month, col, year }) => {
         const payroll = parseNum(getCell(29, col))
         const subs    = parseNum(getCell(30, col))
         const sleek   = parseNum(getCell(31, col))
         const costs   = payroll + subs + sleek
-        // confirmed MRR calculated from invoice tracker (filled in after invRows load)
         return { month, year, confirmed: 0, pending: 0, costs: costs || 0, net: 0 }
       })
 
     const closing2025    = parseNum(getCell(37, 'S'))
     const cumulativeCash = closing2025
-
-    // ── 2. Read "All time" invoice sheet ─────────────────────────────────────
-    let invRows: any[][] = []
-    try {
-      const invRes = await sheets.spreadsheets.values.get({
-        spreadsheetId: INVOICE_SHEET_ID,
-        range: `All time!A2:I500`,
-      })
-      invRows = invRes.data.values || []
-      // Debug: log first row so we can verify column mapping
-      if (invRows.length > 0) {
-        console.log(`[mrr/history] All time: ${invRows.length} rows. First row columns:`, invRows[0])
-      } else {
-        console.log('[mrr/history] All time tab: 0 rows returned')
-      }
-    } catch (e: any) {
-      console.error('[mrr/history] Could not read All time tab:', e.message)
-    }
 
     // ── 3. Fill confirmed MRR for all months from invoice tracker ────────────
     // 2025: fills the confirmed field (costs already set from MRR sheet above)

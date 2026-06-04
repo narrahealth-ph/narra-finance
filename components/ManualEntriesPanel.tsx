@@ -197,6 +197,27 @@ export default function ManualEntriesPanel({
   const dir842 = parseFloat(localValues['842']?.value  || '0') || 0
   const directorTotal = dir835 + dir840 + dir842
 
+  const inv852 = parseFloat(localValues['852']?.value || '0') || 0
+  const inv853 = parseFloat(localValues['853']?.value || '0') || 0
+  const investmentTotal = inv852 + inv853
+
+  const [showInvConvertConfirm, setShowInvConvertConfirm] = useState(false)
+  const [convertingInv, setConvertingInv] = useState(false)
+
+  async function convertInvestmentsToEquity() {
+    setConvertingInv(true)
+    setShowInvConvertConfirm(false)
+    await fetch('/api/manual-entries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ action: 'convert_investments_to_equity', periodId }),
+    })
+    setConvertingInv(false)
+    await loadData()
+    onRefresh()
+  }
+
   const calculatedPrepayments = reportData?.bs?.prepayments ?? 0
 
   const fieldProps = { localValues, saving, saved: savedKeys, onChange: updateLocal, onSave: saveEntry }
@@ -389,11 +410,50 @@ export default function ManualEntriesPanel({
 
       {/* ── NON-CURRENT LIABILITIES ── */}
       <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
-        <SectionHeader title="Non-current Liabilities" />
+        <SectionHeader title="Non-current Liabilities" subtitle="Founder investments recorded as loans. Convert to equity when ready to make it permanent." />
         <div className="px-6">
           <FieldRow code="851" label="851 — Loans" {...fieldProps} />
           <FieldRow code="852" label="852 — Founder Investment" {...fieldProps} />
           <FieldRow code="853" label="853 — Founder Investment" {...fieldProps} />
+        </div>
+        <div className="px-6 py-4 bg-narra-light/30 border-t border-narra-border flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-medium text-narra-dark">
+              Total founder investments:{' '}
+              <span className="font-heading font-semibold">${fmt(investmentTotal)}</span>
+            </div>
+            <p className="text-xs text-narra-muted mt-0.5">
+              Converting moves this amount to Share Capital (900) and zeros these accounts.
+            </p>
+          </div>
+          {!showInvConvertConfirm ? (
+            <button
+              onClick={() => setShowInvConvertConfirm(true)}
+              disabled={investmentTotal <= 0}
+              className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-dark hover:bg-narra-light transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              Convert to Equity
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-red-600 font-medium">
+                Convert ${fmt(investmentTotal)} to share capital?
+              </span>
+              <button
+                onClick={convertInvestmentsToEquity}
+                disabled={convertingInv}
+                className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-body hover:bg-red-700 transition-all disabled:opacity-50"
+              >
+                {convertingInv ? 'Converting…' : 'Yes, convert'}
+              </button>
+              <button
+                onClick={() => setShowInvConvertConfirm(false)}
+                className="px-3 py-1.5 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light transition-all"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

@@ -192,5 +192,62 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, converted: directorTotal, newShareCapital: newSC })
   }
 
+  // ── convert_investments_to_equity ────────────────────────────────────────────
+  // Moves the sum of founder investment accounts (852, 853) into share capital (900)
+  if (action === 'convert_investments_to_equity') {
+    const { periodId } = body
+    if (!periodId) return NextResponse.json({ error: 'periodId required' }, { status: 400 })
+
+    const period = await query('SELECT locked FROM periods WHERE id = $1', [periodId])
+    if (period.rows[0]?.locked) {
+      return NextResponse.json({ error: 'Period is locked — unlock before converting' }, { status: 403 })
+    }
+
+    const invRes = await query(
+      `SELECT account_code, value FROM manual_entries
+       WHERE period_id = $1 AND account_code IN ('852','853')`,
+      [periodId]
+    )
+    const invMap: Record<string, number> = {}
+    for (const r of invRes.rows) invMap[r.account_code] = parseFloat(r.value || 0)
+    const investmentTotal = (invMap['852'] || 0) + (invMap['853'] || 0)
+
+    if (investmentTotal <= 0) {
+      return NextResponse.json({ error: 'No investment amounts to convert' }, { status: 400 })
+    }
+
+    const scRes = await query(
+      `SELECT value FROM manual_entries WHERE period_id = $1 AND account_code = '900'`,
+      [periodId]
+    )
+    const currentSC = parseFloat(scRes.rows[0]?.value || '2.10')
+    const newSC = currentSC + investmentTotal
+
+    await query(
+      `INSERT INTO manual_entries (period_id, account_code, account_name, value, notes, updated_at)
+       VALUES ($1, '900', '900 - Share Capital', $2, $3, NOW())
+       ON CONFLICT (period_id, account_code)
+       DO UPDATE SET value = $2, notes = $3, updated_at = NOW()`,
+      [periodId, newSC, `Converted from founder investments: 852=${invMap['852']||0}, 853=${invMap['853']||0}`]
+    )
+    await writeAudit('manual_entries', `${periodId}:900`, 'update',
+      { value: currentSC }, { value: newSC }, (session as any).email)
+
+    for (const code of ['852', '853']) {
+      const acct = MANUAL_ACCOUNTS.find(a => a.code === code)!
+      await query(
+        `INSERT INTO manual_entries (period_id, account_code, account_name, value, notes, updated_at)
+         VALUES ($1, $2, $3, 0, 'Converted to equity', NOW())
+         ON CONFLICT (period_id, account_code)
+         DO UPDATE SET value = 0, notes = 'Converted to equity', updated_at = NOW()`,
+        [periodId, code, acct.name]
+      )
+      await writeAudit('manual_entries', `${periodId}:${code}`, 'update',
+        { value: invMap[code] || 0 }, { value: 0, notes: 'Converted to equity' }, (session as any).email)
+    }
+
+    return NextResponse.json({ ok: true, converted: investmentTotal, newShareCapital: newSC })
+  }
+
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
 }

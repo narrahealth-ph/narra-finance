@@ -2,12 +2,6 @@
 import { useState } from 'react'
 import { FileText, Search, Users, Sparkles, MessageCircle, SendHorizonal } from 'lucide-react'
 
-const PRESET_QUESTIONS = [
-  { label: 'Can we hire a full-time member?', q: 'Are we able to hire a new full time member? Consider salary costs in Singapore (approx $4,000–$8,000/month) and our current cash runway.' },
-  { label: 'What is costing us the most?', q: 'What is costing us the most money this month? Break down the top expense categories and vendors.' },
-  { label: 'Costs by type', q: 'What are our costs broken down by type of cost / expense category?' },
-  { label: 'Highest paying client', q: 'Which is our highest paying client and how much do they contribute to our MRR?' },
-]
 
 export default function AIInsights({ periodId, data }: { periodId: number; data: any }) {
   const [loading, setLoading] = useState<string | null>(null)
@@ -76,21 +70,7 @@ export default function AIInsights({ periodId, data }: { periodId: number; data:
           <p className="text-xs text-narra-muted mt-0.5">Ask anything about your finances — or use a quick question below</p>
         </div>
         <div className="px-5 py-4 space-y-4">
-          {/* Preset questions */}
-          <div className="flex flex-wrap gap-2">
-            {PRESET_QUESTIONS.map(p => (
-              <button
-                key={p.label}
-                onClick={() => ask(p.q)}
-                disabled={loading === 'ask'}
-                className="text-xs px-3 py-1.5 bg-narra-surface border border-narra-border rounded-full text-narra-dark hover:bg-narra-green/10 hover:border-narra-green/40 transition-all disabled:opacity-40"
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Custom question input */}
+          {/* Question input */}
           <div className="flex gap-2">
             <input
               value={question}

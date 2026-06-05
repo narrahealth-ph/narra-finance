@@ -444,12 +444,6 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   async function executeSplit() {
     if (!splitTx) return
     setSplitError('')
-    const total = splitRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
-    const orig  = parseFloat(splitTx.amount || 0)
-    if (Math.abs(total - orig) > 0.02) {
-      setSplitError(`Split total $${total.toFixed(2)} must equal original $${orig.toFixed(2)}`)
-      return
-    }
     if (splitRows.some(r => !r.description.trim() || !(parseFloat(r.amount) > 0))) {
       setSplitError('All rows need a client / description and a positive amount.')
       return

@@ -371,11 +371,6 @@ export async function PATCH(req: NextRequest) {
 
     const originalAmount = parseFloat(orig.amount)
     const totalSplit = splits.reduce((s: number, r: any) => s + parseFloat(r.amount), 0)
-    if (Math.abs(totalSplit - originalAmount) > 0.02) {
-      return NextResponse.json({
-        error: `Split amounts ($${totalSplit.toFixed(2)}) must equal original ($${originalAmount.toFixed(2)})`
-      }, { status: 400 })
-    }
 
     // Pro-rate amount_usd for each split piece
     const origUsd = parseFloat(orig.amount_usd || orig.amount)

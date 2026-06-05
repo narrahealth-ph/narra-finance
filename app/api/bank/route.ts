@@ -413,6 +413,12 @@ export async function PATCH(req: NextRequest) {
   // ── rerun — re-run auto-reconcile for the period ──────────────────────────
   if (action === 'rerun') {
     if (!bodyPeriodId) return NextResponse.json({ error: 'periodId required' }, { status: 400 })
+    // Reset any revenue transactions that were incorrectly auto-proposed back to unmatched
+    await query(
+      `UPDATE bank_transactions SET status='unmatched', discrepancy_pct=NULL
+       WHERE period_id=$1 AND type='revenue' AND status IN ('proposed','flagged') AND matched_invoice_id IS NULL`,
+      [bodyPeriodId]
+    )
     await autoReconcile(bodyPeriodId)
     return NextResponse.json({ ok: true })
   }
@@ -506,61 +512,9 @@ async function autoReconcile(periodId: number) {
     bankExpenses.rows = bankExpenses.rows.filter((tx: any) => tx.id !== matchedTx.id)
   }
 
-  // ── 2. Revenue bank transactions → MRR entries (outgoing invoices synced) ──
-  // Match revenue deposits against synced MRR entries by amount proximity.
-  // This catches direct client payments but NOT bulk distributor payments (those
-  // need manual review since one bank tx covers multiple clients).
-  const mrrEntries = await query(
-    "SELECT id, client_name, amount_usd FROM mrr_entries WHERE period_id = $1",
-    [periodId]
-  )
-  const bankRevenue = await query(
-    "SELECT id, amount, amount_usd, date, description FROM bank_transactions WHERE period_id = $1 AND status='unmatched' AND type='revenue'",
-    [periodId]
-  )
-
-  for (const entry of mrrEntries.rows) {
-    const entryAmount = parseFloat(entry.amount_usd || 0)
-    if (!entryAmount) continue
-
-    let bestRevMatch: any = null
-    let bestRevScore = 0
-
-    for (const tx of bankRevenue.rows) {
-      const txAmount   = parseFloat(tx.amount_usd || tx.amount || 0)
-      const amountDiff = txAmount > 0 ? Math.abs(txAmount - entryAmount) / Math.max(txAmount, entryAmount) : 1
-      if (amountDiff > 0.10) continue  // >10% → skip
-
-      let score = 0
-      if (amountDiff < 0.01)       score += 50
-      else if (amountDiff < 0.05)  score += 35
-      else                         score += 15
-
-      // Client name in bank description (e.g. "OFII INC" in description)
-      if (entry.client_name && tx.description) {
-        const name = entry.client_name.toLowerCase()
-        const desc = tx.description.toLowerCase()
-        const words = name.split(/\s+/).filter((w: string) => w.length > 3)
-        if (desc.includes(name))                                           score += 30
-        else if (words.some((w: string) => desc.includes(w)))             score += 15
-      }
-
-      if (score > bestRevScore) { bestRevScore = score; bestRevMatch = { tx, amountDiff } }
-    }
-
-    if (!bestRevMatch || bestRevScore < 40) continue
-
-    const { tx: matchedTx, amountDiff } = bestRevMatch
-    const isFlagged = amountDiff > DISCREPANCY_FLAG_THRESHOLD
-    const status = isFlagged ? 'flagged' : bestRevScore >= 65 ? 'matched' : 'proposed'
-
-    // Link via description field (MRR entries don't have matched_bank_id column;
-    // we tag the bank tx with the MRR entry client name in its account field)
-    await query(
-      "UPDATE bank_transactions SET status=$1, discrepancy_pct=$2 WHERE id=$3",
-      [status, isFlagged ? (amountDiff * 100).toFixed(4) : null, matchedTx.id]
-    )
-
-    bankRevenue.rows = bankRevenue.rows.filter((tx: any) => tx.id !== matchedTx.id)
-  }
+  // Revenue matching is intentionally manual — bank revenue transactions stay
+  // unmatched until the user tags clients and splits them via the Reconciliation tab.
+  // Auto-matching MRR entries to revenue bank transactions was removed because it
+  // created false proposed matches, especially for bulk distributor payments (Lawina)
+  // where one bank deposit covers multiple clients.
 }

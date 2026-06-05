@@ -402,11 +402,13 @@ export async function PATCH(req: NextRequest) {
       ? clientIds.filter(Boolean)
       : clientId != null ? [clientId] : []
     const primaryId = ids[0] ?? null
+    // If clients are being tagged, mark as matched. If all clients are removed, revert to unmatched.
+    const newStatus = ids.length > 0 ? 'matched' : 'unmatched'
     await query(
-      'UPDATE bank_transactions SET client_id=$1, client_ids=$2, invoice_ref=$3 WHERE id=$4',
-      [primaryId, ids, invoiceRef || null, bankTxId]
+      'UPDATE bank_transactions SET client_id=$1, client_ids=$2, invoice_ref=$3, status=$4 WHERE id=$5',
+      [primaryId, ids, invoiceRef || null, newStatus, bankTxId]
     )
-    await writeAudit('bank_transactions', bankTxId, 'tag_client', null, { clientIds: ids, invoiceRef }, userEmail)
+    await writeAudit('bank_transactions', bankTxId, 'tag_client', null, { clientIds: ids, invoiceRef, status: newStatus }, userEmail)
     return NextResponse.json({ ok: true })
   }
 

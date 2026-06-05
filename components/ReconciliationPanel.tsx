@@ -75,7 +75,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   const [rerunning,       setRerunning]       = useState(false)
   const [rerunMsg,        setRerunMsg]        = useState('')
   const [splitTx,         setSplitTx]         = useState<any | null>(null)
-  const [splitRows,       setSplitRows]       = useState<{ invoiceId: string; description: string; amount: string; lookingUp: boolean; lookupError: string }[]>([])
+  const [splitRows,       setSplitRows]       = useState<{ invoiceId: string; description: string; amount: string; invoiceAmount: number | null; lookingUp: boolean; lookupError: string }[]>([])
   const [splitting,       setSplitting]       = useState(false)
   const [splitError,      setSplitError]      = useState('')
   const [clients,         setClients]         = useState<{id: number; name: string}[]>([])
@@ -415,8 +415,8 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
     setSplitError('')
     const half = (parseFloat(tx.amount || 0) / 2).toFixed(2)
     setSplitRows([
-      { invoiceId: '', description: '', amount: half, lookingUp: false, lookupError: '' },
-      { invoiceId: '', description: '', amount: half, lookingUp: false, lookupError: '' },
+      { invoiceId: '', description: '', amount: half, invoiceAmount: null, lookingUp: false, lookupError: '' },
+      { invoiceId: '', description: '', amount: half, invoiceAmount: null, lookingUp: false, lookupError: '' },
     ])
   }
 
@@ -433,7 +433,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
       }
       setSplitRows(prev => prev.map((r, i) =>
         i === rowIndex
-          ? { ...r, lookingUp: false, lookupError: '', description: data.clientName || r.description, amount: data.amount ? data.amount.toFixed(2) : r.amount }
+          ? { ...r, lookingUp: false, lookupError: '', description: data.distributor || data.clientName || r.description, amount: data.amount ? data.amount.toFixed(2) : r.amount, invoiceAmount: data.amount || null }
           : r
       ))
     } catch {
@@ -1424,7 +1424,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
             </div>
 
             <button
-              onClick={() => setSplitRows(prev => [...prev, { invoiceId: '', description: '', amount: '0', lookingUp: false, lookupError: '' }])}
+              onClick={() => setSplitRows(prev => [...prev, { invoiceId: '', description: '', amount: '0', invoiceAmount: null, lookingUp: false, lookupError: '' }])}
               className="text-xs text-purple-700 hover:text-purple-900 flex items-center gap-1"
             >
               + Add another split
@@ -1432,18 +1432,41 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
 
             {/* Running total */}
             {(() => {
-              const total = splitRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
-              const orig  = parseFloat(splitTx.amount || 0)
-              const diff  = Math.abs(total - orig)
-              const ok    = diff <= 0.02
+              const splitTotal   = splitRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+              const invoiceTotal = splitRows.reduce((s, r) => s + (r.invoiceAmount || 0), 0)
+              const orig         = parseFloat(splitTx.amount || 0)
+              const splitDiff    = Math.abs(splitTotal - orig)
+              const splitOk      = splitDiff <= 0.02
+              const hasLookups   = splitRows.some(r => r.invoiceAmount !== null)
+              const invDiff      = invoiceTotal - orig
               return (
-                <div className={`rounded-lg px-4 py-2.5 text-sm flex justify-between items-center ${ok ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
-                  <span className={ok ? 'text-green-700' : 'text-red-700'}>
-                    Split total: {splitTx.currency} ${total.toFixed(2)}
-                  </span>
-                  <span className={ok ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
-                    {ok ? '✓ Balanced' : `${total > orig ? '+' : '-'}$${diff.toFixed(2)} off`}
-                  </span>
+                <div className="space-y-2">
+                  {hasLookups && (
+                    <div className="rounded-lg px-4 py-2.5 text-xs bg-narra-surface border border-narra-border space-y-1">
+                      <div className="flex justify-between">
+                        <span className="text-narra-muted">Invoice total (from sheet)</span>
+                        <span className="font-mono text-narra-dark">{splitTx.currency} ${invoiceTotal.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-narra-muted">Bank received</span>
+                        <span className="font-mono text-narra-dark">{splitTx.currency} ${orig.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between border-t border-narra-border pt-1 mt-1">
+                        <span className="font-medium text-narra-dark">Difference</span>
+                        <span className={`font-mono font-medium ${Math.abs(invDiff) <= 0.02 ? 'text-green-600' : invDiff > 0 ? 'text-orange-600' : 'text-red-600'}`}>
+                          {Math.abs(invDiff) <= 0.02 ? '✓ Match' : `${invDiff > 0 ? '+' : ''}${splitTx.currency} $${invDiff.toFixed(2)}`}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  <div className={`rounded-lg px-4 py-2.5 text-sm flex justify-between items-center ${splitOk ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                    <span className={splitOk ? 'text-green-700' : 'text-red-700'}>
+                      Split total: {splitTx.currency} ${splitTotal.toFixed(2)}
+                    </span>
+                    <span className={splitOk ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
+                      {splitOk ? '✓ Balanced' : `${splitTotal > orig ? '+' : '-'}$${splitDiff.toFixed(2)} off`}
+                    </span>
+                  </div>
                 </div>
               )
             })()}

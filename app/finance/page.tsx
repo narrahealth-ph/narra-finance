@@ -39,6 +39,7 @@ export default function FinancePage() {
   const now = new Date()
   const [selectedMonthName, setSelectedMonthName] = useState(MONTHS[now.getMonth()])
   const [selectedYear, setSelectedYear]           = useState(String(now.getFullYear()))
+  const [closedPeriods, setClosedPeriods]         = useState<string[]>([])
 
   const selectedMonth = `${selectedMonthName}_${selectedYear}`
 
@@ -51,6 +52,24 @@ export default function FinancePage() {
   const [clearConfirm,    setClearConfirm]    = useState<string | null>(null) // null | 'all' | type key
   const [mrrRefreshKey,   setMrrRefreshKey]   = useState(0)
   const [bankRefreshKey,  setBankRefreshKey]  = useState(0)
+
+  useEffect(() => {
+    async function loadClosedPeriods() {
+      const res = await fetch('/api/periods')
+      const data = await res.json()
+      const locked: any[] = (data.periods || []).filter((p: any) => p.locked)
+      setClosedPeriods(locked.map((p: any) => p.label))
+      if (locked.length > 0) {
+        // Default to most recently closed period (API returns DESC order)
+        const [month, year] = locked[0].label.split('_')
+        if (MONTHS.includes(month) && year) {
+          setSelectedMonthName(month)
+          setSelectedYear(year)
+        }
+      }
+    }
+    loadClosedPeriods()
+  }, [])
 
   useEffect(() => {
     setPeriodId(null) // reset so components don't show stale data during transition
@@ -193,9 +212,12 @@ export default function FinancePage() {
               onChange={e => setSelectedMonthName(e.target.value)}
               className="bg-transparent text-white text-xs font-body outline-none cursor-pointer"
             >
-              {MONTHS.map(m => (
-                <option key={m} value={m}>{m}</option>
-              ))}
+              {MONTHS.map(m => {
+                const isClosed = closedPeriods.includes(`${m}_${selectedYear}`)
+                return (
+                  <option key={m} value={m}>{isClosed ? `✓ ${m}` : m}</option>
+                )
+              })}
             </select>
           </div>
 

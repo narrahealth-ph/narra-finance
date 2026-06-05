@@ -433,7 +433,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
       }
       setSplitRows(prev => prev.map((r, i) =>
         i === rowIndex
-          ? { ...r, lookingUp: false, lookupError: '', description: data.distributor || data.clientName || r.description, amount: data.amount ? data.amount.toFixed(2) : r.amount, invoiceAmount: data.amount || null }
+          ? { ...r, lookingUp: false, lookupError: '', description: data.clientName || r.description, amount: data.amount ? data.amount.toFixed(2) : r.amount, invoiceAmount: data.amount || null }
           : r
       ))
     } catch {

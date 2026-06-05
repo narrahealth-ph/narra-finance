@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { query } from '@/lib/db'
-import { generateInvestorNarrative, detectAnomalies, assessChurnRisk } from '@/lib/ai'
+import { generateInvestorNarrative, detectAnomalies, assessChurnRisk, answerFinancialQuestion } from '@/lib/ai'
 
 export async function POST(req: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { periodId, type } = await req.json()
+  const { periodId, type, question } = await req.json()
 
   const period = await query('SELECT * FROM periods WHERE id = $1', [periodId])
   const p = period.rows[0]
@@ -68,6 +68,37 @@ export async function POST(req: NextRequest) {
     }))
     const churn = await assessChurnRisk(clients)
     result.churn = churn
+  }
+
+  if (type === 'ask') {
+    if (!question) return NextResponse.json({ error: 'question required' }, { status: 400 })
+
+    const expensesByCategory: Record<string, number> = {}
+    for (const inv of invoices.rows) {
+      const cat = inv.account_name || 'Other'
+      expensesByCategory[cat] = (expensesByCategory[cat] || 0) + parseFloat(inv.amount_usd || 0)
+    }
+    const topExpenses = [...invoices.rows]
+      .sort((a, b) => parseFloat(b.amount_usd || 0) - parseFloat(a.amount_usd || 0))
+      .map(r => ({ vendor: r.vendor || 'Unknown', amount: parseFloat(r.amount_usd || 0), account: r.account_name || 'Other' }))
+
+    const mrrByClient = [...mrr.rows]
+      .sort((a, b) => parseFloat(b.amount_usd || 0) - parseFloat(a.amount_usd || 0))
+      .map(r => ({ client: r.client_name, amount: parseFloat(r.amount_usd || 0) }))
+
+    const answer = await answerFinancialQuestion(question, {
+      period:             p.label,
+      totalRevenue,
+      totalExpenses,
+      netProfit:          totalRevenue - totalExpenses,
+      cashBalance,
+      runway,
+      totalMrr,
+      expensesByCategory: Object.entries(expensesByCategory).map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount),
+      topExpenses,
+      mrrByClient,
+    })
+    result.answer = answer
   }
 
   return NextResponse.json(result)

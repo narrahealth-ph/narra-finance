@@ -1,10 +1,18 @@
 'use client'
 import { useState } from 'react'
-import { FileText, Search, AlertTriangle, Users, Sparkles } from 'lucide-react'
+import { FileText, Search, Users, Sparkles, MessageCircle, SendHorizonal } from 'lucide-react'
+
+const PRESET_QUESTIONS = [
+  { label: 'Can we hire a full-time member?', q: 'Are we able to hire a new full time member? Consider salary costs in Singapore (approx $4,000–$8,000/month) and our current cash runway.' },
+  { label: 'What is costing us the most?', q: 'What is costing us the most money this month? Break down the top expense categories and vendors.' },
+  { label: 'Costs by type', q: 'What are our costs broken down by type of cost / expense category?' },
+  { label: 'Highest paying client', q: 'Which is our highest paying client and how much do they contribute to our MRR?' },
+]
 
 export default function AIInsights({ periodId, data }: { periodId: number; data: any }) {
   const [loading, setLoading] = useState<string | null>(null)
-  const [results, setResults] = useState<{ narrative?: string; anomalies?: any[]; churn?: any[] }>({})
+  const [results, setResults] = useState<{ narrative?: string; anomalies?: any[]; churn?: any[]; answer?: string }>({})
+  const [question, setQuestion] = useState('')
 
   async function generate(type: string) {
     setLoading(type)
@@ -15,6 +23,20 @@ export default function AIInsights({ periodId, data }: { periodId: number; data:
     })
     const result = await res.json()
     setResults(prev => ({ ...prev, ...result }))
+    setLoading(null)
+  }
+
+  async function ask(q: string) {
+    if (!q.trim()) return
+    setLoading('ask')
+    setResults(prev => ({ ...prev, answer: undefined }))
+    const res = await fetch('/api/ai-insights', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ periodId, type: 'ask', question: q }),
+    })
+    const result = await res.json()
+    setResults(prev => ({ ...prev, answer: result.answer }))
     setLoading(null)
   }
 
@@ -46,6 +68,59 @@ export default function AIInsights({ periodId, data }: { periodId: number; data:
           ))}
         </div>
       )}
+
+      {/* Financial Q&A */}
+      <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-narra-border">
+          <h3 className="font-heading font-semibold text-narra-dark flex items-center gap-2"><MessageCircle size={16} /> Ask a Financial Question</h3>
+          <p className="text-xs text-narra-muted mt-0.5">Ask anything about your finances — or use a quick question below</p>
+        </div>
+        <div className="px-5 py-4 space-y-4">
+          {/* Preset questions */}
+          <div className="flex flex-wrap gap-2">
+            {PRESET_QUESTIONS.map(p => (
+              <button
+                key={p.label}
+                onClick={() => ask(p.q)}
+                disabled={loading === 'ask'}
+                className="text-xs px-3 py-1.5 bg-narra-surface border border-narra-border rounded-full text-narra-dark hover:bg-narra-green/10 hover:border-narra-green/40 transition-all disabled:opacity-40"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Custom question input */}
+          <div className="flex gap-2">
+            <input
+              value={question}
+              onChange={e => setQuestion(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { ask(question); setQuestion('') } }}
+              placeholder="e.g. If we pursue a new marketing campaign at $5,000/month, can we cover it?"
+              className="flex-1 border border-narra-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-narra-green/30"
+              disabled={loading === 'ask'}
+            />
+            <button
+              onClick={() => { ask(question); setQuestion('') }}
+              disabled={loading === 'ask' || !question.trim()}
+              className="px-3 py-2 bg-narra-dark text-narra-green rounded-lg hover:bg-narra-mid transition-all disabled:opacity-40 flex items-center gap-1.5 text-sm"
+            >
+              {loading === 'ask' ? <Sparkles size={14} className="animate-pulse" /> : <SendHorizonal size={14} />}
+              {loading === 'ask' ? 'Thinking…' : 'Ask'}
+            </button>
+          </div>
+
+          {/* Answer */}
+          {results.answer && (
+            <div className="bg-narra-surface border border-narra-border rounded-xl p-4">
+              <p className="text-sm text-narra-ink leading-relaxed whitespace-pre-line font-body">{results.answer}</p>
+            </div>
+          )}
+          {!results.answer && loading !== 'ask' && (
+            <p className="text-narra-muted text-sm italic">Click a quick question or type your own.</p>
+          )}
+        </div>
+      </div>
 
       {/* Investor Narrative */}
       <div className="bg-white border border-narra-border rounded-xl overflow-hidden">

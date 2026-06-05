@@ -146,6 +146,52 @@ If no anomalies, return empty array [].`
   }
 }
 
+// ── Answer a financial question ───────────────────────────────────────────────
+export async function answerFinancialQuestion(question: string, ctx: {
+  period:              string
+  totalRevenue:        number
+  totalExpenses:       number
+  netProfit:           number
+  cashBalance:         number
+  runway:              number
+  totalMrr:            number
+  expensesByCategory:  { category: string; amount: number }[]
+  topExpenses:         { vendor: string; amount: number; account: string }[]
+  mrrByClient:         { client: string; amount: number }[]
+}) {
+  const response = await client.messages.create({
+    model:      'claude-sonnet-4-20250514',
+    max_tokens: 600,
+    messages: [{
+      role:    'user',
+      content: `You are the CFO of Narra Health PTE. LTD., a B2B SaaS health platform based in Singapore.
+Answer the following question using the financial data below. Be direct, specific, and use actual numbers.
+
+QUESTION: ${question}
+
+FINANCIAL DATA FOR ${ctx.period}:
+- Cash balance: $${ctx.cashBalance.toLocaleString()}
+- Monthly revenue: $${ctx.totalRevenue.toLocaleString()}
+- Monthly expenses: $${ctx.totalExpenses.toLocaleString()}
+- Net profit/loss: $${ctx.netProfit.toLocaleString()}
+- MRR: $${ctx.totalMrr.toLocaleString()}
+- Cash runway: ${ctx.runway} months
+
+Expenses by category:
+${ctx.expensesByCategory.map(e => `  ${e.category}: $${e.amount.toLocaleString()}`).join('\n')}
+
+Top expense vendors:
+${ctx.topExpenses.slice(0, 8).map(e => `  ${e.vendor} (${e.account}): $${e.amount.toLocaleString()}`).join('\n')}
+
+Revenue by client (MRR):
+${ctx.mrrByClient.map(c => `  ${c.client}: $${c.amount.toLocaleString()}`).join('\n')}
+
+Answer in 3–5 sentences. Lead with a clear yes/no or direct finding when applicable. Use specific dollar amounts.`
+    }]
+  })
+  return response.content[0].type === 'text' ? response.content[0].text : ''
+}
+
 // ── Churn risk assessment ─────────────────────────────────────────────────────
 export async function assessChurnRisk(clients: { name: string; payments: number[]; lastPayment: string; seats: number }[]) {
   const response = await client.messages.create({

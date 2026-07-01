@@ -60,8 +60,11 @@ export default function ClientsPanel() {
   const [availableInvoices,  setAvailableInvoices]  = useState<any[]>([])
   const [invoiceSearch,      setInvoiceSearch]      = useState('')
   const [invoiceLoading,     setInvoiceLoading]     = useState(false)
-  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<number>>(new Set())
-  const [bulkAssigning,      setBulkAssigning]      = useState(false)
+  const [selectedInvoiceIds,  setSelectedInvoiceIds]  = useState<Set<number>>(new Set())
+  const [bulkAssigning,       setBulkAssigning]       = useState(false)
+  const [allInvoices,         setAllInvoices]         = useState<any[]>([])  // for bulk invoice picker
+  const [bulkInvoicePicks,    setBulkInvoicePicks]    = useState<Record<number, string>>({})  // clientId → invoiceId
+  const [bulkInvoiceSaving,   setBulkInvoiceSaving]   = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -73,6 +76,14 @@ export default function ClientsPanel() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // Fetch all invoices when bulk selection is active (for the invoice dropdown)
+  useEffect(() => {
+    if (selectedIds.size === 0) { setAllInvoices([]); setBulkInvoicePicks({}); return }
+    fetch('/api/clients/invoices', { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => setAllInvoices(d.invoices || []))
+  }, [selectedIds])
 
   const totalLtv    = clients.reduce((s, c) => s + (c.ltv || 0), 0)
   const activeCount = clients.filter(c => c.active).length
@@ -273,6 +284,27 @@ export default function ClientsPanel() {
     await refreshInvoiceLists()
   }
 
+  async function applyBulkInvoicePicks() {
+    const entries = Object.entries(bulkInvoicePicks).filter(([, invoiceId]) => invoiceId)
+    if (!entries.length) return
+    setBulkInvoiceSaving(true)
+    await Promise.all(
+      entries.map(([clientId, invoiceId]) =>
+        fetch('/api/clients/invoices', {
+          method: 'PATCH', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoiceId: parseInt(invoiceId), clientId: parseInt(clientId) }),
+        })
+      )
+    )
+    setBulkInvoicePicks({})
+    setBulkInvoiceSaving(false)
+    setSelectedIds(new Set())
+    load()
+    setMsg(`Invoices assigned to ${entries.length} client${entries.length !== 1 ? 's' : ''}.`)
+    setTimeout(() => setMsg(''), 4000)
+  }
+
   const billingColor = (bt: string) => {
     if (bt === 'annual')    return 'bg-blue-100 text-blue-700'
     if (bt === 'quarterly') return 'bg-purple-100 text-purple-700'
@@ -399,6 +431,45 @@ export default function ClientsPanel() {
               className="px-4 py-1.5 bg-indigo-700 text-white rounded-lg text-sm font-body hover:bg-indigo-800 transition-all disabled:opacity-50 shrink-0">
               {bulkSaving ? 'Saving…' : 'Set Dates'}
             </button>
+          </div>
+
+          {/* Invoice assignment — per-client dropdown */}
+          <div className="border-t border-indigo-200 pt-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-indigo-700 font-medium">Assign invoice to each client:</span>
+              <button
+                onClick={applyBulkInvoicePicks}
+                disabled={bulkInvoiceSaving || Object.values(bulkInvoicePicks).filter(Boolean).length === 0}
+                className="px-4 py-1.5 bg-indigo-700 text-white rounded-lg text-xs font-body hover:bg-indigo-800 transition-all disabled:opacity-40">
+                {bulkInvoiceSaving ? 'Saving…' : `Apply ${Object.values(bulkInvoicePicks).filter(Boolean).length > 0 ? `(${Object.values(bulkInvoicePicks).filter(Boolean).length})` : ''}`}
+              </button>
+            </div>
+            <div className="space-y-1.5">
+              {Array.from(selectedIds).map(id => {
+                const c = clients.find(x => x.id === id)
+                if (!c) return null
+                return (
+                  <div key={id} className="flex items-center gap-3">
+                    <span className="text-sm text-indigo-800 w-40 truncate shrink-0">{c.name}</span>
+                    <select
+                      value={bulkInvoicePicks[id] || ''}
+                      onChange={e => setBulkInvoicePicks(prev => ({ ...prev, [id]: e.target.value }))}
+                      className="flex-1 border border-indigo-300 rounded-lg px-3 py-1.5 text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-300">
+                      <option value="">— Pick invoice —</option>
+                      {allInvoices.map((inv: any) => (
+                        <option key={inv.id} value={inv.id}>
+                          {inv.invoice_id || `#${inv.id}`}
+                          {inv.period_label ? ` · ${inv.period_label}` : ''}
+                          {inv.vendor ? ` · ${inv.vendor}` : ''}
+                          {inv.amount_usd ? ` · $${parseFloat(inv.amount_usd).toLocaleString()}` : ''}
+                          {inv.client_name ? ` [→ ${inv.client_name}]` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )
+              })}
+            </div>
           </div>
 
           {/* Holding company */}

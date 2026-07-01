@@ -55,11 +55,13 @@ export default function ClientsPanel() {
   const [bulkHoldingId,     setBulkHoldingId]     = useState<string>('')
   const [bulkSaving,        setBulkSaving]        = useState(false)
   const [bulkContractStart, setBulkContractStart] = useState<string>('')  // YYYY-MM-DD
-  const [assigningClient,   setAssigningClient]   = useState<Client | null>(null)
-  const [assignedInvoices,  setAssignedInvoices]  = useState<any[]>([])
-  const [availableInvoices, setAvailableInvoices] = useState<any[]>([])
-  const [invoiceSearch,     setInvoiceSearch]     = useState('')
-  const [invoiceLoading,    setInvoiceLoading]    = useState(false)
+  const [assigningClient,    setAssigningClient]    = useState<Client | null>(null)
+  const [assignedInvoices,   setAssignedInvoices]   = useState<any[]>([])
+  const [availableInvoices,  setAvailableInvoices]  = useState<any[]>([])
+  const [invoiceSearch,      setInvoiceSearch]      = useState('')
+  const [invoiceLoading,     setInvoiceLoading]     = useState(false)
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<number>>(new Set())
+  const [bulkAssigning,      setBulkAssigning]      = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -222,6 +224,7 @@ export default function ClientsPanel() {
   async function openInvoiceAssignment(c: Client) {
     setAssigningClient(c)
     setInvoiceSearch('')
+    setSelectedInvoiceIds(new Set())
     setInvoiceLoading(true)
     const [assignedRes, availableRes] = await Promise.all([
       fetch(`/api/clients/invoices?clientId=${c.id}`, { credentials: 'include' }).then(r => r.json()),
@@ -232,6 +235,17 @@ export default function ClientsPanel() {
     setInvoiceLoading(false)
   }
 
+  async function refreshInvoiceLists() {
+    if (!assigningClient) return
+    const [assignedRes, availableRes] = await Promise.all([
+      fetch(`/api/clients/invoices?clientId=${assigningClient.id}`, { credentials: 'include' }).then(r => r.json()),
+      fetch(`/api/clients/invoices?unassigned=true`, { credentials: 'include' }).then(r => r.json()),
+    ])
+    setAssignedInvoices(assignedRes.invoices || [])
+    setAvailableInvoices(availableRes.invoices || [])
+    load()
+  }
+
   async function toggleInvoice(invoiceId: number, assign: boolean) {
     if (!assigningClient) return
     await fetch('/api/clients/invoices', {
@@ -239,14 +253,24 @@ export default function ClientsPanel() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ invoiceId, clientId: assign ? assigningClient.id : null }),
     })
-    // Refresh both lists
-    const [assignedRes, availableRes] = await Promise.all([
-      fetch(`/api/clients/invoices?clientId=${assigningClient.id}`, { credentials: 'include' }).then(r => r.json()),
-      fetch(`/api/clients/invoices?unassigned=true`, { credentials: 'include' }).then(r => r.json()),
-    ])
-    setAssignedInvoices(assignedRes.invoices || [])
-    setAvailableInvoices(availableRes.invoices || [])
-    load() // refresh totals in table
+    await refreshInvoiceLists()
+  }
+
+  async function bulkAssignInvoices() {
+    if (!assigningClient || selectedInvoiceIds.size === 0) return
+    setBulkAssigning(true)
+    await Promise.all(
+      Array.from(selectedInvoiceIds).map(id =>
+        fetch('/api/clients/invoices', {
+          method: 'PATCH', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoiceId: id, clientId: assigningClient.id }),
+        })
+      )
+    )
+    setSelectedInvoiceIds(new Set())
+    setBulkAssigning(false)
+    await refreshInvoiceLists()
   }
 
   const billingColor = (bt: string) => {
@@ -624,7 +648,7 @@ export default function ClientsPanel() {
                 <h3 className="font-heading font-semibold text-narra-dark text-lg">{assigningClient.name}</h3>
                 <p className="text-xs text-narra-muted mt-0.5">Select which invoices belong to this client</p>
               </div>
-              <button onClick={() => setAssigningClient(null)} className="text-narra-muted hover:text-narra-dark text-xl leading-none">✕</button>
+              <button onClick={() => { setAssigningClient(null); setSelectedInvoiceIds(new Set()) }} className="text-narra-muted hover:text-narra-dark text-xl leading-none">✕</button>
             </div>
 
             <div className="overflow-y-auto flex-1 divide-y divide-narra-border">
@@ -665,7 +689,25 @@ export default function ClientsPanel() {
 
               {/* Available invoices */}
               <div className="px-6 py-4">
-                <h4 className="text-xs font-body uppercase tracking-widest text-narra-muted mb-3">Unassigned invoices</h4>
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-xs font-body uppercase tracking-widest text-narra-muted">Unassigned invoices</h4>
+                  {selectedInvoiceIds.size > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-indigo-700 font-medium">
+                        {selectedInvoiceIds.size} selected ·{' '}
+                        ${Array.from(selectedInvoiceIds).reduce((s, id) => {
+                          const inv = availableInvoices.find(i => i.id === id)
+                          return s + parseFloat(inv?.amount_usd || 0)
+                        }, 0).toLocaleString()}
+                      </span>
+                      <button onClick={bulkAssignInvoices} disabled={bulkAssigning}
+                        className="px-3 py-1 bg-indigo-700 text-white rounded-lg text-xs font-body hover:bg-indigo-800 transition-all disabled:opacity-50">
+                        {bulkAssigning ? 'Adding…' : `Add ${selectedInvoiceIds.size} to ${assigningClient?.name}`}
+                      </button>
+                      <button onClick={() => setSelectedInvoiceIds(new Set())} className="text-xs text-indigo-400 hover:text-indigo-700">Clear</button>
+                    </div>
+                  )}
+                </div>
                 <input
                   placeholder="Search by invoice ID, vendor, or period…"
                   value={invoiceSearch}
@@ -682,14 +724,38 @@ export default function ClientsPanel() {
                     (inv.vendor || '').toLowerCase().includes(q) ||
                     (inv.period_label || '').toLowerCase().includes(q)
                   )
-                  return filtered.length === 0 ? (
+                  if (filtered.length === 0) return (
                     <p className="text-sm text-narra-muted italic">
                       {availableInvoices.length === 0 ? 'All invoices are assigned.' : 'No results match your search.'}
                     </p>
-                  ) : (
+                  )
+                  const allFilteredSelected = filtered.every(inv => selectedInvoiceIds.has(inv.id))
+                  return (
                     <div className="space-y-1.5">
+                      {/* Select all row */}
+                      <div className="flex items-center gap-3 px-3 py-1.5">
+                        <input type="checkbox"
+                          checked={allFilteredSelected && filtered.length > 0}
+                          onChange={e => {
+                            const next = new Set(selectedInvoiceIds)
+                            filtered.forEach(inv => e.target.checked ? next.add(inv.id) : next.delete(inv.id))
+                            setSelectedInvoiceIds(next)
+                          }}
+                          className="rounded accent-indigo-600 cursor-pointer"
+                        />
+                        <span className="text-xs text-narra-muted">Select all {filtered.length} shown</span>
+                      </div>
                       {filtered.map((inv: any) => (
-                        <div key={inv.id} className="flex items-center gap-3 bg-narra-surface border border-narra-border rounded-lg px-3 py-2">
+                        <div key={inv.id}
+                          className={`flex items-center gap-3 border rounded-lg px-3 py-2 cursor-pointer transition-colors ${selectedInvoiceIds.has(inv.id) ? 'bg-indigo-50 border-indigo-300' : 'bg-narra-surface border-narra-border hover:border-indigo-200'}`}
+                          onClick={() => {
+                            const next = new Set(selectedInvoiceIds)
+                            selectedInvoiceIds.has(inv.id) ? next.delete(inv.id) : next.add(inv.id)
+                            setSelectedInvoiceIds(next)
+                          }}
+                        >
+                          <input type="checkbox" checked={selectedInvoiceIds.has(inv.id)} readOnly
+                            className="rounded accent-indigo-600 pointer-events-none" />
                           <div className="flex-1 min-w-0">
                             <span className="text-sm font-medium text-narra-dark">{inv.invoice_id || `#${inv.id}`}</span>
                             <span className="text-xs text-narra-muted ml-2">{inv.period_label}</span>
@@ -698,8 +764,6 @@ export default function ClientsPanel() {
                           <span className="text-sm font-heading font-semibold text-narra-dark shrink-0">
                             ${parseFloat(inv.amount_usd || 0).toLocaleString()}
                           </span>
-                          <button onClick={() => toggleInvoice(inv.id, true)}
-                            className="text-xs text-indigo-500 hover:text-indigo-700 font-medium shrink-0">+ Add</button>
                         </div>
                       ))}
                     </div>
@@ -709,7 +773,7 @@ export default function ClientsPanel() {
             </div>
 
             <div className="px-6 py-4 border-t border-narra-border">
-              <button onClick={() => setAssigningClient(null)}
+              <button onClick={() => { setAssigningClient(null); setSelectedInvoiceIds(new Set()) }}
                 className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all">
                 Done
               </button>

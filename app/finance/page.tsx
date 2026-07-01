@@ -337,7 +337,7 @@ export default function FinancePage() {
         {tab === 'instructions' ? (
           <InstructionsPanel />
         ) : tab === 'investor' ? (
-          <InvestorPanel />
+          <InvestorPanel key={`inv-${mrrRefreshKey}-${bankRefreshKey}`} />
         ) : tab === 'annual' ? (
           <AnnualReportPanel selectedYear={selectedYear} />
         ) : !periodId ? (
@@ -353,6 +353,7 @@ export default function FinancePage() {
                 onRefresh={loadReports}
                 selectedMonth={selectedMonth}
                 refreshKey={mrrRefreshKey}
+                fxRates={reportData?.fxRates}
               />
             )}
             {tab === 'clients' && (

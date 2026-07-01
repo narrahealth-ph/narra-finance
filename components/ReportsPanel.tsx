@@ -272,7 +272,8 @@ function buildAnnualGLCSV(annualData: any): string {
 export default function ReportsPanel({ data, loading, period, selectedYear, onRefresh }: {
   data: any; loading: boolean; period: string; selectedYear?: string; onRefresh?: () => void
 }) {
-  const [refreshing, setRefreshing] = useState(false)
+  const [refreshing,       setRefreshing]       = useState(false)
+  const [displayCurrency,  setDisplayCurrency]  = useState<'USD' | 'SGD'>('USD')
 
   async function handleRefresh() {
     if (!onRefresh) return
@@ -561,6 +562,11 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
 
   const { gl, bs, pl, fxRates } = data
 
+  // Currency conversion helpers (CSV exports always stay in USD)
+  const sgdRate = fxRates?.find((r: any) => r.currency === 'SGD')?.rate || 0.74
+  const cvt = (n: number) => displayCurrency === 'SGD' ? (n || 0) / sgdRate : (n || 0)
+  const sym = displayCurrency === 'SGD' ? 'S$' : '$'
+
   // Build exchange rate footer for CSV exports
   const fxFooter = fxRates && fxRates.length > 0
     ? '\n\nExchange Rates Used\n' + fxRates.map((r: any) =>
@@ -611,6 +617,11 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
           <p className="text-sm text-narra-muted mt-0.5">{period.replace('_', ' ')} · NARRA HEALTH PTE. LTD.</p>
         </div>
         <div className="flex gap-2 flex-wrap items-center">
+          {/* Currency toggle */}
+          <div className="flex rounded-lg border border-narra-border overflow-hidden text-xs font-body">
+            <button onClick={() => setDisplayCurrency('USD')} className={`px-3 py-2 transition-all ${displayCurrency === 'USD' ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:bg-narra-light'}`}>USD</button>
+            <button onClick={() => setDisplayCurrency('SGD')} className={`px-3 py-2 transition-all ${displayCurrency === 'SGD' ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:bg-narra-light'}`}>SGD</button>
+          </div>
           {/* Monthly / Annual toggle */}
           {selectedYear && (
             <div className="flex rounded-lg border border-narra-border overflow-hidden text-xs font-body">
@@ -618,9 +629,9 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
               <button onClick={() => setAnnualMode(true)} className="px-3 py-2 text-narra-muted hover:bg-narra-light transition-all">Annual</button>
             </div>
           )}
-          <button onClick={exportGL}  className="px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">↓ GL CSV</button>
-          <button onClick={exportBS}  className="px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">↓ BS CSV</button>
-          <button onClick={exportPL}  className="px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">↓ P&L CSV</button>
+          <button onClick={exportGL}  className="hidden sm:block px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">↓ GL CSV</button>
+          <button onClick={exportBS}  className="hidden sm:block px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">↓ BS CSV</button>
+          <button onClick={exportPL}  className="hidden sm:block px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">↓ P&L CSV</button>
           <button onClick={exportAll} className="px-3 py-2 bg-narra-dark text-narra-green rounded-lg text-xs font-body hover:bg-narra-mid transition-all">↓ Export All</button>
           {onRefresh && (
             <button
@@ -652,11 +663,11 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
             <div>
               <div className="text-xs text-white/40 uppercase tracking-widest mb-1">NARRA HEALTH PTE. LTD.</div>
               <h3 className="font-heading font-semibold text-white">Profit and Loss Statement</h3>
-              <p className="text-xs text-white/50 mt-0.5">{period.replace('_', ' ')}</p>
+              <p className="text-xs text-white/50 mt-0.5">{period.replace('_', ' ')} · {displayCurrency}</p>
             </div>
             <div className="text-right">
               <div className={`font-heading text-2xl font-semibold ${pl.netProfit >= 0 ? 'text-narra-green' : 'text-red-400'}`}>
-                {pl.netProfit < 0 ? '(' : ''}${fmt(pl.netProfit)}{pl.netProfit < 0 ? ')' : ''}
+                {pl.netProfit < 0 ? '(' : ''}{sym}{fmt(cvt(pl.netProfit))}{pl.netProfit < 0 ? ')' : ''}
               </div>
               <div className="text-xs text-white/40">{pl.netProfit >= 0 ? 'Profit' : 'Loss'} for the period</div>
             </div>
@@ -665,7 +676,7 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
             <thead>
               <tr className="border-b border-narra-border">
                 <th className="text-left px-6 py-2.5 text-xs text-narra-muted font-body uppercase tracking-widest">Account</th>
-                <th className="text-right px-6 py-2.5 text-xs text-narra-muted font-body uppercase tracking-widest">{period.split('_')[1]}</th>
+                <th className="text-right px-6 py-2.5 text-xs text-narra-muted font-body uppercase tracking-widest">{period.split('_')[1]} ({displayCurrency})</th>
               </tr>
             </thead>
             <tbody>
@@ -673,25 +684,25 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
               {pl.totalRevenue > 0 && <>
                 <tr className="bg-narra-light/40">
                   <td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider">
-                    Income — ${fmt(pl.totalRevenue)}
+                    Income — {sym}{fmt(cvt(pl.totalRevenue))}
                   </td>
                 </tr>
                 {pl.revenueRows.map((r: any, i: number) => (
                   <tr key={i} className="border-t border-narra-border/50 hover:bg-narra-surface">
                     <td className="px-6 py-3 text-narra-ink pl-10">310 - Service Revenue · {r.description}</td>
-                    <td className="px-6 py-3 text-right font-medium text-green-700">{fmt(parseFloat(r.amount_usd || r.amount || 0))}</td>
+                    <td className="px-6 py-3 text-right font-medium text-green-700">{sym}{fmt(cvt(parseFloat(r.amount_usd || r.amount || 0)))}</td>
                   </tr>
                 ))}
                 <tr className="border-t border-narra-border bg-narra-surface">
                   <td className="px-6 py-3 font-semibold text-narra-dark">Total Income (Credit)</td>
-                  <td className="px-6 py-3 text-right font-semibold text-green-700">{fmt(pl.totalRevenue)}</td>
+                  <td className="px-6 py-3 text-right font-semibold text-green-700">{sym}{fmt(cvt(pl.totalRevenue))}</td>
                 </tr>
               </>}
 
               {/* Expenses section */}
               <tr className="bg-narra-light/40">
                 <td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider pt-3">
-                  Expenses — ${fmt(pl.totalExpenses)}
+                  Expenses — {sym}{fmt(cvt(pl.totalExpenses))}
                 </td>
               </tr>
               {Object.entries(pl.expenseByAccount as Record<string, any[]>).map(([acct, items]) => {
@@ -704,20 +715,20 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
                 return (
                   <tr key={acct} className="border-t border-narra-border/50 hover:bg-narra-surface">
                     <td className="px-6 py-3 text-narra-ink pl-10">{acct}</td>
-                    <td className="px-6 py-3 text-right font-medium text-narra-dark">{fmt(sub)}</td>
+                    <td className="px-6 py-3 text-right font-medium text-narra-dark">{sym}{fmt(cvt(sub))}</td>
                   </tr>
                 )
               })}
               <tr className="border-t border-narra-border bg-narra-surface">
                 <td className="px-6 py-3 font-semibold text-narra-dark">Total Expense (Debit)</td>
-                <td className="px-6 py-3 text-right font-semibold text-narra-dark">{fmt(pl.totalExpenses)}</td>
+                <td className="px-6 py-3 text-right font-semibold text-narra-dark">{sym}{fmt(cvt(pl.totalExpenses))}</td>
               </tr>
 
               {/* Bottom line */}
               <tr className="border-t-2 border-narra-dark">
                 <td className="px-6 py-4 font-heading font-bold text-narra-dark text-base">Net Profit / (Loss) for the period</td>
                 <td className={`px-6 py-4 text-right font-heading font-bold text-base ${pl.netProfit >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                  {pl.netProfit < 0 ? '(' : ''}${fmt(Math.abs(pl.netProfit))}{pl.netProfit < 0 ? ')' : ''}
+                  {pl.netProfit < 0 ? '(' : ''}{sym}{fmt(Math.abs(cvt(pl.netProfit)))}{pl.netProfit < 0 ? ')' : ''}
                 </td>
               </tr>
             </tbody>
@@ -776,29 +787,29 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
               {/* ── Current Assets ── */}
               <tr className="bg-narra-light/40">
                 <td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider">
-                  Current Assets — ${fmt(bs.totalCurrentAssets || 0)}
+                  Current Assets — {sym}{fmt(cvt(bs.totalCurrentAssets || 0))}
                 </td>
               </tr>
               {Object.entries(bs.cashByAccount || {}).map(([acct, info]: [string, any]) => (
                 <tr key={acct} className="border-t border-narra-border/50 hover:bg-narra-surface">
                   <td className="px-6 py-3 text-narra-ink pl-10">BANK {acct}</td>
-                  <td className="px-6 py-3 text-right font-medium">{fmt(info.amount)}</td>
+                  <td className="px-6 py-3 text-right font-medium">{sym}{fmt(cvt(info.amount))}</td>
                 </tr>
               ))}
               {bs.prepayments > 0 && (
                 <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
                   <td className="px-6 py-3 text-narra-ink pl-10">610 - Prepayments</td>
-                  <td className="px-6 py-3 text-right font-medium">{fmt(bs.prepayments)}</td>
+                  <td className="px-6 py-3 text-right font-medium">{sym}{fmt(cvt(bs.prepayments))}</td>
                 </tr>
               )}
               <tr className="border-t border-narra-border bg-narra-surface">
                 <td className="px-6 py-3 font-semibold text-narra-dark">Total Current Assets</td>
-                <td className="px-6 py-3 text-right font-semibold">{fmt(bs.totalCurrentAssets || 0)}</td>
+                <td className="px-6 py-3 text-right font-semibold">{sym}{fmt(cvt(bs.totalCurrentAssets || 0))}</td>
               </tr>
               {bs.arTotal > 0 && (
                 <tr className="border-t border-narra-border/30 hover:bg-narra-surface">
                   <td className="px-6 py-2 text-narra-muted pl-10 italic text-xs">600 - Accounts Receivable (memo — cash basis)</td>
-                  <td className="px-6 py-2 text-right text-narra-muted text-xs italic">{fmt(bs.arTotal)}</td>
+                  <td className="px-6 py-2 text-right text-narra-muted text-xs italic">{sym}{fmt(cvt(bs.arTotal))}</td>
                 </tr>
               )}
 
@@ -827,7 +838,7 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
 
               <tr className="border-t-2 border-narra-dark">
                 <td className="px-6 py-4 font-heading font-bold text-narra-dark">Total Asset (Debit)</td>
-                <td className="px-6 py-4 text-right font-heading font-bold">{fmt(bs.totalAssets)}</td>
+                <td className="px-6 py-4 text-right font-heading font-bold">{sym}{fmt(cvt(bs.totalAssets))}</td>
               </tr>
 
               {/* ── Current Liabilities ── */}

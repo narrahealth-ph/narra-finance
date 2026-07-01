@@ -52,8 +52,8 @@ function CustomTooltip({ active, payload, label }: any) {
   )
 }
 
-export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, refreshKey }: {
-  periodId: number; data: any; onRefresh: () => void; selectedMonth?: string; refreshKey?: number
+export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, refreshKey, fxRates }: {
+  periodId: number; data: any; onRefresh: () => void; selectedMonth?: string; refreshKey?: number; fxRates?: any[]
 }) {
   const [history,         setHistory]         = useState<HistoryPoint[]>(FALLBACK_HISTORY)
   const [historyLoading,  setHistoryLoading]  = useState(true)
@@ -82,7 +82,13 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   const [showCashDetail,       setShowCashDetail]       = useState(false)
   const [cashDetailRows,       setCashDetailRows]       = useState<any[]>([])
   const [cashDetailLoading,    setCashDetailLoading]    = useState(false)
+  const [displayCurrency,      setDisplayCurrency]      = useState<'USD' | 'SGD'>('USD')
   const selectedYear = selectedMonth?.split('_')[1] || '2026'
+
+  // Currency conversion
+  const sgdRate = fxRates?.find((r: any) => r.currency === 'SGD')?.rate || 0.74
+  const cvt = (n: number) => displayCurrency === 'SGD' ? (n || 0) / sgdRate : (n || 0)
+  const sym = displayCurrency === 'SGD' ? 'S$' : '$'
 
   // ── Load history + client breakdown from Google Sheet ──────────────────────
   useEffect(() => {
@@ -326,37 +332,42 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
           </p>
         </div>
         <div className="flex gap-2 flex-wrap items-center">
+          {/* Currency toggle */}
+          <div className="flex bg-narra-surface border border-narra-border rounded-lg overflow-hidden text-xs">
+            <button onClick={() => setDisplayCurrency('USD')} className={`px-3 py-2 font-body transition-all ${displayCurrency === 'USD' ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:text-narra-dark'}`}>USD</button>
+            <button onClick={() => setDisplayCurrency('SGD')} className={`px-3 py-2 font-body transition-all ${displayCurrency === 'SGD' ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:text-narra-dark'}`}>SGD</button>
+          </div>
           {/* Month / Year view toggle */}
           <div className="flex bg-narra-surface border border-narra-border rounded-lg overflow-hidden text-xs">
             <button onClick={() => setPeriodView('month')}
-              className={`px-4 py-2 font-body transition-all ${periodView === 'month' ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:text-narra-dark'}`}>
+              className={`px-3 py-2 font-body transition-all ${periodView === 'month' ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:text-narra-dark'}`}>
               Month
             </button>
             <button onClick={() => setPeriodView('year')}
-              className={`px-4 py-2 font-body transition-all ${periodView === 'year' ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:text-narra-dark'}`}>
-              Full Year
+              className={`px-3 py-2 font-body transition-all ${periodView === 'year' ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:text-narra-dark'}`}>
+              Year
             </button>
           </div>
           <button
             onClick={() => setSheetRefreshKey(k => k + 1)}
             disabled={historyLoading}
             title="Re-fetch latest data from Google Sheet"
-            className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all disabled:opacity-50">
-            {historyLoading ? '⟳ Loading…' : '↻ Refresh from Sheet'}
+            className="px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all disabled:opacity-50">
+            {historyLoading ? '⟳' : '↻ Sheet'}
           </button>
           <button onClick={syncInvoices} disabled={syncing || clients.length === 0 || !periodId}
-            className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-dark hover:bg-narra-light transition-all disabled:opacity-50"
+            className="hidden sm:block px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-dark hover:bg-narra-light transition-all disabled:opacity-50"
             title={clients.length === 0 ? 'No clients loaded from invoice tracker yet' : 'Save active client MRR for this period so the P&L uses accrual revenue'}>
-            {syncing ? '⟳ Syncing…' : clients.length === 0 ? '⟳ Loading clients…' : '⟳ Sync Revenue to Period'}
+            {syncing ? '⟳ Syncing…' : '⟳ Sync Revenue'}
           </button>
           <button onClick={exportMRR}
-            className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-dark hover:bg-narra-light transition-all">
-            ↓ Export CSV
+            className="hidden sm:block px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-dark hover:bg-narra-light transition-all">
+            ↓ CSV
           </button>
           {selectedYear === '2026' && (
             <button onClick={pushToSheet} disabled={pushing}
-              className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50">
-              {pushing ? '⟳ Pushing…' : '↑ Push to Sheet'}
+              className="px-3 py-2 bg-narra-dark text-narra-green rounded-lg text-xs font-body hover:bg-narra-mid transition-all disabled:opacity-50">
+              {pushing ? '⟳' : '↑ Push'}
             </button>
           )}
         </div>
@@ -381,7 +392,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
           <div className="bg-narra-dark text-white rounded-xl p-5">
             <div className="text-xs text-white/40 uppercase tracking-widest mb-2 font-body">Total Invoiced {selectedYear}</div>
             <div className="font-heading text-2xl font-semibold text-narra-green">
-              ${(totalInvoicedByYear[parseInt(selectedYear)] || 0).toLocaleString()}
+              {sym}{Math.round(cvt(totalInvoicedByYear[parseInt(selectedYear)] || 0)).toLocaleString()}
             </div>
             <div className="text-xs mt-1 text-white/40">Full invoice amounts issued this year</div>
           </div>
@@ -389,31 +400,31 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
           <button onClick={openCashDetail} className="bg-narra-dark text-white rounded-xl p-5 text-left hover:bg-narra-mid transition-colors group">
             <div className="text-xs text-white/40 uppercase tracking-widest mb-2 font-body">Cash Received {selectedYear}</div>
             <div className="font-heading text-2xl font-semibold text-narra-green">
-              ${(bankReceivedByYear[parseInt(selectedYear)] || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+              {sym}{Math.round(cvt(bankReceivedByYear[parseInt(selectedYear)] || 0)).toLocaleString()}
             </div>
             <div className="text-xs mt-1 text-white/40 group-hover:text-white/60">Click to see breakdown →</div>
           </button>
           <div className="bg-white border border-narra-border rounded-xl p-5">
             <div className="text-xs text-narra-muted uppercase tracking-widest mb-2 font-body">Accrual MRR {selectedYear}</div>
-            <div className="font-heading text-2xl font-semibold text-narra-dark">${yearTotals[parseInt(selectedYear)].mrr.toLocaleString()}</div>
+            <div className="font-heading text-2xl font-semibold text-narra-dark">{sym}{Math.round(cvt(yearTotals[parseInt(selectedYear)].mrr)).toLocaleString()}</div>
             <div className="text-xs mt-1 text-narra-muted">Revenue earned by month</div>
           </div>
           <div className="bg-white border border-narra-border rounded-xl p-5">
             <div className="text-xs text-narra-muted uppercase tracking-widest mb-2 font-body">Total Costs {selectedYear}</div>
-            <div className="font-heading text-2xl font-semibold text-red-500">${yearTotals[parseInt(selectedYear)].costs.toLocaleString()}</div>
+            <div className="font-heading text-2xl font-semibold text-red-500">{sym}{Math.round(cvt(yearTotals[parseInt(selectedYear)].costs)).toLocaleString()}</div>
             <div className="text-xs mt-1 text-narra-muted">Operating costs</div>
           </div>
           <div className="bg-white border border-narra-border rounded-xl p-5">
             <div className="text-xs text-narra-muted uppercase tracking-widest mb-2 font-body">Net {selectedYear}</div>
             <div className={`font-heading text-2xl font-semibold ${yearTotals[parseInt(selectedYear)].net >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-              {yearTotals[parseInt(selectedYear)].net < 0 ? '(' : ''}${Math.abs(yearTotals[parseInt(selectedYear)].net).toLocaleString()}{yearTotals[parseInt(selectedYear)].net < 0 ? ')' : ''}
+              {yearTotals[parseInt(selectedYear)].net < 0 ? '(' : ''}{sym}{Math.abs(Math.round(cvt(yearTotals[parseInt(selectedYear)].net))).toLocaleString()}{yearTotals[parseInt(selectedYear)].net < 0 ? ')' : ''}
             </div>
             <div className="text-xs mt-1 text-narra-muted">Accrual revenue minus costs</div>
           </div>
           <div className={`rounded-xl p-5 border ${cashPosition >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
             <div className="text-xs text-narra-muted uppercase tracking-widest mb-2 font-body">Cash Position</div>
             <div className={`font-heading text-2xl font-semibold ${cashPosition >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-              {cashPosition < 0 ? '(' : ''}${Math.abs(cashPosition).toLocaleString(undefined, { maximumFractionDigits: 0 })}{cashPosition < 0 ? ')' : ''}
+              {cashPosition < 0 ? '(' : ''}{sym}{Math.abs(Math.round(cvt(cashPosition))).toLocaleString()}{cashPosition < 0 ? ')' : ''}
             </div>
             <div className="text-xs mt-1 text-narra-muted">
               Cumulative bank receipts minus all costs to end of {selectedYear}
@@ -423,9 +434,9 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           {[
-            { label: 'Confirmed MRR',  value: `$${totalConfirmedMrr.toLocaleString()}`,           sub: `${parseFloat(mrrGrowth) >= 0 ? '+' : ''}${mrrGrowth}% vs prev month`, vc: 'text-narra-dark',   sc: parseFloat(mrrGrowth) >= 0 ? 'text-green-600' : 'text-red-500' },
-            { label: 'Pending MRR',    value: `$${Math.round(totalPendingMrr).toLocaleString()}`,  sub: `${pendingInvoices.length} invoice(s) awaiting payment`,              vc: 'text-amber-600',   sc: 'text-amber-500' },
-            { label: 'Net Revenue',    value: `$${netRevenue.toLocaleString()}`,                   sub: `${opMargin}% operating margin`,                                       vc: netRevenue >= 0 ? 'text-green-600' : 'text-red-500', sc: 'text-narra-muted' },
+            { label: 'Confirmed MRR',  value: `${sym}${Math.round(cvt(totalConfirmedMrr)).toLocaleString()}`,           sub: `${parseFloat(mrrGrowth) >= 0 ? '+' : ''}${mrrGrowth}% vs prev month`, vc: 'text-narra-dark',   sc: parseFloat(mrrGrowth) >= 0 ? 'text-green-600' : 'text-red-500' },
+            { label: 'Pending MRR',    value: `${sym}${Math.round(cvt(totalPendingMrr)).toLocaleString()}`,  sub: `${pendingInvoices.length} invoice(s) awaiting payment`,              vc: 'text-amber-600',   sc: 'text-amber-500' },
+            { label: 'Net Revenue',    value: `${sym}${Math.round(cvt(netRevenue)).toLocaleString()}`,                   sub: `${opMargin}% operating margin`,                                       vc: netRevenue >= 0 ? 'text-green-600' : 'text-red-500', sc: 'text-narra-muted' },
             { label: 'Cash Runway',    value: hasCurrentYearData ? (runway >= 999 ? '∞' : `${runway} months`) : '—',  sub: hasCurrentYearData ? `$${Math.round(avgBurn).toLocaleString()} avg monthly burn` : 'Sync a month to calculate', vc: !hasCurrentYearData ? 'text-narra-muted' : runway < 3 ? 'text-red-500' : runway < 6 ? 'text-amber-600' : 'text-narra-dark', sc: 'text-narra-muted' },
             { label: 'Total LTV',      value: dbClients.length > 0 ? `$${dbClients.reduce((s: number, c: any) => s + (c.ltv || 0), 0).toLocaleString()}` : '—', sub: `${dbClients.filter((c: any) => c.ltv > 0).length} clients with revenue`, vc: 'text-narra-dark', sc: 'text-narra-muted' },
             { label: 'Churn',          value: dbClients.filter((c: any) => !c.active).length > 0 ? `${dbClients.filter((c: any) => !c.active).length}` : '0', sub: dbClients.filter((c: any) => !c.active).length > 0 ? 'inactive clients — check holding groups' : 'No known churn', vc: dbClients.filter((c: any) => !c.active).length > 0 ? 'text-red-500' : 'text-green-600', sc: 'text-narra-muted' },
@@ -593,9 +604,9 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                     <td className="px-4 py-2.5">
                       <span className={`text-xs px-2 py-0.5 rounded-full ${c.isOneOff ? 'bg-purple-100 text-purple-700' : 'bg-narra-light text-narra-muted'}`}>{billingLabel}</span>
                     </td>
-                    <td className="px-4 py-2.5 text-right text-narra-dark">${invoiceAmt.toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-right text-narra-dark">{sym}{Math.round(cvt(invoiceAmt)).toLocaleString()}</td>
                     <td className="px-4 py-2.5 text-right font-medium text-narra-dark">
-                      {c.isOneOff ? <span className="text-purple-700">${mrr.toLocaleString()} this month</span> : `$${mrr.toLocaleString()}/mo`}
+                      {c.isOneOff ? <span className="text-purple-700">{sym}{Math.round(cvt(mrr)).toLocaleString()} this month</span> : `${sym}${Math.round(cvt(mrr)).toLocaleString()}/mo`}
                     </td>
                     <td className="px-4 py-2.5">
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.isPending ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
@@ -629,7 +640,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                       <td className="px-4 py-3 font-heading font-bold text-narra-dark" colSpan={4}>
                         Confirmed MRR · {confirmedRecurring.length} recurring client{confirmedRecurring.length !== 1 ? 's' : ''} (Paid)
                       </td>
-                      <td className="px-4 py-3 text-right font-heading font-bold text-narra-dark">${totalConfirmedMrr.toLocaleString()}/mo</td>
+                      <td className="px-4 py-3 text-right font-heading font-bold text-narra-dark">{sym}{Math.round(cvt(totalConfirmedMrr)).toLocaleString()}/mo</td>
                       <td colSpan={2} />
                     </tr>
                     {confirmedOneOffTotal > 0 && (
@@ -637,7 +648,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                         <td className="px-4 py-3 font-medium text-purple-800" colSpan={4}>
                           + One-off revenue this month ({confirmedOneOff.length} payment{confirmedOneOff.length !== 1 ? 's' : ''}, Paid)
                         </td>
-                        <td className="px-4 py-3 text-right font-medium text-purple-800">${confirmedOneOffTotal.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-right font-medium text-purple-800">{sym}{Math.round(cvt(confirmedOneOffTotal)).toLocaleString()}</td>
                         <td colSpan={2} />
                       </tr>
                     )}
@@ -646,7 +657,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                         <td className="px-4 py-3 font-medium text-amber-700" colSpan={4}>
                           + Pending recurring · {pendingRecurring.length} invoice{pendingRecurring.length !== 1 ? 's' : ''} sent, not yet paid
                         </td>
-                        <td className="px-4 py-3 text-right font-medium text-amber-700">${pendingMrr.toLocaleString()}/mo</td>
+                        <td className="px-4 py-3 text-right font-medium text-amber-700">{sym}{Math.round(cvt(pendingMrr)).toLocaleString()}/mo</td>
                         <td colSpan={2} />
                       </tr>
                     )}
@@ -655,7 +666,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                         <td className="px-4 py-3 font-medium text-amber-600" colSpan={4}>
                           + Pending one-off · {pendingOneOff.length} invoice{pendingOneOff.length !== 1 ? 's' : ''} sent, not yet paid
                         </td>
-                        <td className="px-4 py-3 text-right font-medium text-amber-600">${pendingOneOffTotal.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-right font-medium text-amber-600">{sym}{Math.round(cvt(pendingOneOffTotal)).toLocaleString()}</td>
                         <td colSpan={2} />
                       </tr>
                     )}
@@ -758,7 +769,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
             <div className="bg-white border border-amber-200 rounded-xl overflow-hidden">
               <div className="px-4 py-3 bg-amber-50 border-b border-amber-200">
                 <span className="text-sm font-medium text-amber-800">
-                  <AlertTriangle size={14} className="inline mr-1" />{pendingInvoices.length} outstanding · ${Math.round(pendingInvoices.reduce((s, i) => s + i.amount, 0)).toLocaleString()} total
+                  <AlertTriangle size={14} className="inline mr-1" />{pendingInvoices.length} outstanding · {sym}{Math.round(cvt(pendingInvoices.reduce((s, i) => s + i.amount, 0))).toLocaleString()} total
                 </span>
               </div>
               <table className="w-full text-sm">
@@ -774,7 +785,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                     <tr key={i} className="border-t border-amber-100 hover:bg-amber-50/50">
                       <td className="px-4 py-3 font-medium text-amber-900">{inv.clientName}</td>
                       <td className="px-4 py-3 text-amber-700 font-mono text-xs">{inv.invoiceId}</td>
-                      <td className="px-4 py-3 text-right font-medium text-amber-900">${inv.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-3 text-right font-medium text-amber-900">{sym}{cvt(inv.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                       <td className="px-4 py-3 text-amber-700">{inv.issueDate}</td>
                       <td className="px-4 py-3 text-right">
                         <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${inv.daysOutstanding > 30 ? 'bg-red-100 text-red-700' : inv.daysOutstanding > 14 ? 'bg-amber-100 text-amber-700' : 'bg-yellow-100 text-yellow-700'}`}>
@@ -794,11 +805,11 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
       {/* Sales Pipeline */}
       {activeTab === 'pipeline' && (
         <div className="space-y-4">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {[
               { label: 'Pipeline Deals', value: pipelineInvoices.length.toString(), sub: 'Not yet contracted' },
-              { label: 'Potential ARR',  value: `$${pipelineInvoices.reduce((s, i) => s + i.amount, 0).toLocaleString()}`, sub: 'If all deals close' },
-              { label: 'Potential MRR',  value: `$${Math.round(pipelineInvoices.reduce((s, i) => s + i.amount, 0) / 12).toLocaleString()}`, sub: 'Annual ÷ 12' },
+              { label: 'Potential ARR',  value: `${sym}${Math.round(cvt(pipelineInvoices.reduce((s, i) => s + i.amount, 0))).toLocaleString()}`, sub: 'If all deals close' },
+              { label: 'Potential MRR',  value: `${sym}${Math.round(cvt(pipelineInvoices.reduce((s, i) => s + i.amount, 0) / 12)).toLocaleString()}`, sub: 'Annual ÷ 12' },
             ].map(t => (
               <div key={t.label} className="bg-white border border-narra-border rounded-xl p-5">
                 <div className="text-xs text-narra-muted uppercase tracking-widest mb-2 font-body">{t.label}</div>
@@ -839,7 +850,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
             <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
               <div className="px-4 py-3 bg-narra-light/40 border-b border-narra-border">
                 <span className="text-sm font-medium text-narra-dark">
-                  <Target size={14} className="inline mr-1" />{pipelineInvoices.length} deal(s) · ${pipelineInvoices.reduce((s, i) => s + i.amount, 0).toLocaleString()} potential ARR
+                  <Target size={14} className="inline mr-1" />{pipelineInvoices.length} deal(s) · {sym}{Math.round(cvt(pipelineInvoices.reduce((s, i) => s + i.amount, 0))).toLocaleString()} potential ARR
                 </span>
               </div>
               <table className="w-full text-sm">
@@ -855,10 +866,10 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                     <tr key={i} className="border-t border-narra-border hover:bg-narra-surface transition-colors">
                       <td className="px-4 py-3 font-medium text-narra-dark">{inv.clientName}</td>
                       <td className="px-4 py-3 text-narra-muted font-mono text-xs">{inv.invoiceId}</td>
-                      <td className="px-4 py-3 text-right font-medium text-narra-dark">${inv.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-3 text-right font-medium text-narra-dark">{sym}{cvt(inv.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                       <td className="px-4 py-3 text-right">
                         <span className="text-xs bg-narra-light text-narra-muted px-2 py-0.5 rounded-full">
-                          ${Math.round(inv.amount / 12).toLocaleString()}/mo
+                          {sym}{Math.round(cvt(inv.amount / 12)).toLocaleString()}/mo
                         </span>
                       </td>
                       <td className="px-4 py-3 text-narra-muted">{inv.issueDate || '—'}</td>
@@ -871,8 +882,8 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                   <tr className="border-t-2 border-narra-dark bg-narra-surface">
                     <td className="px-4 py-3 font-heading font-bold text-narra-dark">Total Pipeline</td>
                     <td />
-                    <td className="px-4 py-3 text-right font-heading font-bold text-narra-dark">${pipelineInvoices.reduce((s, i) => s + i.amount, 0).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-right font-heading font-bold text-narra-dark">${Math.round(pipelineInvoices.reduce((s, i) => s + i.amount, 0) / 12).toLocaleString()}/mo</td>
+                    <td className="px-4 py-3 text-right font-heading font-bold text-narra-dark">{sym}{Math.round(cvt(pipelineInvoices.reduce((s, i) => s + i.amount, 0))).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right font-heading font-bold text-narra-dark">{sym}{Math.round(cvt(pipelineInvoices.reduce((s, i) => s + i.amount, 0) / 12)).toLocaleString()}/mo</td>
                     <td colSpan={3} />
                   </tr>
                 </tfoot>

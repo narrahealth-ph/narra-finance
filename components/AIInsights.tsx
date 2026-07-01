@@ -48,7 +48,7 @@ export default function AIInsights({ periodId, data }: { periodId: number; data:
 
       {/* Quick stats */}
       {total && (
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
             { label: 'Revenue', value: `$${(total.totalRevenue || 0).toLocaleString()}` },
             { label: 'Expenses', value: `$${(total.totalExpenses || 0).toLocaleString()}` },
@@ -104,14 +104,14 @@ export default function AIInsights({ periodId, data }: { periodId: number; data:
 
       {/* Investor Narrative */}
       <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-narra-border flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-narra-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h3 className="font-heading font-semibold text-narra-dark flex items-center gap-2"><FileText size={16} /> Monthly Investor Narrative</h3>
             <p className="text-xs text-narra-muted mt-0.5">AI-written summary for your investor update</p>
           </div>
           <button onClick={() => generate('narrative')} disabled={loading === 'narrative'}
-            className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50 flex items-center gap-2">
-            {loading === 'narrative' ? <><Sparkles size={14} className="inline mr-1 animate-pulse" />Writing…</> : <><Sparkles size={14} className="inline mr-1" />Generate</>}
+            className="shrink-0 px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50 flex items-center gap-2">
+            {loading === 'narrative' ? <><Sparkles size={14} className="animate-pulse" />Writing…</> : <><Sparkles size={14} />Generate</>}
           </button>
         </div>
         <div className="px-5 py-4">
@@ -131,14 +131,14 @@ export default function AIInsights({ periodId, data }: { periodId: number; data:
 
       {/* Anomaly Detection */}
       <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-narra-border flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-narra-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h3 className="font-heading font-semibold text-narra-dark flex items-center gap-2"><Search size={16} /> Anomaly & Overspend Alerts</h3>
             <p className="text-xs text-narra-muted mt-0.5">Flags unusual transactions or categories</p>
           </div>
           <button onClick={() => generate('anomalies')} disabled={loading === 'anomalies'}
-            className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50">
-            {loading === 'anomalies' ? <><Sparkles size={14} className="inline mr-1 animate-pulse" />Analyzing…</> : <><Sparkles size={14} className="inline mr-1" />Analyze</>}
+            className="shrink-0 px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50 flex items-center gap-2">
+            {loading === 'anomalies' ? <><Sparkles size={14} className="animate-pulse" />Analyzing…</> : <><Sparkles size={14} />Analyze</>}
           </button>
         </div>
         <div className="px-5 py-4">
@@ -171,14 +171,14 @@ export default function AIInsights({ periodId, data }: { periodId: number; data:
 
       {/* Churn Risk */}
       <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-narra-border flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-narra-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h3 className="font-heading font-semibold text-narra-dark flex items-center gap-2"><Users size={16} /> Client Churn Risk</h3>
             <p className="text-xs text-narra-muted mt-0.5">Identifies at-risk clients based on payment patterns</p>
           </div>
           <button onClick={() => generate('churn')} disabled={loading === 'churn'}
-            className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50">
-            {loading === 'churn' ? <><Sparkles size={14} className="inline mr-1 animate-pulse" />Assessing…</> : <><Sparkles size={14} className="inline mr-1" />Assess</>}
+            className="shrink-0 px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50 flex items-center gap-2">
+            {loading === 'churn' ? <><Sparkles size={14} className="animate-pulse" />Assessing…</> : <><Sparkles size={14} />Assess</>}
           </button>
         </div>
         <div className="px-5 py-4">
@@ -191,11 +191,12 @@ export default function AIInsights({ periodId, data }: { periodId: number; data:
                     c.risk === 'medium' ? 'bg-amber-100 text-amber-700' :
                     'bg-green-100 text-green-700'
                   }`}>{c.risk}</span>
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <p className="font-medium text-narra-dark text-sm">{c.client}</p>
                     <p className="text-narra-muted text-xs mt-0.5">{c.reason}</p>
+                    <p className="text-narra-muted text-xs mt-1 italic sm:hidden">{c.recommendation}</p>
                   </div>
-                  <p className="text-narra-muted text-xs max-w-xs text-right italic">{c.recommendation}</p>
+                  <p className="text-narra-muted text-xs max-w-xs text-right italic hidden sm:block">{c.recommendation}</p>
                 </div>
               ))}
             </div>

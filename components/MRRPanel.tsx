@@ -121,19 +121,13 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
         if (json.closing2025           !== undefined) setClosing2025(json.closing2025)
         if (json.totalInvoicedByYear   !== undefined) setTotalInvoicedByYear(json.totalInvoicedByYear)
         if (json.bankReceivedByYear    !== undefined) setBankReceivedByYear(json.bankReceivedByYear)
+        if (json.pendingFromSheet)  setPendingInvoices(json.pendingFromSheet)
+        if (json.pipelineFromSheet) setPipelineInvoices(json.pipelineFromSheet)
       })
       .catch(() => {})
       .finally(() => setHistoryLoading(false))
     setChartView('all') // reset chart filter when year changes
   }, [selectedMonth, refreshKey, sheetRefreshKey, periodView]) // re-fetch when month/year-view/refresh changes
-
-  useEffect(() => {
-    if (!periodId) return
-    fetch(`/api/mrr/pending?periodId=${periodId}`, { credentials: 'include' })
-      .then(r => r.ok ? r.json() : { pending: [] })
-      .then(d => setPendingInvoices(d.pending || []))
-      .catch(() => {})
-  }, [periodId, refreshKey])
 
   // Load incoming (expense) invoices for this period
   useEffect(() => {
@@ -160,25 +154,6 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
       .catch(() => {})
   }, [])
 
-  // Pipeline invoices (Sales status) — still from invoice tracker
-  useEffect(() => {
-    const year = selectedMonth?.split('_')[1] || '2026'
-    fetch(`/api/invoice-revenue?year=${year}`, { credentials: 'include' })
-      .then(r => r.ok ? r.json() : { pipeline: [] })
-      .then(d => {
-        if (d.pipeline?.length > 0) {
-          setPipelineInvoices(d.pipeline.map((inv: any) => ({
-            invoiceId:   inv.invoiceId,
-            clientName:  inv.clientName,
-            amount:      inv.amount,
-            issueDate:   inv.issueDate,
-            billingType: inv.billingType,
-            notes:       inv.notes,
-          })))
-        }
-      })
-      .catch(() => {})
-  }, [selectedMonth])
 
   function calcMonthly(amount: number, billingType: string): number {
     const t = (billingType || 'annual').toLowerCase().trim()
@@ -831,7 +806,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
             <div>
               <h3 className="font-heading font-semibold text-narra-dark">Sales Pipeline</h3>
               <p className="text-xs text-narra-muted mt-0.5">
-                Status "Sales" in invoice tracker — agreed in principle, not yet contracted.
+                Status "sales-sent" in invoice tracker — proposal sent, not yet contracted.
                 These are <strong>never</strong> written to the MRR sheet.
               </p>
             </div>

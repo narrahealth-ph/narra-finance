@@ -316,6 +316,38 @@ export async function GET(req: NextRequest) {
         }))
     }
 
+    // ── 5b. Pending (status="sent") and Pipeline (status="sales-sent") from sheet ──
+    const todayMs = Date.now()
+    const pendingFromSheet: {
+      invoiceId: string; clientName: string; amount: number
+      issueDate: string; daysOutstanding: number; billingType: string
+    }[] = []
+    const pipelineFromSheet: {
+      invoiceId: string; clientName: string; amount: number
+      issueDate: string; billingType: string; notes: string
+    }[] = []
+
+    for (const r of invRows) {
+      const invoiceId    = (r[0] || '').trim()
+      const clientName   = (r[1] || '').trim()
+      const amount       = parseNum((r[5] || '').toString())
+      const status       = (r[6] || '').toLowerCase().trim()
+      const billingType  = (r[7] || 'annual').toLowerCase().trim()
+      const issueDateStr = (r[4] || '').trim()
+      const notes        = (r[8] || '').trim()
+      if (!clientName || !amount) continue
+
+      if (status === 'sent') {
+        const d = parseDate(issueDateStr)
+        const daysOutstanding = d ? Math.floor((todayMs - d.getTime()) / 86400000) : 0
+        pendingFromSheet.push({ invoiceId, clientName, amount, issueDate: issueDateStr, daysOutstanding, billingType })
+      }
+
+      if (status === 'sales-sent') {
+        pipelineFromSheet.push({ invoiceId, clientName, amount, issueDate: issueDateStr, billingType, notes })
+      }
+    }
+
     // ── 6. Total cash received per year from bank statements ─────────────────
     const bankReceivedByYear: Record<number, number> = {}
     try {
@@ -367,7 +399,7 @@ export async function GET(req: NextRequest) {
       yearTotals[yr].net   += pt.net
     }
 
-    return NextResponse.json({ history, clientBreakdown, yearTotals, totalInvoicedByYear, bankReceivedByYear, cumulativeCash, closing2025 })
+    return NextResponse.json({ history, clientBreakdown, yearTotals, totalInvoicedByYear, bankReceivedByYear, cumulativeCash, closing2025, pendingFromSheet, pipelineFromSheet })
   } catch (err: any) {
     console.error('MRR history error:', err.message)
     return NextResponse.json({ history: [], clientBreakdown: [], yearTotals: {} })

@@ -387,52 +387,49 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
 
       {/* KPI tiles — switches between month and year view */}
       {periodView === 'year' && yearTotals[parseInt(selectedYear)] ? (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {/* Total Invoiced — full cash value of all invoices issued this year */}
-          <div className="bg-narra-dark text-white rounded-xl p-5">
-            <div className="text-xs text-white/40 uppercase tracking-widest mb-2 font-body">Total Invoiced {selectedYear}</div>
-            <div className="font-heading text-2xl font-semibold text-narra-green">
+          <div className="bg-narra-dark text-white rounded-xl p-4">
+            <div className="text-[10px] text-white/40 uppercase tracking-widest mb-2 font-body leading-tight">Total Invoiced {selectedYear}</div>
+            <div className="font-heading text-xl sm:text-2xl font-semibold text-narra-green">
               {sym}{Math.round(cvt(totalInvoicedByYear[parseInt(selectedYear)] || 0)).toLocaleString()}
             </div>
-            <div className="text-xs mt-1 text-white/40">Full invoice amounts issued this year</div>
+            <div className="text-xs mt-1 text-white/40 hidden sm:block">Full invoice amounts this year</div>
           </div>
-          {/* Cash received from bank statements — click to drill down */}
-          <button onClick={openCashDetail} className="bg-narra-dark text-white rounded-xl p-5 text-left hover:bg-narra-mid transition-colors group">
-            <div className="text-xs text-white/40 uppercase tracking-widest mb-2 font-body">Cash Received {selectedYear}</div>
-            <div className="font-heading text-2xl font-semibold text-narra-green">
+          <button onClick={openCashDetail} className="bg-narra-dark text-white rounded-xl p-4 text-left hover:bg-narra-mid transition-colors group">
+            <div className="text-[10px] text-white/40 uppercase tracking-widest mb-2 font-body leading-tight">Cash Received {selectedYear}</div>
+            <div className="font-heading text-xl sm:text-2xl font-semibold text-narra-green">
               {sym}{Math.round(cvt(bankReceivedByYear[parseInt(selectedYear)] || 0)).toLocaleString()}
             </div>
-            <div className="text-xs mt-1 text-white/40 group-hover:text-white/60">Click to see breakdown →</div>
+            <div className="text-xs mt-1 text-white/40 group-hover:text-white/60 hidden sm:block">Tap for breakdown →</div>
           </button>
-          <div className="bg-white border border-narra-border rounded-xl p-5">
-            <div className="text-xs text-narra-muted uppercase tracking-widest mb-2 font-body">Accrual MRR {selectedYear}</div>
-            <div className="font-heading text-2xl font-semibold text-narra-dark">{sym}{Math.round(cvt(yearTotals[parseInt(selectedYear)].mrr)).toLocaleString()}</div>
-            <div className="text-xs mt-1 text-narra-muted">Revenue earned by month</div>
+          <div className="bg-white border border-narra-border rounded-xl p-4">
+            <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Accrual MRR {selectedYear}</div>
+            <div className="font-heading text-xl sm:text-2xl font-semibold text-narra-dark">{sym}{Math.round(cvt(yearTotals[parseInt(selectedYear)].mrr)).toLocaleString()}</div>
+            <div className="text-xs mt-1 text-narra-muted hidden sm:block">Revenue earned by month</div>
           </div>
-          <div className="bg-white border border-narra-border rounded-xl p-5">
-            <div className="text-xs text-narra-muted uppercase tracking-widest mb-2 font-body">Total Costs {selectedYear}</div>
-            <div className="font-heading text-2xl font-semibold text-red-500">{sym}{Math.round(cvt(yearTotals[parseInt(selectedYear)].costs)).toLocaleString()}</div>
-            <div className="text-xs mt-1 text-narra-muted">Operating costs</div>
+          <div className="bg-white border border-narra-border rounded-xl p-4">
+            <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Total Costs {selectedYear}</div>
+            <div className="font-heading text-xl sm:text-2xl font-semibold text-red-500">{sym}{Math.round(cvt(yearTotals[parseInt(selectedYear)].costs)).toLocaleString()}</div>
+            <div className="text-xs mt-1 text-narra-muted hidden sm:block">Operating costs</div>
           </div>
-          <div className="bg-white border border-narra-border rounded-xl p-5">
-            <div className="text-xs text-narra-muted uppercase tracking-widest mb-2 font-body">Net {selectedYear}</div>
-            <div className={`font-heading text-2xl font-semibold ${yearTotals[parseInt(selectedYear)].net >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+          <div className="bg-white border border-narra-border rounded-xl p-4">
+            <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Net {selectedYear}</div>
+            <div className={`font-heading text-xl sm:text-2xl font-semibold ${yearTotals[parseInt(selectedYear)].net >= 0 ? 'text-green-600' : 'text-red-500'}`}>
               {yearTotals[parseInt(selectedYear)].net < 0 ? '(' : ''}{sym}{Math.abs(Math.round(cvt(yearTotals[parseInt(selectedYear)].net))).toLocaleString()}{yearTotals[parseInt(selectedYear)].net < 0 ? ')' : ''}
             </div>
-            <div className="text-xs mt-1 text-narra-muted">Accrual revenue minus costs</div>
+            <div className="text-xs mt-1 text-narra-muted hidden sm:block">Revenue minus costs</div>
           </div>
-          <div className={`rounded-xl p-5 border ${cashPosition >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-            <div className="text-xs text-narra-muted uppercase tracking-widest mb-2 font-body">Cash Position</div>
-            <div className={`font-heading text-2xl font-semibold ${cashPosition >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+          <div className={`rounded-xl p-4 border ${cashPosition >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+            <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Cash Position</div>
+            <div className={`font-heading text-xl sm:text-2xl font-semibold ${cashPosition >= 0 ? 'text-green-700' : 'text-red-600'}`}>
               {cashPosition < 0 ? '(' : ''}{sym}{Math.abs(Math.round(cvt(cashPosition))).toLocaleString()}{cashPosition < 0 ? ')' : ''}
             </div>
-            <div className="text-xs mt-1 text-narra-muted">
-              Cumulative bank receipts minus all costs to end of {selectedYear}
-            </div>
+            <div className="text-xs mt-1 text-narra-muted hidden sm:block">Bank receipts minus costs to end of {selectedYear}</div>
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {[
             { label: 'Confirmed MRR',  value: `${sym}${Math.round(cvt(totalConfirmedMrr)).toLocaleString()}`,           sub: `${parseFloat(mrrGrowth) >= 0 ? '+' : ''}${mrrGrowth}% vs prev month`, vc: 'text-narra-dark',   sc: parseFloat(mrrGrowth) >= 0 ? 'text-green-600' : 'text-red-500' },
             { label: 'Pending MRR',    value: `${sym}${Math.round(cvt(totalPendingMrr)).toLocaleString()}`,  sub: `${pendingInvoices.length} invoice(s) awaiting payment`,              vc: 'text-amber-600',   sc: 'text-amber-500' },
@@ -442,9 +439,9 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
             { label: 'Churn',          value: dbClients.filter((c: any) => !c.active).length > 0 ? `${dbClients.filter((c: any) => !c.active).length}` : '0', sub: dbClients.filter((c: any) => !c.active).length > 0 ? 'inactive clients — check holding groups' : 'No known churn', vc: dbClients.filter((c: any) => !c.active).length > 0 ? 'text-red-500' : 'text-green-600', sc: 'text-narra-muted' },
           ].map(t => (
             <div key={t.label} className="bg-white border border-narra-border rounded-xl p-4">
-              <div className="text-xs text-narra-muted uppercase tracking-widest mb-2 font-body">{t.label}</div>
-              <div className={`font-heading text-xl font-semibold ${t.vc}`}>{t.value}</div>
-              <div className={`text-xs mt-1 ${t.sc}`}>{t.sub}</div>
+              <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">{t.label}</div>
+              <div className={`font-heading text-lg sm:text-xl font-semibold ${t.vc} break-words`}>{t.value}</div>
+              <div className={`text-xs mt-1 ${t.sc} hidden sm:block`}>{t.sub}</div>
             </div>
           ))}
         </div>
@@ -508,15 +505,15 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
       </div>
 
       {/* Sub-tabs */}
-      <div className="flex gap-1 border-b border-narra-border">
+      <div className="flex gap-1 border-b border-narra-border overflow-x-auto scrollbar-none">
         {[
           { id: 'outgoing',  label: `Outgoing · ${clients.length} client${clients.length !== 1 ? 's' : ''}` },
           { id: 'incoming',  label: `Incoming · ${incomingInvoices.length} invoice${incomingInvoices.length !== 1 ? 's' : ''}` },
-          { id: 'pending',   label: `Pending Collection${pendingInvoices.length > 0 ? ` (${pendingInvoices.length})` : ''}` },
+          { id: 'pending',   label: `Pending${pendingInvoices.length > 0 ? ` (${pendingInvoices.length})` : ''}` },
           { id: 'pipeline',  label: `Pipeline${pipelineInvoices.length > 0 ? ` (${pipelineInvoices.length})` : ''}` },
         ].map(t => (
           <button key={t.id} onClick={() => setActiveTab(t.id as any)}
-            className={`px-5 py-2.5 text-sm font-body transition-all border-b-2 -mb-px whitespace-nowrap
+            className={`px-4 py-2.5 text-sm font-body transition-all border-b-2 -mb-px whitespace-nowrap flex-shrink-0
               ${activeTab === t.id ? 'text-narra-dark border-narra-dark font-medium' : 'text-narra-muted border-transparent hover:text-narra-dark'}`}>
             {t.label}
           </button>
@@ -526,16 +523,15 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
       {/* Outgoing invoices (revenue / client MRR) */}
       {activeTab === 'outgoing' && (
         <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
-          <div className="px-4 py-3 bg-narra-light/40 border-b border-narra-border flex justify-between items-center">
-            <div>
-              <span className="text-sm font-heading font-medium text-narra-dark">
-                {periodView === 'year' ? `All active clients · ${selectedYear}` : `Active clients · ${selectedMonth?.replace('_', ' ')}`}
-              </span>
-              <p className="text-xs text-narra-muted mt-0.5">From outgoing invoice tracker · billing type determines MRR contribution</p>
-            </div>
-            <span className="text-xs text-narra-muted">Annual÷12 · Quarterly÷3 · Monthly=full · One-off excluded</span>
+          <div className="px-4 py-3 bg-narra-light/40 border-b border-narra-border">
+            <span className="text-sm font-heading font-medium text-narra-dark">
+              {periodView === 'year' ? `All active clients · ${selectedYear}` : `Active clients · ${selectedMonth?.replace('_', ' ')}`}
+            </span>
+            <p className="text-xs text-narra-muted mt-0.5">From outgoing invoice tracker · billing type determines MRR contribution</p>
+            <span className="hidden sm:inline text-xs text-narra-muted">Annual÷12 · Quarterly÷3 · Monthly=full · One-off excluded</span>
           </div>
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="bg-narra-dark text-white">
                 <th className="hidden sm:table-cell px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-left">Invoice #</th>
@@ -675,6 +671,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
               })()}
             </tbody>
           </table>
+          </div>
           <div className="px-4 py-3 border-t border-narra-border">
             <p className="text-xs text-narra-muted">Data from outgoing invoice tracker · sync invoices to refresh</p>
           </div>
@@ -696,7 +693,8 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
               No expense invoices for this period yet — sync from the Invoices tab first.
             </div>
           ) : (
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px] text-sm">
               <thead>
                 <tr className="bg-narra-dark text-white">
                   {['Vendor', 'Account', 'Date', 'Currency', 'Amount (USD)', 'Status'].map(h => (
@@ -740,6 +738,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                 </tr>
               </tfoot>
             </table>
+            </div>
           )}
         </div>
       )}
@@ -772,7 +771,8 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                   <AlertTriangle size={14} className="inline mr-1" />{pendingInvoices.length} outstanding · {sym}{Math.round(cvt(pendingInvoices.reduce((s, i) => s + i.amount, 0))).toLocaleString()} total
                 </span>
               </div>
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto">
+              <table className="w-full min-w-[520px] text-sm">
                 <thead>
                   <tr className="bg-amber-800/10">
                     {['Client', 'Invoice ID', 'Amount', 'Issue Date', 'Days Out', 'Billing'].map(h => (
@@ -797,6 +797,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
         </div>
@@ -853,7 +854,8 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                   <Target size={14} className="inline mr-1" />{pipelineInvoices.length} deal(s) · {sym}{Math.round(cvt(pipelineInvoices.reduce((s, i) => s + i.amount, 0))).toLocaleString()} potential ARR
                 </span>
               </div>
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto">
+              <table className="w-full min-w-[600px] text-sm">
                 <thead>
                   <tr className="bg-narra-dark text-white">
                     {['Client', 'Invoice ID', 'Amount', 'Potential MRR', 'Issue Date', 'Billing', 'Notes'].map(h => (
@@ -888,6 +890,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                   </tr>
                 </tfoot>
               </table>
+              </div>
             </div>
           )}
         </div>
@@ -912,7 +915,8 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
               ) : cashDetailRows.length === 0 ? (
                 <div className="flex items-center justify-center h-48 text-narra-muted">No revenue transactions found for {selectedYear}.</div>
               ) : (
-                <table className="w-full text-sm">
+                <div className="overflow-x-auto">
+                <table className="w-full min-w-[500px] text-sm">
                   <thead className="sticky top-0">
                     <tr className="bg-narra-dark text-white">
                       {['Month', 'Date', 'Description', 'Account', 'Amount', 'USD'].map(h => (
@@ -947,6 +951,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                     </tr>
                   </tfoot>
                 </table>
+                </div>
               )}
             </div>
           </div>

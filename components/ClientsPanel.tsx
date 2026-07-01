@@ -55,6 +55,11 @@ export default function ClientsPanel() {
   const [bulkHoldingId,     setBulkHoldingId]     = useState<string>('')
   const [bulkSaving,        setBulkSaving]        = useState(false)
   const [bulkContractStart, setBulkContractStart] = useState<string>('')  // YYYY-MM-DD
+  const [assigningClient,   setAssigningClient]   = useState<Client | null>(null)
+  const [assignedInvoices,  setAssignedInvoices]  = useState<any[]>([])
+  const [availableInvoices, setAvailableInvoices] = useState<any[]>([])
+  const [invoiceSearch,     setInvoiceSearch]     = useState('')
+  const [invoiceLoading,    setInvoiceLoading]    = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -212,6 +217,36 @@ export default function ClientsPanel() {
     setMsg(`Contract dates set for ${selectedIds.size} client${selectedIds.size !== 1 ? 's' : ''} starting ${bulkContractStart}.`)
     setTimeout(() => setMsg(''), 4000)
     load()
+  }
+
+  async function openInvoiceAssignment(c: Client) {
+    setAssigningClient(c)
+    setInvoiceSearch('')
+    setInvoiceLoading(true)
+    const [assignedRes, availableRes] = await Promise.all([
+      fetch(`/api/clients/invoices?clientId=${c.id}`, { credentials: 'include' }).then(r => r.json()),
+      fetch(`/api/clients/invoices?unassigned=true`, { credentials: 'include' }).then(r => r.json()),
+    ])
+    setAssignedInvoices(assignedRes.invoices || [])
+    setAvailableInvoices(availableRes.invoices || [])
+    setInvoiceLoading(false)
+  }
+
+  async function toggleInvoice(invoiceId: number, assign: boolean) {
+    if (!assigningClient) return
+    await fetch('/api/clients/invoices', {
+      method: 'PATCH', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invoiceId, clientId: assign ? assigningClient.id : null }),
+    })
+    // Refresh both lists
+    const [assignedRes, availableRes] = await Promise.all([
+      fetch(`/api/clients/invoices?clientId=${assigningClient.id}`, { credentials: 'include' }).then(r => r.json()),
+      fetch(`/api/clients/invoices?unassigned=true`, { credentials: 'include' }).then(r => r.json()),
+    ])
+    setAssignedInvoices(assignedRes.invoices || [])
+    setAvailableInvoices(availableRes.invoices || [])
+    load() // refresh totals in table
   }
 
   const billingColor = (bt: string) => {
@@ -447,6 +482,10 @@ export default function ClientsPanel() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2 justify-end">
+                    <button onClick={() => openInvoiceAssignment(c)}
+                      className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">
+                      Invoices{c.invoice_count > 0 ? ` (${c.invoice_count})` : ''}
+                    </button>
                     <button onClick={() => setEditingClient({
                       id: c.id, name: c.name, holding_company_id: c.holding_company_id,
                       distributor: c.distributor || '', billing_type: c.billing_type,
@@ -567,6 +606,112 @@ export default function ClientsPanel() {
               <button onClick={saveClient} disabled={saving || !editingClient.name?.trim()}
                 className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50">
                 {saving ? 'Saving…' : 'Save Client'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Invoice Assignment Modal */}
+      {assigningClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setAssigningClient(null)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-narra-border flex items-center justify-between">
+              <div>
+                <h3 className="font-heading font-semibold text-narra-dark text-lg">{assigningClient.name}</h3>
+                <p className="text-xs text-narra-muted mt-0.5">Select which invoices belong to this client</p>
+              </div>
+              <button onClick={() => setAssigningClient(null)} className="text-narra-muted hover:text-narra-dark text-xl leading-none">✕</button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 divide-y divide-narra-border">
+
+              {/* Assigned invoices */}
+              <div className="px-6 py-4">
+                <h4 className="text-xs font-body uppercase tracking-widest text-narra-muted mb-3">
+                  Assigned to {assigningClient.name}
+                  {assignedInvoices.length > 0 && (
+                    <span className="ml-2 text-narra-green font-medium normal-case tracking-normal">
+                      ${assignedInvoices.reduce((s, i) => s + parseFloat(i.amount_usd || 0), 0).toLocaleString()} total
+                    </span>
+                  )}
+                </h4>
+                {invoiceLoading ? (
+                  <p className="text-sm text-narra-muted">Loading…</p>
+                ) : assignedInvoices.length === 0 ? (
+                  <p className="text-sm text-narra-muted italic">No invoices assigned yet — add from below</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {assignedInvoices.map((inv: any) => (
+                      <div key={inv.id} className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm font-medium text-narra-dark">{inv.invoice_id || `#${inv.id}`}</span>
+                          <span className="text-xs text-narra-muted ml-2">{inv.period_label}</span>
+                          {inv.vendor && <span className="text-xs text-narra-muted ml-2">· {inv.vendor}</span>}
+                        </div>
+                        <span className="text-sm font-heading font-semibold text-narra-dark shrink-0">
+                          ${parseFloat(inv.amount_usd || 0).toLocaleString()}
+                        </span>
+                        <button onClick={() => toggleInvoice(inv.id, false)}
+                          className="text-xs text-red-400 hover:text-red-600 shrink-0">Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Available invoices */}
+              <div className="px-6 py-4">
+                <h4 className="text-xs font-body uppercase tracking-widest text-narra-muted mb-3">Unassigned invoices</h4>
+                <input
+                  placeholder="Search by invoice ID, vendor, or period…"
+                  value={invoiceSearch}
+                  onChange={e => setInvoiceSearch(e.target.value)}
+                  className="w-full border border-narra-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-narra-green/30 mb-3"
+                />
+                {invoiceLoading ? (
+                  <p className="text-sm text-narra-muted">Loading…</p>
+                ) : (() => {
+                  const q = invoiceSearch.toLowerCase()
+                  const filtered = availableInvoices.filter(inv =>
+                    !q ||
+                    (inv.invoice_id || '').toLowerCase().includes(q) ||
+                    (inv.vendor || '').toLowerCase().includes(q) ||
+                    (inv.period_label || '').toLowerCase().includes(q)
+                  )
+                  return filtered.length === 0 ? (
+                    <p className="text-sm text-narra-muted italic">
+                      {availableInvoices.length === 0 ? 'All invoices are assigned.' : 'No results match your search.'}
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {filtered.map((inv: any) => (
+                        <div key={inv.id} className="flex items-center gap-3 bg-narra-surface border border-narra-border rounded-lg px-3 py-2">
+                          <div className="flex-1 min-w-0">
+                            <span className="text-sm font-medium text-narra-dark">{inv.invoice_id || `#${inv.id}`}</span>
+                            <span className="text-xs text-narra-muted ml-2">{inv.period_label}</span>
+                            {inv.vendor && <span className="text-xs text-narra-muted ml-2">· {inv.vendor}</span>}
+                          </div>
+                          <span className="text-sm font-heading font-semibold text-narra-dark shrink-0">
+                            ${parseFloat(inv.amount_usd || 0).toLocaleString()}
+                          </span>
+                          <button onClick={() => toggleInvoice(inv.id, true)}
+                            className="text-xs text-indigo-500 hover:text-indigo-700 font-medium shrink-0">+ Add</button>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })()}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-narra-border">
+              <button onClick={() => setAssigningClient(null)}
+                className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all">
+                Done
               </button>
             </div>
           </div>

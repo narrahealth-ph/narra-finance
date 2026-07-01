@@ -45,6 +45,10 @@ const tablesReady = (async () => {
         ADD COLUMN IF NOT EXISTS contract_start DATE,
         ADD COLUMN IF NOT EXISTS contract_end DATE
     `)
+    await query(`
+      ALTER TABLE invoices
+        ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL
+    `)
   } catch { /* tables already exist */ }
 })()
 
@@ -65,12 +69,15 @@ export async function GET(req: NextRequest) {
       ORDER BY c.name
     `),
     query('SELECT * FROM holding_companies ORDER BY name'),
-    // Total invoiced per client from outgoing invoices (full contract amounts)
+    // Total invoiced per client — explicit client_id assignment takes priority
     query(`
-      SELECT LOWER(vendor) AS key, SUM(amount_usd) AS total_invoiced, COUNT(*) AS invoice_count
-      FROM invoices
-      WHERE amount_usd > 0 AND vendor IS NOT NULL AND vendor != ''
-      GROUP BY LOWER(vendor)
+      SELECT
+        c.id,
+        COALESCE(SUM(CASE WHEN i.client_id = c.id THEN i.amount_usd ELSE 0 END), 0) AS assigned_total,
+        COUNT(CASE WHEN i.client_id = c.id THEN 1 END) AS assigned_count
+      FROM clients c
+      LEFT JOIN invoices i ON i.amount_usd > 0
+      GROUP BY c.id
     `),
     query(`
       SELECT client_id, SUM(amount_usd) AS cash_received
@@ -80,9 +87,9 @@ export async function GET(req: NextRequest) {
     `),
   ])
 
-  const invoiceMap: Record<string, { total: number; count: number }> = {}
+  const invoiceMap: Record<number, { total: number; count: number }> = {}
   for (const row of invoiceRevenueRes.rows) {
-    invoiceMap[row.key] = { total: parseFloat(row.total_invoiced || 0), count: parseInt(row.invoice_count || 0) }
+    invoiceMap[parseInt(row.id)] = { total: parseFloat(row.assigned_total || 0), count: parseInt(row.assigned_count || 0) }
   }
 
   const cashMap: Record<number, number> = {}
@@ -90,8 +97,8 @@ export async function GET(req: NextRequest) {
 
   const clients = clientsRes.rows.map((c: any) => ({
     ...c,
-    ltv:           invoiceMap[c.name?.toLowerCase()]?.total || 0,
-    invoice_count: invoiceMap[c.name?.toLowerCase()]?.count || 0,
+    ltv:           invoiceMap[c.id]?.total || 0,
+    invoice_count: invoiceMap[c.id]?.count || 0,
     cash_received: cashMap[c.id] || 0,
   }))
 

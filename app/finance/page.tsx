@@ -107,7 +107,15 @@ export default function FinancePage() {
     }
   }, [periodId])
 
-  useEffect(() => { loadReports() }, [loadReports])
+  // Only load reports when on a tab that actually needs the data
+  const REPORT_TABS = new Set(['mrr', 'reconcile', 'invoices', 'bank', 'reports', 'entries', 'ai'])
+  useEffect(() => {
+    if (REPORT_TABS.has(tab)) loadReports()
+  }, [loadReports]) // fires when periodId changes; tab check avoids the Google Sheets call on initial load
+
+  useEffect(() => {
+    if (REPORT_TABS.has(tab) && !reportData && !loadingReport) loadReports()
+  }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function signOut() {
     await fetch('/api/auth', { method: 'DELETE' })

@@ -69,15 +69,13 @@ export async function GET(req: NextRequest) {
       ORDER BY c.name
     `),
     query('SELECT * FROM holding_companies ORDER BY name'),
-    // Total invoiced per client — explicit client_id assignment takes priority
+    // Total invoiced per client from explicit sheet invoice assignments
     query(`
-      SELECT
-        c.id,
-        COALESCE(SUM(CASE WHEN i.client_id = c.id THEN i.amount_usd ELSE 0 END), 0) AS assigned_total,
-        COUNT(CASE WHEN i.client_id = c.id THEN 1 END) AS assigned_count
-      FROM clients c
-      LEFT JOIN invoices i ON i.amount_usd > 0
-      GROUP BY c.id
+      SELECT client_id AS id,
+             COALESCE(SUM(amount_usd), 0) AS assigned_total,
+             COUNT(*) AS assigned_count
+      FROM client_invoice_assignments
+      GROUP BY client_id
     `),
     query(`
       SELECT client_id, SUM(amount_usd) AS cash_received

@@ -60,7 +60,7 @@ export default function ClientsPanel() {
   const [availableInvoices,  setAvailableInvoices]  = useState<any[]>([])
   const [invoiceSearch,      setInvoiceSearch]      = useState('')
   const [invoiceLoading,     setInvoiceLoading]     = useState(false)
-  const [selectedInvoiceIds,  setSelectedInvoiceIds]  = useState<Set<number>>(new Set())
+  const [selectedInvoiceIds,  setSelectedInvoiceIds]  = useState<Set<string>>(new Set())
   const [bulkAssigning,       setBulkAssigning]       = useState(false)
   const [allInvoices,         setAllInvoices]         = useState<any[]>([])  // for bulk invoice picker
   const [bulkInvoicePicks,    setBulkInvoicePicks]    = useState<Record<number, string>>({})  // clientId → invoiceId
@@ -257,12 +257,19 @@ export default function ClientsPanel() {
     load()
   }
 
-  async function toggleInvoice(invoiceId: number, assign: boolean) {
+  async function toggleInvoice(inv: any, assign: boolean) {
     if (!assigningClient) return
     await fetch('/api/clients/invoices', {
       method: 'PATCH', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ invoiceId, clientId: assign ? assigningClient.id : null }),
+      body: JSON.stringify({
+        invoiceId:   inv.invoice_id,
+        clientId:    assign ? assigningClient.id : null,
+        amount:      inv.amount_usd,
+        vendor:      inv.vendor,
+        issueDate:   inv.issue_date,
+        billingType: inv.billing_type,
+      }),
     })
     await refreshInvoiceLists()
   }
@@ -271,13 +278,21 @@ export default function ClientsPanel() {
     if (!assigningClient || selectedInvoiceIds.size === 0) return
     setBulkAssigning(true)
     await Promise.all(
-      Array.from(selectedInvoiceIds).map(id =>
-        fetch('/api/clients/invoices', {
+      Array.from(selectedInvoiceIds).map(invoiceId => {
+        const inv = availableInvoices.find((i: any) => i.invoice_id === invoiceId)
+        return fetch('/api/clients/invoices', {
           method: 'PATCH', credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ invoiceId: id, clientId: assigningClient.id }),
+          body: JSON.stringify({
+            invoiceId,
+            clientId:    assigningClient.id,
+            amount:      inv?.amount_usd,
+            vendor:      inv?.vendor,
+            issueDate:   inv?.issue_date,
+            billingType: inv?.billing_type,
+          }),
         })
-      )
+      })
     )
     setSelectedInvoiceIds(new Set())
     setBulkAssigning(false)
@@ -289,13 +304,21 @@ export default function ClientsPanel() {
     if (!entries.length) return
     setBulkInvoiceSaving(true)
     await Promise.all(
-      entries.map(([clientId, invoiceId]) =>
-        fetch('/api/clients/invoices', {
+      entries.map(([clientId, invoiceId]) => {
+        const inv = allInvoices.find((i: any) => i.invoice_id === invoiceId)
+        return fetch('/api/clients/invoices', {
           method: 'PATCH', credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ invoiceId: parseInt(invoiceId), clientId: parseInt(clientId) }),
+          body: JSON.stringify({
+            invoiceId,
+            clientId:    parseInt(clientId),
+            amount:      inv?.amount_usd,
+            vendor:      inv?.vendor,
+            issueDate:   inv?.issue_date,
+            billingType: inv?.billing_type,
+          }),
         })
-      )
+      })
     )
     setBulkInvoicePicks({})
     setBulkInvoiceSaving(false)
@@ -741,16 +764,17 @@ export default function ClientsPanel() {
                 ) : (
                   <div className="space-y-1.5">
                     {assignedInvoices.map((inv: any) => (
-                      <div key={inv.id} className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                      <div key={inv.invoice_id} className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
                         <div className="flex-1 min-w-0">
-                          <span className="text-sm font-medium text-narra-dark">{inv.invoice_id || `#${inv.id}`}</span>
-                          <span className="text-xs text-narra-muted ml-2">{inv.period_label}</span>
+                          <span className="text-sm font-medium text-narra-dark">{inv.invoice_id}</span>
+                          {inv.issue_date && <span className="text-xs text-narra-muted ml-2">{inv.issue_date}</span>}
                           {inv.vendor && <span className="text-xs text-narra-muted ml-2">· {inv.vendor}</span>}
+                          {inv.status && <span className="text-xs text-narra-muted ml-2">· {inv.status}</span>}
                         </div>
                         <span className="text-sm font-heading font-semibold text-narra-dark shrink-0">
                           ${parseFloat(inv.amount_usd || 0).toLocaleString()}
                         </span>
-                        <button onClick={() => toggleInvoice(inv.id, false)}
+                        <button onClick={() => toggleInvoice(inv, false)}
                           className="text-xs text-red-400 hover:text-red-600 shrink-0">Remove</button>
                       </div>
                     ))}
@@ -789,18 +813,21 @@ export default function ClientsPanel() {
                   <p className="text-sm text-narra-muted">Loading…</p>
                 ) : (() => {
                   const q = invoiceSearch.toLowerCase()
-                  const filtered = availableInvoices.filter(inv =>
+                  // Show unassigned invoices (no client_id) plus already-assigned to this client
+                  const unassignedPool = availableInvoices.filter((inv: any) => inv.client_id === null)
+                  const filtered = unassignedPool.filter((inv: any) =>
                     !q ||
                     (inv.invoice_id || '').toLowerCase().includes(q) ||
                     (inv.vendor || '').toLowerCase().includes(q) ||
-                    (inv.period_label || '').toLowerCase().includes(q)
+                    (inv.issue_date || '').toLowerCase().includes(q) ||
+                    (inv.status || '').toLowerCase().includes(q)
                   )
                   if (filtered.length === 0) return (
                     <p className="text-sm text-narra-muted italic">
-                      {availableInvoices.length === 0 ? 'All invoices are assigned.' : 'No results match your search.'}
+                      {unassignedPool.length === 0 ? 'All invoices are assigned to clients.' : 'No results match your search.'}
                     </p>
                   )
-                  const allFilteredSelected = filtered.every(inv => selectedInvoiceIds.has(inv.id))
+                  const allFilteredSelected = filtered.every((inv: any) => selectedInvoiceIds.has(inv.invoice_id))
                   return (
                     <div className="space-y-1.5">
                       {/* Select all row */}
@@ -809,7 +836,7 @@ export default function ClientsPanel() {
                           checked={allFilteredSelected && filtered.length > 0}
                           onChange={e => {
                             const next = new Set(selectedInvoiceIds)
-                            filtered.forEach(inv => e.target.checked ? next.add(inv.id) : next.delete(inv.id))
+                            filtered.forEach((inv: any) => e.target.checked ? next.add(inv.invoice_id) : next.delete(inv.invoice_id))
                             setSelectedInvoiceIds(next)
                           }}
                           className="rounded accent-indigo-600 cursor-pointer"
@@ -817,20 +844,21 @@ export default function ClientsPanel() {
                         <span className="text-xs text-narra-muted">Select all {filtered.length} shown</span>
                       </div>
                       {filtered.map((inv: any) => (
-                        <div key={inv.id}
-                          className={`flex items-center gap-3 border rounded-lg px-3 py-2 cursor-pointer transition-colors ${selectedInvoiceIds.has(inv.id) ? 'bg-indigo-50 border-indigo-300' : 'bg-narra-surface border-narra-border hover:border-indigo-200'}`}
+                        <div key={inv.invoice_id}
+                          className={`flex items-center gap-3 border rounded-lg px-3 py-2 cursor-pointer transition-colors ${selectedInvoiceIds.has(inv.invoice_id) ? 'bg-indigo-50 border-indigo-300' : 'bg-narra-surface border-narra-border hover:border-indigo-200'}`}
                           onClick={() => {
                             const next = new Set(selectedInvoiceIds)
-                            selectedInvoiceIds.has(inv.id) ? next.delete(inv.id) : next.add(inv.id)
+                            selectedInvoiceIds.has(inv.invoice_id) ? next.delete(inv.invoice_id) : next.add(inv.invoice_id)
                             setSelectedInvoiceIds(next)
                           }}
                         >
-                          <input type="checkbox" checked={selectedInvoiceIds.has(inv.id)} readOnly
+                          <input type="checkbox" checked={selectedInvoiceIds.has(inv.invoice_id)} readOnly
                             className="rounded accent-indigo-600 pointer-events-none" />
                           <div className="flex-1 min-w-0">
-                            <span className="text-sm font-medium text-narra-dark">{inv.invoice_id || `#${inv.id}`}</span>
-                            <span className="text-xs text-narra-muted ml-2">{inv.period_label}</span>
+                            <span className="text-sm font-medium text-narra-dark">{inv.invoice_id}</span>
+                            {inv.issue_date && <span className="text-xs text-narra-muted ml-2">{inv.issue_date}</span>}
                             {inv.vendor && <span className="text-xs text-narra-muted ml-2">· {inv.vendor}</span>}
+                            {inv.status && <span className="text-xs text-narra-muted ml-2">· {inv.status}</span>}
                           </div>
                           <span className="text-sm font-heading font-semibold text-narra-dark shrink-0">
                             ${parseFloat(inv.amount_usd || 0).toLocaleString()}

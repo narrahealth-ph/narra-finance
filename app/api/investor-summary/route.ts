@@ -14,7 +14,6 @@ export async function GET(req: NextRequest) {
     clientsRes,
     totalCashRes,
     totalInvestedRes,
-    sgdRateRes,
   ] = await Promise.all([
     // All periods, most recent first
     query(`SELECT * FROM periods ORDER BY start_date DESC LIMIT 24`),
@@ -86,14 +85,14 @@ export async function GET(req: NextRequest) {
       SELECT COALESCE(SUM(amount_usd), 0) AS total
       FROM bank_transactions WHERE type = 'investment'
     `),
-
-    // Latest SGD→USD exchange rate
-    query(`
-      SELECT rate FROM fx_rates
-      WHERE currency = 'SGD'
-      ORDER BY date DESC LIMIT 1
-    `),
   ])
+
+  // Fetch SGD rate separately so it never breaks the main data
+  let sgdRate = 0.74
+  try {
+    const sgdRes = await query(`SELECT rate FROM fx_rates WHERE currency = 'SGD' ORDER BY date DESC LIMIT 1`)
+    if (sgdRes.rows[0]?.rate) sgdRate = parseFloat(sgdRes.rows[0].rate)
+  } catch { /* use default if table missing or empty */ }
 
   // Build monthly chart data (merge MRR + revenue + burn by label)
   const monthMap: Record<string, any> = {}
@@ -196,8 +195,6 @@ export async function GET(req: NextRequest) {
     ...c,
     pct: totalClientMrr > 0 ? Math.round((c.mrr / totalClientMrr) * 100) : 0,
   }))
-
-  const sgdRate = parseFloat(sgdRateRes.rows[0]?.rate || '0.74')
 
   return NextResponse.json({
     avgRevenue,

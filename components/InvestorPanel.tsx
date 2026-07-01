@@ -93,7 +93,7 @@ export default function InvestorPanel() {
 
       {/* Data coverage banner */}
       <div className={`rounded-xl px-5 py-4 border text-sm font-body ${missingMonths.length > 0 ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'}`}>
-        <div className="flex items-start justify-between gap-6">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-6">
           <div>
             <span className={`font-medium ${missingMonths.length > 0 ? 'text-amber-800' : 'text-green-800'}`}>
               {missingMonths.length > 0 ? '⚠ Bank statements may be incomplete' : '✓ Bank data looks up to date'}
@@ -158,7 +158,7 @@ export default function InvestorPanel() {
       </div>
 
       {/* Key metrics row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white border border-narra-border rounded-2xl p-5">
           <div className="text-narra-muted text-xs uppercase tracking-widest font-body mb-2 flex items-center">
             Avg Monthly Revenue
@@ -268,7 +268,7 @@ export default function InvestorPanel() {
           Total in company bank accounts · all time (opening balance + revenue + investments − expenses)
         </p>
         <div className="flex items-end gap-4">
-          <div className={`font-heading text-4xl font-light ${cashPosition >= 0 ? 'text-narra-dark' : 'text-red-500'}`}>
+          <div className={`font-heading text-3xl sm:text-4xl font-light ${cashPosition >= 0 ? 'text-narra-dark' : 'text-red-500'}`}>
             {cashPosition < 0 ? '(' : ''}${fmt(Math.abs(cashPosition))}{cashPosition < 0 ? ')' : ''}
           </div>
           {runway !== null && (

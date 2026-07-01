@@ -527,9 +527,15 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-narra-dark text-white">
-                {['Invoice #', 'Client', 'Distributor', 'Issued', 'Billing', 'Invoice Amt', 'MRR', 'Payment', '% of MRR'].map(h => (
-                  <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${['Invoice #','Client','Distributor','Issued','Billing','Payment'].includes(h) ? 'text-left' : 'text-right'}`}>{h}</th>
-                ))}
+                <th className="hidden sm:table-cell px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-left">Invoice #</th>
+                  <th className="px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-left">Client</th>
+                  <th className="hidden sm:table-cell px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-left">Distributor</th>
+                  <th className="hidden sm:table-cell px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-left">Issued</th>
+                  <th className="px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-left">Billing</th>
+                  <th className="px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-right">Invoice Amt</th>
+                  <th className="px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-right">MRR</th>
+                  <th className="px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-left">Payment</th>
+                  <th className="hidden sm:table-cell px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-right">% of MRR</th>
               </tr>
             </thead>
             <tbody>
@@ -562,7 +568,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                 })
                 return (
                   <tr key={i} className={`border-t border-narra-border hover:bg-narra-surface transition-colors ${c.isPending ? 'opacity-75' : ''}`}>
-                    <td className="px-4 py-2.5 font-mono text-xs text-narra-muted whitespace-nowrap">{c.invoiceId || '—'}</td>
+                    <td className="hidden sm:table-cell px-4 py-2.5 font-mono text-xs text-narra-muted whitespace-nowrap">{c.invoiceId || '—'}</td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {c.isNew && <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">New</span>}
@@ -576,12 +582,12 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                         {hasOverride && <button onClick={() => clearOverride(c.invoiceId!)} className="text-xs text-red-400 hover:text-red-600" title="Revert">✕</button>}
                       </div>
                     </td>
-                    <td className="px-4 py-2.5">
+                    <td className="hidden sm:table-cell px-4 py-2.5">
                       {dbClient?.distributor
                         ? <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">{dbClient.distributor}</span>
                         : <span className="text-xs text-narra-border">Direct</span>}
                     </td>
-                    <td className="px-4 py-2.5 text-narra-muted text-xs">
+                    <td className="hidden sm:table-cell px-4 py-2.5 text-narra-muted text-xs">
                       {c.issueDate ? new Date(c.issueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
                     </td>
                     <td className="px-4 py-2.5">
@@ -596,7 +602,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                         {c.isPending ? 'Sent' : 'Paid'}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 text-right">
+                    <td className="hidden sm:table-cell px-4 py-2.5 text-right">
                       {c.isOneOff ? <span className="text-xs text-narra-muted italic">non-recurring</span> : (
                         <div className="flex items-center justify-end gap-2">
                           <div className="w-14 h-1.5 bg-narra-light rounded-full overflow-hidden">

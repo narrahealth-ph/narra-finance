@@ -369,7 +369,7 @@ export default function BankImport({ periodId, onImport, refreshKey = 0, selecte
         onDragLeave={onDragLeave}
         onDrop={onDrop}
         onClick={() => !isProcessing && fileRef.current?.click()}
-        className={`border-2 border-dashed rounded-xl p-10 text-center transition-all select-none
+        className={`border-2 border-dashed rounded-xl p-6 sm:p-10 text-center transition-all select-none
           ${isProcessing
             ? 'border-narra-green bg-narra-light/20 cursor-wait'
             : dragging
@@ -400,7 +400,7 @@ export default function BankImport({ periodId, onImport, refreshKey = 0, selecte
             <div className="mb-3 flex justify-center"><Landmark size={36} className="text-narra-muted" /></div>
             <p className="font-heading font-medium text-narra-dark">Drop your bank statements here</p>
             <p className="text-narra-muted text-sm mt-1">Multiple files supported · PDF, CSV, or images (PNG/JPG) · Sleek, PayPal, or any bank</p>
-            <div className="flex justify-center gap-2 mt-3">
+            <div className="hidden sm:flex justify-center gap-2 mt-3">
               {['PDF', 'CSV', 'PNG/JPG', 'PayPal', 'Multi-file'].map(f => (
                 <span key={f} className="text-xs px-2 py-1 bg-narra-light rounded-md text-narra-muted font-mono">{f}</span>
               ))}
@@ -483,9 +483,13 @@ export default function BankImport({ periodId, onImport, refreshKey = 0, selecte
             <table className="w-full text-sm">
               <thead className="sticky top-0">
                 <tr className="bg-narra-surface border-b border-narra-border">
-                  {['Date', 'Description', 'Amount', 'CCY', 'Type', 'Account', ''].map(h => (
-                    <th key={h} className="text-left px-3 py-2 text-xs text-narra-muted font-body uppercase tracking-widest">{h}</th>
-                  ))}
+                  <th className="text-left px-3 py-2 text-xs text-narra-muted font-body uppercase tracking-widest">Date</th>
+                  <th className="text-left px-3 py-2 text-xs text-narra-muted font-body uppercase tracking-widest">Description</th>
+                  <th className="text-left px-3 py-2 text-xs text-narra-muted font-body uppercase tracking-widest">Amount</th>
+                  <th className="hidden sm:table-cell text-left px-3 py-2 text-xs text-narra-muted font-body uppercase tracking-widest">CCY</th>
+                  <th className="text-left px-3 py-2 text-xs text-narra-muted font-body uppercase tracking-widest">Type</th>
+                  <th className="hidden sm:table-cell text-left px-3 py-2 text-xs text-narra-muted font-body uppercase tracking-widest">Account</th>
+                  <th className="px-3 py-2"></th>
                 </tr>
               </thead>
               <tbody>
@@ -496,7 +500,7 @@ export default function BankImport({ periodId, onImport, refreshKey = 0, selecte
                     <td className="px-3 py-2 text-right font-medium text-sm whitespace-nowrap">
                       {parseFloat(String(tx.amount || 0)).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                     </td>
-                    <td className="px-3 py-2 text-xs">{CURRENCY_FLAGS[tx.currency] || ''} {tx.currency}</td>
+                    <td className="hidden sm:table-cell px-3 py-2 text-xs">{CURRENCY_FLAGS[tx.currency] || ''} {tx.currency}</td>
                     <td className="px-3 py-2">
                       <span className={`text-xs px-2 py-0.5 rounded-full ${
                         tx.type === 'revenue'  ? 'bg-green-50 text-green-700' :
@@ -505,7 +509,7 @@ export default function BankImport({ periodId, onImport, refreshKey = 0, selecte
                         'bg-blue-50 text-blue-600'
                       }`}>{tx.type}</span>
                     </td>
-                    <td className="px-3 py-2 text-xs text-narra-muted">{tx.account}</td>
+                    <td className="hidden sm:table-cell px-3 py-2 text-xs text-narra-muted">{tx.account}</td>
                     <td className="px-3 py-2">
                       <button
                         onClick={() => deleteTx(tx.id)}
@@ -540,9 +544,13 @@ export default function BankImport({ periodId, onImport, refreshKey = 0, selecte
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-narra-dark text-white">
-                  {['Date', 'Description', 'Amount', 'Currency', 'Type', 'Source', ''].map(h => (
-                    <th key={h} className="text-left px-3 py-2.5 font-body font-normal text-xs tracking-widest uppercase text-white/60">{h}</th>
-                  ))}
+                  <th className="text-left px-3 py-2.5 font-body font-normal text-xs tracking-widest uppercase text-white/60">Date</th>
+                  <th className="text-left px-3 py-2.5 font-body font-normal text-xs tracking-widest uppercase text-white/60">Description</th>
+                  <th className="text-left px-3 py-2.5 font-body font-normal text-xs tracking-widest uppercase text-white/60">Amount</th>
+                  <th className="hidden sm:table-cell px-3 py-2.5 font-body font-normal text-xs tracking-widest uppercase text-white/60">Currency</th>
+                  <th className="text-left px-3 py-2.5 font-body font-normal text-xs tracking-widest uppercase text-white/60">Type</th>
+                  <th className="hidden sm:table-cell text-left px-3 py-2.5 font-body font-normal text-xs tracking-widest uppercase text-white/60">Source</th>
+                  <th className="px-3 py-2.5"></th>
                 </tr>
               </thead>
               <tbody>
@@ -565,14 +573,14 @@ export default function BankImport({ periodId, onImport, refreshKey = 0, selecte
                         <span>{row.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
                       </div>
                     </td>
-                    <td className="px-3 py-2" />
+                    <td className="hidden sm:table-cell px-3 py-2" />
                     <td className="px-3 py-2">
                       <select value={row.type} onChange={e => updateRow(i, 'type', e.target.value as BankRow['type'])}
                         className={`text-xs px-2 py-0.5 rounded-full outline-none cursor-pointer ${typeColor(row.type)}`}>
                         {['expense','revenue','transfer','fx'].map(t => <option key={t}>{t}</option>)}
                       </select>
                     </td>
-                    <td className="px-3 py-2 text-xs text-narra-muted truncate max-w-[120px]" title={row.source}>
+                    <td className="hidden sm:table-cell px-3 py-2 text-xs text-narra-muted truncate max-w-[120px]" title={row.source}>
                       {row.source?.replace(/\.[^.]+$/, '') || ''}
                     </td>
                     <td className="px-3 py-2">

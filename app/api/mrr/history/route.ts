@@ -332,19 +332,20 @@ export async function GET(req: NextRequest) {
       const clientName   = (r[1] || '').trim()
       const amount       = parseNum((r[5] || '').toString())
       const rawStatus    = (r[6] || '').trim()
-      const status       = rawStatus.toLowerCase().replace(/[\s-]+/g, '-') // normalise "Sales - Sent" → "sales-sent"
+      const statusNorm   = rawStatus.toLowerCase().replace(/[\s\-]+/g, '') // strip all spaces/hyphens for matching
+      const status       = rawStatus.toLowerCase().replace(/[\s-]+/g, '-') // normalise for other checks
       const billingType  = (r[7] || 'annual').toLowerCase().trim()
       const issueDateStr = (r[4] || '').trim()
       const notes        = (r[8] || '').trim()
       if (!clientName && !invoiceId) continue  // skip truly empty rows
 
-      if (status === 'sent' && amount > 0) {
+      if (statusNorm === 'sent' && amount > 0) {
         const d = parseDate(issueDateStr)
         const daysOutstanding = d ? Math.floor((todayMs - d.getTime()) / 86400000) : 0
         pendingFromSheet.push({ invoiceId, clientName, amount, issueDate: issueDateStr, daysOutstanding, billingType })
       }
 
-      if (status === 'sales-sent') {
+      if (statusNorm === 'salessent') {
         pipelineFromSheet.push({ invoiceId, clientName, amount, issueDate: issueDateStr, billingType, notes })
       }
     }

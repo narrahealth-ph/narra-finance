@@ -7,13 +7,13 @@ export async function POST(req: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { periodId, type, question } = await req.json()
+  const { periodId, type, question, pipelineDeals = [], pendingCollection = [] } = await req.json()
 
   const period = await query('SELECT * FROM periods WHERE id = $1', [periodId])
   const p = period.rows[0]
   if (!p) return NextResponse.json({ error: 'Period not found' }, { status: 404 })
 
-  const [bankTxsRes, mrrRes, prevRevenueRes, prevBurnRes] = await Promise.all([
+  const [bankTxsRes, mrrRes, prevRevenueRes, prevBurnRes, prevMrrRes] = await Promise.all([
     query('SELECT * FROM bank_transactions WHERE period_id = $1', [periodId]),
     query('SELECT * FROM mrr_entries WHERE period_id = $1', [periodId]),
 
@@ -52,6 +52,18 @@ export async function POST(req: NextRequest) {
       ORDER BY p2.start_date DESC
       LIMIT 3
     `, [periodId]),
+
+    // Previous month's MRR entries (for new client detection)
+    query(`
+      SELECT client_name
+      FROM mrr_entries
+      WHERE period_id = (
+        SELECT id FROM periods
+        WHERE start_date < (SELECT start_date FROM periods WHERE id = $1)
+        ORDER BY start_date DESC
+        LIMIT 1
+      )
+    `, [periodId]),
   ])
 
   const bankTxs = bankTxsRes.rows
@@ -71,17 +83,40 @@ export async function POST(req: NextRequest) {
   const expenseTxs = bankTxs.filter((r: any) => r.type === 'expense')
   const totalBankExpenses = expenseTxs.reduce((s: number, r: any) => s + safeAmt(r), 0)
 
-  // Opening cash balance
-  const cashOpening = bankTxs.filter((r: any) => r.type === 'opening').reduce((s: number, r: any) => s + safeAmt(r), 0)
-  const cashBalance = cashOpening + totalCashRevenue - totalBankExpenses
+  // Global cash position — sum across ALL periods (opening + revenue + investment - expenses)
+  // This is the true bank balance, not just this month's delta
+  const globalCashRes = await query(`
+    SELECT
+      COALESCE(SUM(CASE WHEN type = 'opening'    THEN amount_usd ELSE 0 END), 0) +
+      COALESCE(SUM(CASE WHEN type = 'revenue'    THEN amount_usd ELSE 0 END), 0) +
+      COALESCE(SUM(CASE WHEN type = 'investment' THEN amount_usd ELSE 0 END), 0) -
+      COALESCE(SUM(CASE WHEN type = 'expense'    THEN amount_usd ELSE 0 END), 0) AS cash_position
+    FROM bank_transactions
+  `)
+  const cashBalance = parseFloat(globalCashRes.rows[0]?.cash_position || 0)
 
-  // Use MRR for runway (accrual basis is more meaningful than $0 cash months)
-  const revenueForRunway = totalMrr > 0 ? totalMrr : totalCashRevenue
-  const runway = totalBankExpenses > 0 ? Math.floor(cashBalance / totalBankExpenses) : 999
+  // Avg monthly burn from last 3 months (for runway calculation)
+  const recentBurnMonths = prevBurnRes.rows.filter((r: any) => parseFloat(r.expenses) > 0)
+  const avgMonthlyBurn = recentBurnMonths.length > 0
+    ? recentBurnMonths.reduce((s: number, r: any) => s + parseFloat(r.expenses), 0) / recentBurnMonths.length
+    : totalBankExpenses
+  const runway = avgMonthlyBurn > 0 ? Math.floor(cashBalance / avgMonthlyBurn) : 999
 
   // Historical context
   const prevRevenue = prevRevenueRes.rows.map((r: any) => ({ label: r.label, revenue: parseFloat(r.revenue) }))
   const prevBurn    = prevBurnRes.rows.map((r: any) => ({ label: r.label, expenses: parseFloat(r.expenses) }))
+
+  // New clients this month (names in current MRR but not in previous month)
+  const prevClientNames = new Set(prevMrrRes.rows.map((r: any) => r.client_name?.toLowerCase().trim()))
+  const newClients = mrrRes.rows
+    .filter((r: any) => !prevClientNames.has((r.client_name || '').toLowerCase().trim()))
+    .map((r: any) => ({ name: r.client_name, amount: parseFloat(r.amount_usd || 0) }))
+
+  // MoM cost % change (current vs most recent prior month with expenses)
+  const prevMonthExpenses = prevBurn.length > 0 ? prevBurn[0].expenses : 0
+  const costMoMPct = prevMonthExpenses > 0
+    ? Math.round(((totalBankExpenses - prevMonthExpenses) / prevMonthExpenses) * 100)
+    : null
 
   // Billing context for the AI — key insight about annual plans
   const annualBillingNote = totalMrr > 0 && totalCashRevenue === 0
@@ -95,8 +130,8 @@ export async function POST(req: NextRequest) {
   if (type === 'narrative' || type === 'all') {
     const narrative = await generateInvestorNarrative({
       period:            p.label,
-      totalRevenue:      totalMrr,        // accrual = true earned revenue
-      cashRevenue:       totalCashRevenue, // cash = what hit the bank this month
+      totalRevenue:      totalMrr,
+      cashRevenue:       totalCashRevenue,
       totalExpenses:     totalBankExpenses,
       netProfit:         totalMrr - totalBankExpenses,
       mrr:               totalMrr,
@@ -109,6 +144,10 @@ export async function POST(req: NextRequest) {
       billingNote:       annualBillingNote,
       prevRevenue,
       prevBurn,
+      newClients,
+      costMoMPct,
+      pendingCollection: pendingCollection as { clientName: string; amount: number; daysOutstanding: number }[],
+      pipelineDeals:     pipelineDeals as { clientName: string; amount: number; billingType: string; notes?: string }[],
     })
     result.narrative = narrative
 

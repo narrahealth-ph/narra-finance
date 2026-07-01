@@ -384,7 +384,7 @@ export default function FinancePage() {
               />
             )}
             {tab === 'ai' && (
-              <AIInsights periodId={periodId} data={reportData} />
+              <AIInsights periodId={periodId} data={reportData} selectedMonth={selectedMonth} />
             )}
           </>
         )}

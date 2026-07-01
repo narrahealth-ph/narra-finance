@@ -3,17 +3,34 @@ import { useState } from 'react'
 import { FileText, Search, Users, Sparkles, MessageCircle, SendHorizonal } from 'lucide-react'
 
 
-export default function AIInsights({ periodId, data }: { periodId: number; data: any }) {
+export default function AIInsights({ periodId, data, selectedMonth }: { periodId: number; data: any; selectedMonth?: string }) {
   const [loading, setLoading] = useState<string | null>(null)
   const [results, setResults] = useState<{ narrative?: string; anomalies?: any[]; churn?: any[]; answer?: string }>({})
   const [question, setQuestion] = useState('')
 
   async function generate(type: string) {
     setLoading(type)
+
+    // For the narrative, fetch pipeline + pending from the MRR sheet first
+    let pipelineDeals: { clientName: string; amount: number; billingType: string; notes?: string }[] = []
+    let pendingCollection: { clientName: string; amount: number; daysOutstanding: number }[] = []
+    if (type === 'narrative') {
+      try {
+        const [histRes, pendRes] = await Promise.all([
+          fetch(`/api/mrr/history?month=${encodeURIComponent(selectedMonth || '')}&yearView=false`, { credentials: 'include' }),
+          fetch(`/api/mrr/pending?periodId=${periodId}`, { credentials: 'include' }),
+        ])
+        const histJson = await histRes.json()
+        const pendJson = await pendRes.json()
+        if (histJson.pipelineFromSheet) pipelineDeals      = histJson.pipelineFromSheet
+        if (pendJson.pending)           pendingCollection   = pendJson.pending
+      } catch { /* non-fatal — AI will just omit these fields */ }
+    }
+
     const res = await fetch('/api/ai-insights', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ periodId, type }),
+      body: JSON.stringify({ periodId, type, pipelineDeals, pendingCollection }),
     })
     const result = await res.json()
     setResults(prev => ({ ...prev, ...result }))

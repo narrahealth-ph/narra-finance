@@ -7,17 +7,46 @@ export async function POST(req: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { periodId, type, question, pipelineDeals = [], pendingCollection = [] } = await req.json()
+  const { periodId, type, question, pipelineDeals = [], pendingCollection = [], viewMode = 'period' } = await req.json()
+  const isAnnual = viewMode === 'annual'
 
   const period = await query('SELECT * FROM periods WHERE id = $1', [periodId])
   const p = period.rows[0]
   if (!p) return NextResponse.json({ error: 'Period not found' }, { status: 404 })
 
-  const [bankTxsRes, mrrRes, prevRevenueRes, prevBurnRes, prevMrrRes, latestMrrRes, contractsRes] = await Promise.all([
-    query('SELECT * FROM bank_transactions WHERE period_id = $1', [periodId]),
-    query('SELECT * FROM mrr_entries WHERE period_id = $1', [periodId]),
+  // For annual mode, collect all period IDs in the same calendar year
+  let scopePeriodIds: number[] = [periodId]
+  let periodLabel = p.label
+  if (isAnnual) {
+    const yearPeriodsRes = await query(
+      `SELECT id FROM periods WHERE EXTRACT(YEAR FROM start_date) = EXTRACT(YEAR FROM $1::date) ORDER BY start_date`,
+      [p.start_date]
+    )
+    scopePeriodIds = yearPeriodsRes.rows.map((r: any) => r.id)
+    periodLabel = `Full Year ${new Date(p.start_date).getFullYear()}`
+  }
 
-    // Last 3 months of cash revenue for context
+  const [bankTxsRes, mrrRes, prevRevenueRes, prevBurnRes, prevMrrRes, latestMrrRes, contractsRes] = await Promise.all([
+    query(
+      'SELECT * FROM bank_transactions WHERE period_id = ANY($1::int[])',
+      [scopePeriodIds]
+    ),
+    isAnnual
+      // Annual: get MRR from the latest period in scope (avoid double-counting recurring clients)
+      ? query(`
+          SELECT m.client_name, m.amount_usd, p2.label AS period_label
+          FROM mrr_entries m
+          JOIN periods p2 ON p2.id = m.period_id
+          WHERE p2.id = (
+            SELECT id FROM periods
+            WHERE id = ANY($1::int[]) AND id IN (SELECT DISTINCT period_id FROM mrr_entries)
+            ORDER BY start_date DESC LIMIT 1
+          )
+          ORDER BY m.amount_usd DESC
+        `, [scopePeriodIds])
+      : query('SELECT * FROM mrr_entries WHERE period_id = $1', [periodId]),
+
+    // Last 3 months of cash revenue for context (always period-scoped, prior to scope)
     query(`
       SELECT p2.label, COALESCE(SUM(
         CASE WHEN bt.amount_usd IS NOT NULL AND bt.amount_usd > 0 THEN bt.amount_usd
@@ -146,10 +175,14 @@ export async function POST(req: NextRequest) {
 
   // Billing context for the AI — key insight about annual plans
   const mrrFallbackNote = mrrIsFallback && latestMrrPeriodLabel
-    ? `NOTE: The selected period (${p.label}) has no MRR entries recorded yet. The MRR and client data below is from the most recently closed month (${latestMrrPeriodLabel}). Because Narra Health clients are on ANNUAL AUTO-RENEWING contracts, these clients and their MRR are still active and ongoing — they do not disappear just because the current month hasn't been entered yet.`
+    ? `NOTE: The selected period (${periodLabel}) has no MRR entries recorded yet. The MRR and client data below is from the most recently closed month (${latestMrrPeriodLabel}). Because Narra Health clients are on ANNUAL AUTO-RENEWING contracts, these clients and their MRR are still active and ongoing — they do not disappear just because the current month hasn't been entered yet.`
     : ''
 
-  const annualBillingNote = mrrFallbackNote ||
+  const annualViewNote = isAnnual
+    ? `SCOPE: This analysis covers the FULL YEAR (${periodLabel}), aggregating all months' bank transactions. Cash received may be lumpy (annual upfront payments) but total year cash and expenses are shown. MRR reflects current active contracts.`
+    : ''
+
+  const annualBillingNote = annualViewNote || mrrFallbackNote ||
     (totalMrr > 0 && totalCashRevenue === 0
       ? `IMPORTANT BILLING CONTEXT: No cash was received from clients this month, but this does NOT mean there is no revenue. Narra Health clients are on annual plans — they pay the full year upfront. The $${totalMrr.toLocaleString()} MRR shown represents revenue earned this month under those annual contracts. $0 cash received months are normal when clients have already pre-paid.`
       : totalMrr > 0 && totalCashRevenue < totalMrr * 0.5
@@ -175,7 +208,7 @@ export async function POST(req: NextRequest) {
 
   if (type === 'narrative' || type === 'all') {
     const narrative = await generateInvestorNarrative({
-      period:            p.label,
+      period:            periodLabel,
       totalRevenue:      totalMrr,
       cashRevenue:       totalCashRevenue,
       totalExpenses:     totalBankExpenses,
@@ -247,7 +280,7 @@ export async function POST(req: NextRequest) {
     const expenseBaseline = totalBankExpenses > 0 ? totalBankExpenses : avgMonthlyBurn
 
     const answer = await answerFinancialQuestion(question, {
-      period:             p.label,
+      period:             periodLabel,
       totalRevenue:       totalMrr,
       cashRevenue:        totalCashRevenue,
       totalExpenses:      expenseBaseline,

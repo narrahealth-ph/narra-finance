@@ -7,6 +7,7 @@ export default function AIInsights({ periodId, data, selectedMonth }: { periodId
   const [loading, setLoading] = useState<string | null>(null)
   const [results, setResults] = useState<{ narrative?: string; anomalies?: any[]; churn?: any[]; answer?: string }>({})
   const [question, setQuestion] = useState('')
+  const [viewMode, setViewMode] = useState<'period' | 'annual'>('period')
 
   async function generate(type: string) {
     setLoading(type)
@@ -30,7 +31,7 @@ export default function AIInsights({ periodId, data, selectedMonth }: { periodId
     const res = await fetch('/api/ai-insights', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ periodId, type, pipelineDeals, pendingCollection }),
+      body: JSON.stringify({ periodId, type, pipelineDeals, pendingCollection, viewMode }),
     })
     const result = await res.json()
     setResults(prev => ({ ...prev, ...result }))
@@ -44,7 +45,7 @@ export default function AIInsights({ periodId, data, selectedMonth }: { periodId
     const res = await fetch('/api/ai-insights', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ periodId, type: 'ask', question: q }),
+      body: JSON.stringify({ periodId, type: 'ask', question: q, viewMode }),
     })
     const result = await res.json()
     setResults(prev => ({ ...prev, answer: result.answer }))
@@ -58,10 +59,31 @@ export default function AIInsights({ periodId, data, selectedMonth }: { periodId
 
   return (
     <div className="space-y-6 animate-fade-up">
-      <div>
-        <h2 className="font-heading text-xl font-semibold text-narra-dark">AI Insights</h2>
-        <p className="text-sm text-narra-muted mt-0.5">Powered by Claude — click to generate each insight</p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h2 className="font-heading text-xl font-semibold text-narra-dark">AI Insights</h2>
+          <p className="text-sm text-narra-muted mt-0.5">Powered by Claude — click to generate each insight</p>
+        </div>
+        <div className="flex items-center gap-1 bg-narra-surface border border-narra-border rounded-lg p-1 self-start sm:self-auto">
+          <button
+            onClick={() => { setViewMode('period'); setResults({}) }}
+            className={`px-3 py-1.5 rounded text-sm font-body transition-all ${viewMode === 'period' ? 'bg-narra-dark text-narra-green shadow-sm' : 'text-narra-muted hover:text-narra-dark'}`}
+          >
+            This Period
+          </button>
+          <button
+            onClick={() => { setViewMode('annual'); setResults({}) }}
+            className={`px-3 py-1.5 rounded text-sm font-body transition-all ${viewMode === 'annual' ? 'bg-narra-dark text-narra-green shadow-sm' : 'text-narra-muted hover:text-narra-dark'}`}
+          >
+            Annual
+          </button>
+        </div>
       </div>
+      {viewMode === 'annual' && (
+        <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          <span>Responses will aggregate data across all months in the same calendar year as the selected period.</span>
+        </div>
+      )}
 
       {/* Quick stats */}
       {total && (

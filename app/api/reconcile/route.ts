@@ -145,7 +145,7 @@ export async function POST(req: NextRequest) {
   if (action === 'parse_bank_pdf') {
     const { base64, fileName } = body
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-5',
       max_tokens: 4000,
       messages: [{
         role: 'user',
@@ -192,7 +192,7 @@ Return ONLY valid JSON, no markdown:
   if (action === 'parse_paypal_image') {
     const { base64, mimeType } = body
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-5',
       max_tokens: 2000,
       messages: [{
         role: 'user',
@@ -226,7 +226,7 @@ Return ONLY valid JSON, no markdown:
     const { outgoingInvoices, bankTransactions, expenses } = body
 
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-5',
       max_tokens: 4000,
       messages: [{
         role: 'user',

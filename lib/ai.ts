@@ -30,7 +30,7 @@ export async function extractInvoiceData(base64: string, mimeType: string, fileN
       }
 
   const response = await client.messages.create({
-    model:      'claude-sonnet-4-20250514',
+    model:      'claude-sonnet-4-5',
     max_tokens: 1000,
     messages: [{
       role:    'user',
@@ -80,7 +80,7 @@ export async function generateInvestorNarrative(data: {
   anomalies:     string[]
 }) {
   const response = await client.messages.create({
-    model:      'claude-sonnet-4-20250514',
+    model:      'claude-sonnet-4-5',
     max_tokens: 1000,
     messages: [{
       role:    'user',
@@ -113,7 +113,7 @@ Tone: confident, transparent, investor-appropriate. No bullet points. Max 200 wo
 // ── Detect anomalies in expense data ─────────────────────────────────────────
 export async function detectAnomalies(transactions: any[], prevMonthAvg: any) {
   const response = await client.messages.create({
-    model:      'claude-sonnet-4-20250514',
+    model:      'claude-sonnet-4-5',
     max_tokens: 1000,
     messages: [{
       role:    'user',
@@ -160,7 +160,7 @@ export async function answerFinancialQuestion(question: string, ctx: {
   mrrByClient:         { client: string; amount: number }[]
 }) {
   const response = await client.messages.create({
-    model:      'claude-sonnet-4-20250514',
+    model:      'claude-sonnet-4-5',
     max_tokens: 600,
     messages: [{
       role:    'user',
@@ -195,7 +195,7 @@ Answer in 3–5 sentences. Lead with a clear yes/no or direct finding when appli
 // ── Churn risk assessment ─────────────────────────────────────────────────────
 export async function assessChurnRisk(clients: { name: string; payments: number[]; lastPayment: string; seats: number }[]) {
   const response = await client.messages.create({
-    model:      'claude-sonnet-4-20250514',
+    model:      'claude-sonnet-4-5',
     max_tokens: 1000,
     messages: [{
       role:    'user',

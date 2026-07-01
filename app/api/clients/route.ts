@@ -50,14 +50,14 @@ const tablesReady = (async () => {
 
 async function ensureTables() { await tablesReady }
 
-// GET /api/clients — list all clients + holding companies + LTV from mrr_entries
+// GET /api/clients — list all clients + holding companies + revenue from outgoing invoices
 export async function GET(req: NextRequest) {
   const session = await requireRole('finance')
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   await ensureTables()
 
-  const [clientsRes, holdingRes, ltvRes, cashRes] = await Promise.all([
+  const [clientsRes, holdingRes, invoiceRevenueRes, cashRes] = await Promise.all([
     query(`
       SELECT c.*, hc.name AS holding_company_name
       FROM clients c
@@ -65,10 +65,12 @@ export async function GET(req: NextRequest) {
       ORDER BY c.name
     `),
     query('SELECT * FROM holding_companies ORDER BY name'),
+    // Total invoiced per client from outgoing invoices (full contract amounts)
     query(`
-      SELECT LOWER(client_name) AS key, SUM(amount_usd) AS ltv
-      FROM mrr_entries
-      GROUP BY LOWER(client_name)
+      SELECT LOWER(vendor) AS key, SUM(amount_usd) AS total_invoiced, COUNT(*) AS invoice_count
+      FROM invoices
+      WHERE amount_usd > 0 AND vendor IS NOT NULL AND vendor != ''
+      GROUP BY LOWER(vendor)
     `),
     query(`
       SELECT client_id, SUM(amount_usd) AS cash_received
@@ -78,15 +80,18 @@ export async function GET(req: NextRequest) {
     `),
   ])
 
-  const ltvMap: Record<string, number> = {}
-  for (const row of ltvRes.rows) ltvMap[row.key] = parseFloat(row.ltv || 0)
+  const invoiceMap: Record<string, { total: number; count: number }> = {}
+  for (const row of invoiceRevenueRes.rows) {
+    invoiceMap[row.key] = { total: parseFloat(row.total_invoiced || 0), count: parseInt(row.invoice_count || 0) }
+  }
 
   const cashMap: Record<number, number> = {}
   for (const row of cashRes.rows) cashMap[parseInt(row.client_id)] = parseFloat(row.cash_received || 0)
 
   const clients = clientsRes.rows.map((c: any) => ({
     ...c,
-    ltv:           ltvMap[c.name?.toLowerCase()] || 0,
+    ltv:           invoiceMap[c.name?.toLowerCase()]?.total || 0,
+    invoice_count: invoiceMap[c.name?.toLowerCase()]?.count || 0,
     cash_received: cashMap[c.id] || 0,
   }))
 

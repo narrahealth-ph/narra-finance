@@ -13,7 +13,8 @@ type Client = {
   contract_end: string | null
   notes: string | null
   active: boolean
-  ltv: number
+  ltv: number           // total invoiced (from outgoing invoices)
+  invoice_count: number
   cash_received: number
 }
 
@@ -229,7 +230,7 @@ export default function ClientsPanel() {
         <div>
           <h2 className="font-heading text-xl font-semibold text-narra-dark">Client Registry</h2>
           <p className="text-sm text-narra-muted mt-0.5">
-            {activeCount} active · {churnCount} inactive · Total LTV ${totalLtv.toLocaleString()}
+            {activeCount} active · {churnCount} inactive · Total invoiced ${clients.reduce((s, c) => s + (c.ltv || 0), 0).toLocaleString()}
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -372,8 +373,8 @@ export default function ClientsPanel() {
                   className="rounded accent-narra-green cursor-pointer"
                 />
               </th>
-              {['Client', 'Holding Group', 'Distributor / Payer', 'Billing', 'Contract Start', 'Contract End', 'LTV', 'Cash Received', 'Notes', 'Status', ''].map(h => (
-                <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'LTV' || h === 'Cash Received' ? 'text-right' : 'text-left'}`}>{h}</th>
+              {['Client', 'Holding Group', 'Distributor / Payer', 'Billing', 'Contract Start', 'Contract End', 'Total Invoiced', 'Cash Received', 'Notes', 'Status', ''].map(h => (
+                <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'Total Invoiced' || h === 'Cash Received' ? 'text-right' : 'text-left'}`}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -425,8 +426,13 @@ export default function ClientsPanel() {
                     </span>
                   ) : <span className="text-narra-border">—</span>}
                 </td>
-                <td className="px-4 py-3 text-right font-medium text-narra-dark">
-                  {c.ltv > 0 ? `$${c.ltv.toLocaleString()}` : <span className="text-narra-border">—</span>}
+                <td className="px-4 py-3 text-right">
+                  {c.ltv > 0 ? (
+                    <div>
+                      <div className="font-medium text-narra-dark">${c.ltv.toLocaleString()}</div>
+                      <div className="text-narra-muted text-xs">{c.invoice_count} invoice{c.invoice_count !== 1 ? 's' : ''}</div>
+                    </div>
+                  ) : <span className="text-narra-border">—</span>}
                 </td>
                 <td className="px-4 py-3 text-right font-medium text-green-700">
                   {c.cash_received > 0 ? `$${c.cash_received.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : <span className="text-narra-border font-normal">—</span>}

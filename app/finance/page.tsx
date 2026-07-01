@@ -7,19 +7,21 @@ import {
   FileText, Scale, PenLine, BarChart2, Banknote,
   Sparkles, BookOpen, type LucideIcon
 } from 'lucide-react'
-import InvoiceSync from '@/components/InvoiceSync'
-import BankImport from '@/components/BankImport'
-import ReportsPanel from '@/components/ReportsPanel'
-import MRRPanel from '@/components/MRRPanel'
-import ReconciliationPanel from '@/components/ReconciliationPanel'
-import AIInsights from '@/components/AIInsights'
-import AnnualReportPanel from '@/components/AnnualReportPanel'
-import ManualEntriesPanel from '@/components/ManualEntriesPanel'
-import FinancialCloseWizard from '@/components/FinancialCloseWizard'
-import ClientsPanel from '@/components/ClientsPanel'
-import InvestorPanel from '@/components/InvestorPanel'
-import InstructionsPanel from '@/components/InstructionsPanel'
-import NotificationsBell from '@/components/NotificationsBell'
+import dynamic from 'next/dynamic'
+
+const InvoiceSync         = dynamic(() => import('@/components/InvoiceSync'))
+const BankImport          = dynamic(() => import('@/components/BankImport'))
+const ReportsPanel        = dynamic(() => import('@/components/ReportsPanel'))
+const MRRPanel            = dynamic(() => import('@/components/MRRPanel'))
+const ReconciliationPanel = dynamic(() => import('@/components/ReconciliationPanel'))
+const AIInsights          = dynamic(() => import('@/components/AIInsights'))
+const AnnualReportPanel   = dynamic(() => import('@/components/AnnualReportPanel'))
+const ManualEntriesPanel  = dynamic(() => import('@/components/ManualEntriesPanel'))
+const FinancialCloseWizard = dynamic(() => import('@/components/FinancialCloseWizard'))
+const ClientsPanel        = dynamic(() => import('@/components/ClientsPanel'))
+const InvestorPanel       = dynamic(() => import('@/components/InvestorPanel'))
+const InstructionsPanel   = dynamic(() => import('@/components/InstructionsPanel'))
+const NotificationsBell   = dynamic(() => import('@/components/NotificationsBell'))
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -322,7 +324,7 @@ export default function FinancePage() {
       </div>
 
       {/* Content */}
-      <main className={`flex-1 px-4 sm:px-6 py-4 sm:py-6 max-w-7xl mx-auto w-full transition-opacity duration-200 ${loadingReport && tab !== 'annual' && tab !== 'investor' && tab !== 'instructions' ? 'opacity-60 pointer-events-none' : 'opacity-100'}`}>
+      <main className="flex-1 px-4 sm:px-6 py-4 sm:py-6 max-w-7xl mx-auto w-full">
         {tab === 'instructions' ? (
           <InstructionsPanel />
         ) : tab === 'investor' ? (

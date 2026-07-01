@@ -189,11 +189,11 @@ export async function GET(req: NextRequest) {
       const currentYear = today.getFullYear()
       const maxYear     = Math.max(currentYear, 2026)
 
-      // Load all periods with their total expense costs from DB
+      // Load all periods with their total expense costs from bank statements (matches Reports/P&L)
       const costsRes = await query(
-        `SELECT p.start_date, COALESCE(SUM(i.amount_usd), 0) AS total_costs
+        `SELECT p.start_date, COALESCE(SUM(bt.amount_usd), 0) AS total_costs
          FROM periods p
-         LEFT JOIN invoices i ON i.period_id = p.id
+         LEFT JOIN bank_transactions bt ON bt.period_id = p.id AND bt.type = 'expense'
          WHERE EXTRACT(year FROM p.start_date) >= 2026
          GROUP BY p.start_date`
       ).catch(() => ({ rows: [] }))

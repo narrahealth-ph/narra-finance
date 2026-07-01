@@ -40,6 +40,11 @@ const tablesReady = (async () => {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )
     `)
+    await query(`
+      ALTER TABLE clients
+        ADD COLUMN IF NOT EXISTS contract_start DATE,
+        ADD COLUMN IF NOT EXISTS contract_end DATE
+    `)
   } catch { /* tables already exist */ }
 })()
 
@@ -106,10 +111,12 @@ export async function POST(req: NextRequest) {
 
   const holdingId    = body.holdingCompanyId ?? body.holding_company_id ?? null
   const billingType  = body.billingType || body.billing_type || 'annual'
+  const contractStart = body.contract_start || body.contractStart || null
+  const contractEnd   = body.contract_end   || body.contractEnd   || null
   const res = await query(
-    `INSERT INTO clients (name, holding_company_id, distributor, billing_type, notes)
-     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-    [body.name, holdingId || null, body.distributor || null, billingType, body.notes || null]
+    `INSERT INTO clients (name, holding_company_id, distributor, billing_type, notes, contract_start, contract_end)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [body.name, holdingId || null, body.distributor || null, billingType, body.notes || null, contractStart, contractEnd]
   )
   return NextResponse.json({ client: res.rows[0] })
 }
@@ -126,13 +133,16 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
-  const holdingId   = body.holdingCompanyId ?? body.holding_company_id ?? null
-  const billingType = body.billingType || body.billing_type || 'annual'
+  const holdingId    = body.holdingCompanyId ?? body.holding_company_id ?? null
+  const billingType  = body.billingType || body.billing_type || 'annual'
+  const contractStart = body.contract_start || body.contractStart || null
+  const contractEnd   = body.contract_end   || body.contractEnd   || null
   await query(
     `UPDATE clients
-     SET name=$1, holding_company_id=$2, distributor=$3, billing_type=$4, notes=$5, active=$6, updated_at=NOW()
-     WHERE id=$7`,
-    [body.name, holdingId || null, body.distributor || null, billingType, body.notes || null, body.active !== false, body.id]
+     SET name=$1, holding_company_id=$2, distributor=$3, billing_type=$4, notes=$5, active=$6,
+         contract_start=$7, contract_end=$8, updated_at=NOW()
+     WHERE id=$9`,
+    [body.name, holdingId || null, body.distributor || null, billingType, body.notes || null, body.active !== false, contractStart, contractEnd, body.id]
   )
 
   // Sync updated client list to Google Sheet "Clients" tab
@@ -185,9 +195,12 @@ async function syncClientsToSheet() {
   }
 
   const rows: any[][] = [
-    ['Name', 'Holding Company', 'Distributor / Payer', 'Billing Type', 'Notes', 'Active', 'LTV (USD)'],
+    ['Name', 'Holding Company', 'Distributor / Payer', 'Billing Type', 'Contract Start', 'Contract End', 'Notes', 'Active', 'LTV (USD)'],
     ...clientsRes.rows.map((c: any) => [
-      c.name, c.holding_company_name || '', c.distributor || '', c.billing_type, c.notes || '', c.active ? 'Yes' : 'No', ''
+      c.name, c.holding_company_name || '', c.distributor || '', c.billing_type,
+      c.contract_start ? new Date(c.contract_start).toISOString().split('T')[0] : '',
+      c.contract_end   ? new Date(c.contract_end).toISOString().split('T')[0]   : '',
+      c.notes || '', c.active ? 'Yes' : 'No', ''
     ]),
     [],
     ['--- Holding Companies ---'],

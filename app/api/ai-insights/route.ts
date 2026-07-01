@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
   const p = period.rows[0]
   if (!p) return NextResponse.json({ error: 'Period not found' }, { status: 404 })
 
-  const [bankTxsRes, mrrRes, prevRevenueRes, prevBurnRes, prevMrrRes, latestMrrRes] = await Promise.all([
+  const [bankTxsRes, mrrRes, prevRevenueRes, prevBurnRes, prevMrrRes, latestMrrRes, contractsRes] = await Promise.all([
     query('SELECT * FROM bank_transactions WHERE period_id = $1', [periodId]),
     query('SELECT * FROM mrr_entries WHERE period_id = $1', [periodId]),
 
@@ -78,6 +78,9 @@ export async function POST(req: NextRequest) {
       )
       ORDER BY m.amount_usd DESC
     `),
+
+    // Client contracts for renewal forecasting
+    query(`SELECT name, billing_type, contract_start, contract_end FROM clients WHERE active = true AND contract_end IS NOT NULL ORDER BY contract_end ASC`),
   ])
 
   const bankTxs = bankTxsRes.rows
@@ -152,6 +155,21 @@ export async function POST(req: NextRequest) {
       : totalMrr > 0 && totalCashRevenue < totalMrr * 0.5
       ? `BILLING CONTEXT: Cash received ($${totalCashRevenue.toLocaleString()}) is lower than accrual MRR ($${totalMrr.toLocaleString()}) this month. Normal — some clients are on annual plans and already paid upfront earlier in the year.`
       : '')
+
+  // Contract renewal schedule for AI context
+  const today = new Date()
+  const contractSchedule = contractsRes.rows
+    .map((c: any) => {
+      const end = c.contract_end ? new Date(c.contract_end) : null
+      const daysUntil = end ? Math.ceil((end.getTime() - today.getTime()) / 86400000) : null
+      return {
+        client:       c.name,
+        billingType:  c.billing_type,
+        contractEnd:  c.contract_end ? new Date(c.contract_end).toISOString().split('T')[0] : null,
+        daysUntilRenewal: daysUntil,
+        renewingSoon: daysUntil !== null && daysUntil <= 90 && daysUntil >= 0,
+      }
+    })
 
   let result: any = {}
 
@@ -244,6 +262,7 @@ export async function POST(req: NextRequest) {
       prevRevenue,
       avgMonthlyBurn,
       mrrPeriodNote:      mrrIsFallback && latestMrrPeriodLabel ? `MRR data shown is from ${latestMrrPeriodLabel} (most recent closed month) — these contracts auto-renew annually so clients are still active.` : '',
+      contractSchedule,
     })
     result.answer = answer
   }

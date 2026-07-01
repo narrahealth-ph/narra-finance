@@ -9,6 +9,8 @@ type Client = {
   holding_company_name: string | null
   distributor: string | null
   billing_type: string
+  contract_start: string | null
+  contract_end: string | null
   notes: string | null
   active: boolean
   ltv: number
@@ -16,6 +18,22 @@ type Client = {
 }
 
 const BILLING_TYPES = ['annual', 'quarterly', 'monthly', 'one-off']
+
+function fmtDate(d: string | null) {
+  if (!d) return '—'
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function renewalStatus(contractEnd: string | null): { label: string; color: string } | null {
+  if (!contractEnd) return null
+  const end = new Date(contractEnd)
+  const now = new Date()
+  const daysUntil = Math.ceil((end.getTime() - now.getTime()) / 86400000)
+  if (daysUntil < 0)   return { label: 'Expired', color: 'bg-red-100 text-red-700' }
+  if (daysUntil <= 30) return { label: `Renews in ${daysUntil}d`, color: 'bg-amber-100 text-amber-700' }
+  if (daysUntil <= 90) return { label: `Renews in ${Math.ceil(daysUntil/30)}mo`, color: 'bg-blue-100 text-blue-700' }
+  return null
+}
 
 function Badge({ label, color }: { label: string; color: string }) {
   return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${color}`}>{label}</span>
@@ -33,8 +51,9 @@ export default function ClientsPanel() {
   const [search,          setSearch]          = useState('')
   const [filterActive,    setFilterActive]    = useState<'all' | 'active' | 'inactive'>('active')
   const [selectedIds,     setSelectedIds]     = useState<Set<number>>(new Set())
-  const [bulkHoldingId,   setBulkHoldingId]   = useState<string>('')
-  const [bulkSaving,      setBulkSaving]      = useState(false)
+  const [bulkHoldingId,     setBulkHoldingId]     = useState<string>('')
+  const [bulkSaving,        setBulkSaving]        = useState(false)
+  const [bulkContractMonth, setBulkContractMonth] = useState<string>('')  // YYYY-MM
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -152,6 +171,48 @@ export default function ClientsPanel() {
     load()
   }
 
+  // Given a contract start (YYYY-MM-DD) and billing type, return the last day of the final active month
+  function calcContractEnd(startYYYYMM: string, billingType: string): string {
+    const [y, m] = startYYYYMM.split('-').map(Number)
+    const start = new Date(y, m - 1, 1) // first of start month
+    let months = 12 // default annual
+    if (billingType === 'quarterly') months = 3
+    else if (billingType === 'monthly') months = 1
+    // end = start + N months, then last day of that month
+    const endFirstDay = new Date(start.getFullYear(), start.getMonth() + months, 1)
+    const lastDay = new Date(endFirstDay.getTime() - 86400000) // day before
+    return lastDay.toISOString().split('T')[0]
+  }
+
+  async function bulkSetContractDates() {
+    if (!selectedIds.size || !bulkContractMonth) return
+    setBulkSaving(true)
+    const startDate = bulkContractMonth + '-01' // first of month
+    await Promise.all(
+      Array.from(selectedIds).map(id => {
+        const c = clients.find(x => x.id === id)!
+        const endDate = calcContractEnd(bulkContractMonth, c.billing_type)
+        return fetch('/api/clients', {
+          method: 'PATCH', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: c.id, name: c.name, holding_company_id: c.holding_company_id,
+            distributor: c.distributor, billing_type: c.billing_type,
+            notes: c.notes, active: c.active,
+            contract_start: startDate,
+            contract_end:   endDate,
+          }),
+        })
+      })
+    )
+    setBulkSaving(false)
+    setSelectedIds(new Set())
+    setBulkContractMonth('')
+    setMsg(`Contract dates set for ${selectedIds.size} client${selectedIds.size !== 1 ? 's' : ''} starting ${bulkContractMonth}.`)
+    setTimeout(() => setMsg(''), 4000)
+    load()
+  }
+
   const billingColor = (bt: string) => {
     if (bt === 'annual')    return 'bg-blue-100 text-blue-700'
     if (bt === 'quarterly') return 'bg-purple-100 text-purple-700'
@@ -248,23 +309,52 @@ export default function ClientsPanel() {
 
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (
-        <div className="flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 flex-wrap">
-          <span className="text-sm font-medium text-indigo-800">{selectedIds.size} selected</span>
-          <span className="text-indigo-300">·</span>
-          <span className="text-sm text-indigo-700">Assign to holding company:</span>
-          <select value={bulkHoldingId} onChange={e => setBulkHoldingId(e.target.value)}
-            className="border border-indigo-300 rounded-lg px-3 py-1.5 text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-300">
-            <option value="">— Remove from group —</option>
-            {holdingCos.map(hc => <option key={hc.id} value={hc.id}>{hc.name}</option>)}
-          </select>
-          <button onClick={bulkAssignHolding} disabled={bulkSaving}
-            className="px-4 py-1.5 bg-indigo-700 text-white rounded-lg text-sm font-body hover:bg-indigo-800 transition-all disabled:opacity-50">
-            {bulkSaving ? 'Saving…' : 'Apply'}
-          </button>
-          <button onClick={() => setSelectedIds(new Set())}
-            className="text-sm text-indigo-500 hover:text-indigo-800 ml-auto">
-            Clear selection
-          </button>
+        <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium text-indigo-800">{selectedIds.size} client{selectedIds.size !== 1 ? 's' : ''} selected</span>
+            <button onClick={() => setSelectedIds(new Set())} className="text-xs text-indigo-400 hover:text-indigo-700 ml-auto">Clear</button>
+          </div>
+
+          {/* Contract dates */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-sm text-indigo-700 font-medium shrink-0">Set contract start month:</span>
+            <input
+              type="month"
+              value={bulkContractMonth}
+              onChange={e => setBulkContractMonth(e.target.value)}
+              className="border border-indigo-300 rounded-lg px-3 py-1.5 text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-300"
+            />
+            {bulkContractMonth && (
+              <span className="text-xs text-indigo-500">
+                End dates auto-calculated per billing type
+                {Array.from(selectedIds).length <= 5 && ': '}
+                {Array.from(selectedIds).slice(0, 5).map(id => {
+                  const c = clients.find(x => x.id === id)
+                  if (!c) return null
+                  return <span key={id} className="ml-1 bg-white/60 px-1.5 py-0.5 rounded text-indigo-700">{c.name} → {calcContractEnd(bulkContractMonth, c.billing_type)}</span>
+                })}
+                {selectedIds.size > 5 && <span className="ml-1 text-indigo-400">+{selectedIds.size - 5} more</span>}
+              </span>
+            )}
+            <button onClick={bulkSetContractDates} disabled={bulkSaving || !bulkContractMonth}
+              className="px-4 py-1.5 bg-indigo-700 text-white rounded-lg text-sm font-body hover:bg-indigo-800 transition-all disabled:opacity-50 shrink-0">
+              {bulkSaving ? 'Saving…' : 'Set Dates'}
+            </button>
+          </div>
+
+          {/* Holding company */}
+          <div className="flex items-center gap-3 flex-wrap border-t border-indigo-200 pt-3">
+            <span className="text-sm text-indigo-700 font-medium shrink-0">Assign holding company:</span>
+            <select value={bulkHoldingId} onChange={e => setBulkHoldingId(e.target.value)}
+              className="border border-indigo-300 rounded-lg px-3 py-1.5 text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-300">
+              <option value="">— Remove from group —</option>
+              {holdingCos.map(hc => <option key={hc.id} value={hc.id}>{hc.name}</option>)}
+            </select>
+            <button onClick={bulkAssignHolding} disabled={bulkSaving}
+              className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-body hover:bg-indigo-700 transition-all disabled:opacity-50">
+              {bulkSaving ? 'Saving…' : 'Assign'}
+            </button>
+          </div>
         </div>
       )}
 
@@ -283,16 +373,16 @@ export default function ClientsPanel() {
                   className="rounded accent-narra-green cursor-pointer"
                 />
               </th>
-              {['Client', 'Holding Group', 'Distributor / Payer', 'Billing', 'LTV', 'Cash Received', 'Notes', 'Status', ''].map(h => (
+              {['Client', 'Holding Group', 'Distributor / Payer', 'Billing', 'Contract Start', 'Contract End', 'LTV', 'Cash Received', 'Notes', 'Status', ''].map(h => (
                 <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'LTV' || h === 'Cash Received' ? 'text-right' : 'text-left'}`}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={10} className="px-4 py-10 text-center text-narra-muted">Loading…</td></tr>
+              <tr><td colSpan={12} className="px-4 py-10 text-center text-narra-muted">Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={10} className="px-4 py-10 text-center text-narra-muted">
+              <tr><td colSpan={12} className="px-4 py-10 text-center text-narra-muted">
                 {clients.length === 0 ? 'No clients yet — add your first client above.' : 'No results match your filter.'}
               </td></tr>
             ) : filtered.map(c => (
@@ -323,6 +413,19 @@ export default function ClientsPanel() {
                 <td className="px-4 py-3">
                   <Badge label={c.billing_type} color={billingColor(c.billing_type)} />
                 </td>
+                <td className="px-4 py-3 text-narra-muted text-xs whitespace-nowrap">{fmtDate(c.contract_start)}</td>
+                <td className="px-4 py-3 text-xs whitespace-nowrap">
+                  {c.contract_end ? (
+                    <span>
+                      <span className="text-narra-muted">{fmtDate(c.contract_end)}</span>
+                      {renewalStatus(c.contract_end) && (
+                        <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-medium ${renewalStatus(c.contract_end)!.color}`}>
+                          {renewalStatus(c.contract_end)!.label}
+                        </span>
+                      )}
+                    </span>
+                  ) : <span className="text-narra-border">—</span>}
+                </td>
                 <td className="px-4 py-3 text-right font-medium text-narra-dark">
                   {c.ltv > 0 ? `$${c.ltv.toLocaleString()}` : <span className="text-narra-border">—</span>}
                 </td>
@@ -342,6 +445,8 @@ export default function ClientsPanel() {
                     <button onClick={() => setEditingClient({
                       id: c.id, name: c.name, holding_company_id: c.holding_company_id,
                       distributor: c.distributor || '', billing_type: c.billing_type,
+                      contract_start: c.contract_start ? c.contract_start.split('T')[0] : '',
+                      contract_end:   c.contract_end   ? c.contract_end.split('T')[0]   : '',
                       notes: c.notes || '', active: c.active,
                     })} className="text-xs text-narra-muted hover:text-narra-dark">Edit</button>
                     <button onClick={() => deleteClient(c.id)} className="text-xs text-red-400 hover:text-red-600">✕</button>
@@ -353,7 +458,7 @@ export default function ClientsPanel() {
           {filtered.length > 0 && (
             <tfoot>
               <tr className="border-t-2 border-narra-dark bg-narra-surface">
-                <td colSpan={5} className="px-4 py-3 font-heading font-semibold text-narra-dark text-sm">
+                <td colSpan={7} className="px-4 py-3 font-heading font-semibold text-narra-dark text-sm">
                   {filtered.length} client{filtered.length !== 1 ? 's' : ''}
                 </td>
                 <td className="px-4 py-3 text-right font-heading font-semibold text-narra-dark">
@@ -362,7 +467,7 @@ export default function ClientsPanel() {
                 <td className="px-4 py-3 text-right font-heading font-semibold text-green-700">
                   ${filtered.reduce((s, c) => s + (c.cash_received || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                 </td>
-                <td colSpan={3} />
+                <td colSpan={5} />
               </tr>
             </tfoot>
           )}
@@ -426,6 +531,19 @@ export default function ClientsPanel() {
                   className="w-full border border-narra-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-narra-green/30 bg-white">
                   {BILLING_TYPES.map(t => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
                 </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-narra-muted uppercase tracking-widest font-body block mb-1">Contract Start</label>
+                  <input type="date" value={editingClient.contract_start || ''} onChange={e => setEditingClient(p => ({ ...p!, contract_start: e.target.value || null }))}
+                    className="w-full border border-narra-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-narra-green/30" />
+                </div>
+                <div>
+                  <label className="text-xs text-narra-muted uppercase tracking-widest font-body block mb-1">Contract End</label>
+                  <input type="date" value={editingClient.contract_end || ''} onChange={e => setEditingClient(p => ({ ...p!, contract_end: e.target.value || null }))}
+                    className="w-full border border-narra-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-narra-green/30" />
+                </div>
               </div>
 
               <div>

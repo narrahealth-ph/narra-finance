@@ -211,6 +211,7 @@ export async function answerFinancialQuestion(question: string, ctx: {
   prevRevenue:         { label: string; revenue: number }[]
   avgMonthlyBurn:      number
   mrrPeriodNote:       string
+  contractSchedule:    { client: string; billingType: string; contractEnd: string | null; daysUntilRenewal: number | null; renewingSoon: boolean }[]
 }) {
   const expensesLine = ctx.expensesByCategory.length > 0
     ? ctx.expensesByCategory.map(e => `  ${e.category}: $${e.amount.toLocaleString()}`).join('\n')
@@ -253,6 +254,12 @@ ${ctx.topExpenses.slice(0, 8).map(e => `  ${e.vendor} (${e.account}): $${e.amoun
 
 Active clients and MRR (annual auto-renewing contracts):
 ${ctx.mrrByClient.map(c => `  ${c.client}: $${c.amount.toLocaleString()}/mo`).join('\n') || '  See most recent closed month above'}
+
+Contract renewal schedule (upcoming cash inflows from auto-renewals):
+${ctx.contractSchedule.length > 0
+  ? ctx.contractSchedule.map(c => `  ${c.client} (${c.billingType}): contract ends ${c.contractEnd}${c.daysUntilRenewal !== null ? ` — ${c.daysUntilRenewal <= 0 ? 'up for renewal now' : `renews in ${c.daysUntilRenewal} days`}` : ''}${c.renewingSoon ? ' ⚠ RENEWING SOON' : ''}`).join('\n')
+  : '  No contract end dates recorded yet — add them in Client Registry'}
+When a client renews their annual contract, that full annual payment lands in the bank as a lump sum. Factor this into any cash flow projections.
 
 Answer in 3–5 sentences. Lead with a clear yes/no or direct finding. Use specific dollar amounts. For hypothetical questions about new costs, use the avg monthly burn ($${Math.round(ctx.avgMonthlyBurn).toLocaleString()}/mo) as the baseline, not $0. NEVER assume the business has no revenue or no clients based on a single month's data.`
     }]

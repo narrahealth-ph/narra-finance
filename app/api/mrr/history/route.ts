@@ -190,8 +190,16 @@ export async function GET(req: NextRequest) {
       const maxYear     = Math.max(currentYear, 2026)
 
       // Load all periods with their total expense costs from bank statements (matches Reports/P&L)
+      // Use same safeUsd logic: prefer amount_usd, fall back to amount for USD-only transactions
       const costsRes = await query(
-        `SELECT p.start_date, COALESCE(SUM(bt.amount_usd), 0) AS total_costs
+        `SELECT p.start_date,
+                COALESCE(SUM(
+                  CASE
+                    WHEN bt.amount_usd IS NOT NULL AND bt.amount_usd > 0 THEN bt.amount_usd
+                    WHEN bt.currency = 'USD' OR bt.currency IS NULL      THEN bt.amount
+                    ELSE 0
+                  END
+                ), 0) AS total_costs
          FROM periods p
          LEFT JOIN bank_transactions bt ON bt.period_id = p.id AND bt.type = 'expense'
          WHERE EXTRACT(year FROM p.start_date) >= 2026

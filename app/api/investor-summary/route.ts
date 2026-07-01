@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
     clientsRes,
     totalCashRes,
     totalInvestedRes,
+    sgdRateRes,
   ] = await Promise.all([
     // All periods, most recent first
     query(`SELECT * FROM periods ORDER BY start_date DESC LIMIT 24`),
@@ -84,6 +85,13 @@ export async function GET(req: NextRequest) {
     query(`
       SELECT COALESCE(SUM(amount_usd), 0) AS total
       FROM bank_transactions WHERE type = 'investment'
+    `),
+
+    // Latest SGD→USD exchange rate
+    query(`
+      SELECT rate FROM fx_rates
+      WHERE currency = 'SGD'
+      ORDER BY date DESC LIMIT 1
     `),
   ])
 
@@ -189,6 +197,8 @@ export async function GET(req: NextRequest) {
     pct: totalClientMrr > 0 ? Math.round((c.mrr / totalClientMrr) * 100) : 0,
   }))
 
+  const sgdRate = parseFloat(sgdRateRes.rows[0]?.rate || '0.74')
+
   return NextResponse.json({
     avgRevenue,
     arr:            avgRevenue * 12,
@@ -206,5 +216,6 @@ export async function GET(req: NextRequest) {
     mrrMonth:       latestMrr?.label || null,
     revenueMonths:  recentRevenueMonths.map((r: any) => r.label),
     burnMonths:     recentBurnMonths.map((r: any) => r.label),
+    sgdRate,
   })
 }

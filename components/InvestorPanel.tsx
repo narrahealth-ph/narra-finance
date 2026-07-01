@@ -33,8 +33,9 @@ function fmtDate(dateStr: string) {
 }
 
 export default function InvestorPanel() {
-  const [data,    setData]    = useState<any>(null)
-  const [loading, setLoading] = useState(true)
+  const [data,            setData]            = useState<any>(null)
+  const [loading,         setLoading]         = useState(true)
+  const [displayCurrency, setDisplayCurrency] = useState<'USD' | 'SGD'>('USD')
 
   useEffect(() => {
     fetch('/api/investor-summary', { credentials: 'include' })
@@ -61,6 +62,11 @@ export default function InvestorPanel() {
   const burnMonths     = data?.burnMonths     || []
   const totalInvested  = data?.totalInvested  || 0
 
+  // Currency conversion
+  const sgdRate = data?.sgdRate || 0.74
+  const cvt = (n: number) => displayCurrency === 'SGD' ? (n || 0) / sgdRate : (n || 0)
+  const sym = displayCurrency === 'SGD' ? 'S$' : '$'
+
   const revenueVsInvested = TOTAL_INVESTED_USD > 0
     ? Math.min(100, Math.round((totalRevenue / TOTAL_INVESTED_USD) * 100))
     : 0
@@ -84,10 +90,14 @@ export default function InvestorPanel() {
     <div className="space-y-6 animate-fade-up">
 
       {/* Title */}
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="font-heading text-2xl font-light text-narra-dark">Business Overview</h2>
           <p className="text-narra-muted text-sm mt-1">Live data · Narra Health PTE. LTD. · Confidential</p>
+        </div>
+        <div className="flex rounded-lg border border-narra-border overflow-hidden text-xs font-body shrink-0">
+          <button onClick={() => setDisplayCurrency('USD')} className={`px-3 py-2 transition-all ${displayCurrency === 'USD' ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:bg-narra-light'}`}>USD</button>
+          <button onClick={() => setDisplayCurrency('SGD')} className={`px-3 py-2 transition-all ${displayCurrency === 'SGD' ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:bg-narra-light'}`}>SGD</button>
         </div>
       </div>
 
@@ -117,18 +127,18 @@ export default function InvestorPanel() {
         {/* Invested */}
         <div className="bg-narra-dark border border-white/10 rounded-2xl p-6 flex flex-col gap-2">
           <div className="text-white/40 text-xs uppercase tracking-widest font-body">Total Raised</div>
-          <div className="font-heading text-3xl font-light text-white">${fmt(TOTAL_INVESTED_USD)}</div>
+          <div className="font-heading text-3xl font-light text-white">{sym}{fmt(cvt(TOTAL_INVESTED_USD))}</div>
           <div className="text-white/30 text-xs font-body">Invested by founders to build the product</div>
           <div className="mt-3 pt-3 border-t border-white/10 text-xs text-white/40 font-body space-y-1">
-            <div className="flex justify-between"><span>Mike</span><span className="text-white/60">$30,000</span></div>
-            <div className="flex justify-between"><span>Rene</span><span className="text-white/60">$30,000</span></div>
+            <div className="flex justify-between"><span>Mike</span><span className="text-white/60">{sym}{fmt(cvt(30000))}</span></div>
+            <div className="flex justify-between"><span>Rene</span><span className="text-white/60">{sym}{fmt(cvt(30000))}</span></div>
           </div>
         </div>
 
         {/* Revenue earned back */}
         <div className="bg-narra-dark border border-white/10 rounded-2xl p-6 flex flex-col gap-2">
           <div className="text-white/40 text-xs uppercase tracking-widest font-body">Total Revenue Earned</div>
-          <div className="font-heading text-3xl font-light text-narra-green">${fmt(totalRevenue)}</div>
+          <div className="font-heading text-3xl font-light text-narra-green">{sym}{fmt(cvt(totalRevenue))}</div>
           <div className="text-white/30 text-xs font-body">
             All cash received from clients
             {earliestBank && latestBank && (
@@ -152,7 +162,7 @@ export default function InvestorPanel() {
           <div className="font-heading text-2xl font-light text-white leading-tight">A working product with paying clients</div>
           <div className="mt-auto pt-3 border-t border-white/10 text-xs text-white/40 font-body space-y-1">
             <div className="flex justify-between"><span>Active clients</span><span className="text-white/60">{activeClients}</span></div>
-            <div className="flex justify-between"><span>Monthly recurring</span><span className="text-narra-green">${fmt(avgRevenue)}/mo</span></div>
+            <div className="flex justify-between"><span>Monthly recurring</span><span className="text-narra-green">{sym}{fmt(cvt(avgRevenue))}/mo</span></div>
           </div>
         </div>
       </div>
@@ -164,7 +174,7 @@ export default function InvestorPanel() {
             Avg Monthly Revenue
             <KpiTooltip text="Average cash actually received from clients per month, based on your last 3 months of bank deposits." />
           </div>
-          <div className="font-heading text-2xl font-semibold text-narra-green">${fmt(avgRevenue)}</div>
+          <div className="font-heading text-2xl font-semibold text-narra-green">{sym}{fmt(cvt(avgRevenue))}</div>
           <div className="text-narra-muted text-xs mt-1 font-body">
             {revenueMonths.length > 0
               ? `Avg of ${revenueMonths.map(fmtMonth).join(', ')}`
@@ -177,7 +187,7 @@ export default function InvestorPanel() {
             Annual Run Rate
             <KpiTooltip text="Your average monthly revenue multiplied by 12. This projects your current pace over a full year — it is not actual annual revenue." />
           </div>
-          <div className="font-heading text-2xl font-semibold text-narra-dark">${fmt(arr)}</div>
+          <div className="font-heading text-2xl font-semibold text-narra-dark">{sym}{fmt(cvt(arr))}</div>
           <div className="text-narra-muted text-xs mt-1 font-body">Avg monthly revenue × 12</div>
         </div>
 
@@ -186,7 +196,7 @@ export default function InvestorPanel() {
             Avg Monthly Spend
             <KpiTooltip text="Average amount spent per month based on your last 3 months of bank outflows. Includes all company expenses paid from the bank." />
           </div>
-          <div className="font-heading text-2xl font-semibold text-red-500">${fmt(avgBurn)}</div>
+          <div className="font-heading text-2xl font-semibold text-red-500">{sym}{fmt(cvt(avgBurn))}</div>
           <div className="text-narra-muted text-xs mt-1 font-body">
             {burnMonths.length > 0
               ? `Avg of ${burnMonths.map(fmtMonth).join(', ')}`
@@ -219,9 +229,9 @@ export default function InvestorPanel() {
             <BarChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
               <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.3)' }} />
-              <YAxis tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.3)' }} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} />
+              <YAxis tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.3)' }} tickFormatter={v => `${sym}${(cvt(v)/1000).toFixed(0)}k`} />
               <Tooltip
-                formatter={(v: number, name: string) => [`$${fmt(v)}`, name]}
+                formatter={(v: number, name: string) => [`${sym}${fmt(cvt(v))}`, name]}
                 contentStyle={{ background: '#0d2b30', border: '1px solid rgba(199,233,149,0.2)', borderRadius: 8, fontSize: 12 }}
                 labelStyle={{ color: '#c7e995' }}
                 itemStyle={{ color: '#fff' }}
@@ -250,13 +260,13 @@ export default function InvestorPanel() {
                   <div className="h-full bg-narra-green rounded-full" style={{ width: `${c.pct}%` }} />
                 </div>
                 <span className="text-narra-muted text-xs w-8 text-right shrink-0">{c.pct}%</span>
-                <span className="text-narra-dark font-body text-sm w-16 sm:w-20 text-right shrink-0">${fmt(c.mrr)}</span>
+                <span className="text-narra-dark font-body text-sm w-16 sm:w-20 text-right shrink-0">{sym}{fmt(cvt(c.mrr))}</span>
               </div>
             ))}
           </div>
           <div className="mt-4 pt-4 border-t border-narra-border flex justify-between">
             <span className="text-narra-muted text-sm font-body">Total monthly recurring</span>
-            <span className="text-narra-green font-heading font-semibold">${fmt(totalClientMrr)}</span>
+            <span className="text-narra-green font-heading font-semibold">{sym}{fmt(cvt(totalClientMrr))}</span>
           </div>
         </div>
       )}
@@ -269,7 +279,7 @@ export default function InvestorPanel() {
         </p>
         <div className="flex items-end gap-4">
           <div className={`font-heading text-3xl sm:text-4xl font-light ${cashPosition >= 0 ? 'text-narra-dark' : 'text-red-500'}`}>
-            {cashPosition < 0 ? '(' : ''}${fmt(Math.abs(cashPosition))}{cashPosition < 0 ? ')' : ''}
+            {cashPosition < 0 ? '(' : ''}{sym}{fmt(Math.abs(cvt(cashPosition)))}{cashPosition < 0 ? ')' : ''}
           </div>
           {runway !== null && (
             <div className="text-narra-muted text-sm pb-1 font-body">

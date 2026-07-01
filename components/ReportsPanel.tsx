@@ -663,7 +663,7 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
             <div>
               <div className="text-xs text-white/40 uppercase tracking-widest mb-1">NARRA HEALTH PTE. LTD.</div>
               <h3 className="font-heading font-semibold text-white">Profit and Loss Statement</h3>
-              <p className="text-xs text-white/50 mt-0.5">{period.replace('_', ' ')} · {displayCurrency}</p>
+              <p className="text-xs text-white/50 mt-0.5">{period.replace('_', ' ')}</p>
             </div>
             <div className="text-right">
               <div className={`font-heading text-2xl font-semibold ${pl.netProfit >= 0 ? 'text-narra-green' : 'text-red-400'}`}>

@@ -197,8 +197,8 @@ If no anomalies, return empty array [].`
 // ── Answer a financial question ───────────────────────────────────────────────
 export async function answerFinancialQuestion(question: string, ctx: {
   period:              string
-  totalRevenue:        number   // accrual MRR
-  cashRevenue:         number   // cash received this month
+  totalRevenue:        number
+  cashRevenue:         number
   totalExpenses:       number
   netProfit:           number
   cashBalance:         number
@@ -209,7 +209,13 @@ export async function answerFinancialQuestion(question: string, ctx: {
   topExpenses:         { vendor: string; amount: number; account: string }[]
   mrrByClient:         { client: string; amount: number }[]
   prevRevenue:         { label: string; revenue: number }[]
+  avgMonthlyBurn:      number
+  mrrPeriodNote:       string
 }) {
+  const expensesLine = ctx.expensesByCategory.length > 0
+    ? ctx.expensesByCategory.map(e => `  ${e.category}: $${e.amount.toLocaleString()}`).join('\n')
+    : `  No expense breakdown for selected month. Avg monthly burn across recent months: $${Math.round(ctx.avgMonthlyBurn).toLocaleString()}`
+
   const response = await client.messages.create({
     model:      'claude-sonnet-4-5',
     max_tokens: 800,
@@ -220,35 +226,35 @@ Answer the following question using the financial data below. Be direct, specifi
 
 CRITICAL BILLING MODEL — READ CAREFULLY:
 - Narra Health clients are on ANNUAL contracts with AUTOMATIC RENEWAL. They pay once per year upfront.
-- When a client pays $X annually, the FULL $X lands in the bank in that one month. It does NOT drip in monthly.
-- In subsequent months, $0 cash is received from that client — but the cash is STILL IN THE BANK from the upfront payment.
-- This means: $0 cash received in a month does NOT mean revenue disappeared or cash ran out. It simply means no new invoices were collected that month.
-- The current cash balance ($${ctx.cashBalance.toLocaleString()}) already accounts for all cash in and all expenses out. Use this figure — do not try to re-derive cash by subtracting monthly expenses from revenue.
-- MRR ($${ctx.totalMrr.toLocaleString()}/mo) is the accrual revenue earned each month; cash balance is the actual bank position.
-${ctx.billingNote ? '\n' + ctx.billingNote + '\n' : ''}
+- When a client pays $X annually, the FULL $X lands in the bank that one month. In all other months, $0 cash is received — but the cash is STILL IN THE BANK accumulating from all upfront payments.
+- $0 cash received in a month does NOT mean revenue disappeared or the business has no income. Contracts auto-renew; clients are still active.
+- The current cash balance ($${ctx.cashBalance.toLocaleString()}) already accounts for ALL cash ever received minus ALL expenses ever paid. This is the ground truth — do not re-derive it.
+- MRR ($${ctx.totalMrr.toLocaleString()}/mo) is the accrual revenue earned monthly from active contracts.
+- Average monthly operating expenses (from recent months): $${Math.round(ctx.avgMonthlyBurn).toLocaleString()}/mo — use this as the baseline for hypothetical expense calculations, not the selected month's figure which may be $0 if statements aren't imported yet.
+${ctx.mrrPeriodNote ? '\n' + ctx.mrrPeriodNote + '\n' : ''}${ctx.billingNote ? '\n' + ctx.billingNote + '\n' : ''}
 QUESTION: ${question}
 
-FINANCIAL DATA FOR ${ctx.period}:
-- MRR (accrual revenue earned this month): $${ctx.totalMrr.toLocaleString()}
-- Cash received from clients this month: $${ctx.cashRevenue.toLocaleString()} (may be $0 — annual clients pre-paid)
-- Operating expenses (bank outflows): $${ctx.totalExpenses.toLocaleString()}
-- Net profit/loss (accrual): $${ctx.netProfit.toLocaleString()}
-- CURRENT CASH BALANCE (actual bank position): $${ctx.cashBalance.toLocaleString()}
-- Cash runway at current spend: ${ctx.runway} months
+FINANCIAL DATA (viewing period: ${ctx.period}):
+- Monthly Recurring Revenue (MRR, accrual): $${ctx.totalMrr.toLocaleString()}/mo
+- Cash received from clients this period: $${ctx.cashRevenue.toLocaleString()} (may be $0 under annual billing — normal)
+- Operating expenses this period: $${ctx.totalExpenses.toLocaleString()}
+- Average monthly burn (recent months): $${Math.round(ctx.avgMonthlyBurn).toLocaleString()}/mo
+- CURRENT CASH BALANCE (actual bank position, all time): $${ctx.cashBalance.toLocaleString()}
+- Cash runway at avg burn: ${ctx.runway} months
 
-Recent cash received from clients (prior months — shows when annual payments landed):
-${ctx.prevRevenue.map(r => `  ${r.label}: $${r.revenue.toLocaleString()}`).join('\n') || '  No prior data'}
+When clients paid (recent months — annual upfront payments):
+${ctx.prevRevenue.map(r => `  ${r.label}: $${r.revenue.toLocaleString()}`).join('\n') || '  No prior cash data'}
 
-Expenses by category:
-${ctx.expensesByCategory.map(e => `  ${e.category}: $${e.amount.toLocaleString()}`).join('\n')}
+Expenses by category (this period):
+${expensesLine}
 
 Top expense vendors:
-${ctx.topExpenses.slice(0, 8).map(e => `  ${e.vendor} (${e.account}): $${e.amount.toLocaleString()}`).join('\n')}
+${ctx.topExpenses.slice(0, 8).map(e => `  ${e.vendor} (${e.account}): $${e.amount.toLocaleString()}`).join('\n') || '  No expense detail for this period'}
 
-MRR by client (monthly accrual — reflects active contracts, NOT when cash was received):
-${ctx.mrrByClient.map(c => `  ${c.client}: $${c.amount.toLocaleString()}/mo`).join('\n')}
+Active clients and MRR (annual auto-renewing contracts):
+${ctx.mrrByClient.map(c => `  ${c.client}: $${c.amount.toLocaleString()}/mo`).join('\n') || '  See most recent closed month above'}
 
-Answer in 3–5 sentences. Lead with a clear yes/no or direct finding. Use specific dollar amounts. NEVER assume cash ran out just because $0 was received in a month — always use the cash balance figure provided above as the ground truth for how much money is in the bank.`
+Answer in 3–5 sentences. Lead with a clear yes/no or direct finding. Use specific dollar amounts. For hypothetical questions about new costs, use the avg monthly burn ($${Math.round(ctx.avgMonthlyBurn).toLocaleString()}/mo) as the baseline, not $0. NEVER assume the business has no revenue or no clients based on a single month's data.`
     }]
   })
   return response.content[0].type === 'text' ? response.content[0].text : ''

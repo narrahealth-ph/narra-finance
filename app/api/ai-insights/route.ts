@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
   const p = period.rows[0]
   if (!p) return NextResponse.json({ error: 'Period not found' }, { status: 404 })
 
-  const [bankTxsRes, mrrRes, prevRevenueRes, prevBurnRes, prevMrrRes] = await Promise.all([
+  const [bankTxsRes, mrrRes, prevRevenueRes, prevBurnRes, prevMrrRes, latestMrrRes] = await Promise.all([
     query('SELECT * FROM bank_transactions WHERE period_id = $1', [periodId]),
     query('SELECT * FROM mrr_entries WHERE period_id = $1', [periodId]),
 
@@ -64,12 +64,35 @@ export async function POST(req: NextRequest) {
         LIMIT 1
       )
     `, [periodId]),
+
+    // Latest MRR entries from ANY period with data (fallback when current period has no MRR yet)
+    query(`
+      SELECT m.client_name, m.amount_usd, p2.label AS period_label
+      FROM mrr_entries m
+      JOIN periods p2 ON p2.id = m.period_id
+      WHERE p2.id = (
+        SELECT id FROM periods
+        WHERE id IN (SELECT DISTINCT period_id FROM mrr_entries)
+        ORDER BY start_date DESC
+        LIMIT 1
+      )
+      ORDER BY m.amount_usd DESC
+    `),
   ])
 
   const bankTxs = bankTxsRes.rows
 
   // Accrual revenue = MRR entries (what was earned this month under contracts)
-  const totalMrr = mrrRes.rows.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || 0), 0)
+  // If current period has no MRR yet (e.g. month not closed), fall back to latest known MRR
+  const currentMrr = mrrRes.rows.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || 0), 0)
+  const latestMrrRows = latestMrrRes.rows
+  const latestMrrTotal = latestMrrRows.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || 0), 0)
+  const latestMrrPeriodLabel = latestMrrRows[0]?.period_label || null
+
+  // Use current period MRR if available, otherwise use latest known (annual contracts = still active)
+  const totalMrr = currentMrr > 0 ? currentMrr : latestMrrTotal
+  const activeMrrRows = currentMrr > 0 ? mrrRes.rows : latestMrrRows
+  const mrrIsFallback = currentMrr === 0 && latestMrrTotal > 0
 
   // Cash revenue = actual bank deposits this month (can be $0 for annual-plan months)
   const safeAmt = (r: any) =>
@@ -119,11 +142,16 @@ export async function POST(req: NextRequest) {
     : null
 
   // Billing context for the AI — key insight about annual plans
-  const annualBillingNote = totalMrr > 0 && totalCashRevenue === 0
-    ? `IMPORTANT BILLING CONTEXT: No cash was received from clients this month, but this does NOT mean there is no revenue. Narra Health clients are often on annual plans — they pay the full year upfront in one payment. The $${totalMrr.toLocaleString()} MRR shown above represents revenue earned this month under those annual contracts (accrual accounting). $0 cash received months are expected and normal when annual clients have already pre-paid.`
-    : totalMrr > 0 && totalCashRevenue < totalMrr * 0.5
-    ? `BILLING CONTEXT: Cash received ($${totalCashRevenue.toLocaleString()}) is lower than accrual MRR ($${totalMrr.toLocaleString()}) this month. This is normal — some clients are on annual plans and already paid upfront earlier in the year.`
+  const mrrFallbackNote = mrrIsFallback && latestMrrPeriodLabel
+    ? `NOTE: The selected period (${p.label}) has no MRR entries recorded yet. The MRR and client data below is from the most recently closed month (${latestMrrPeriodLabel}). Because Narra Health clients are on ANNUAL AUTO-RENEWING contracts, these clients and their MRR are still active and ongoing — they do not disappear just because the current month hasn't been entered yet.`
     : ''
+
+  const annualBillingNote = mrrFallbackNote ||
+    (totalMrr > 0 && totalCashRevenue === 0
+      ? `IMPORTANT BILLING CONTEXT: No cash was received from clients this month, but this does NOT mean there is no revenue. Narra Health clients are on annual plans — they pay the full year upfront. The $${totalMrr.toLocaleString()} MRR shown represents revenue earned this month under those annual contracts. $0 cash received months are normal when clients have already pre-paid.`
+      : totalMrr > 0 && totalCashRevenue < totalMrr * 0.5
+      ? `BILLING CONTEXT: Cash received ($${totalCashRevenue.toLocaleString()}) is lower than accrual MRR ($${totalMrr.toLocaleString()}) this month. Normal — some clients are on annual plans and already paid upfront earlier in the year.`
+      : '')
 
   let result: any = {}
 
@@ -136,10 +164,10 @@ export async function POST(req: NextRequest) {
       netProfit:         totalMrr - totalBankExpenses,
       mrr:               totalMrr,
       mrrGrowth:         0,
-      clientCount:       mrrRes.rows.length,
+      clientCount:       activeMrrRows.length,
       cashBalance,
       runway,
-      topClients:        mrrRes.rows.slice(0, 3).map((r: any) => ({ name: r.client_name, amount: parseFloat(r.amount_usd || 0) })),
+      topClients:        activeMrrRows.slice(0, 3).map((r: any) => ({ name: r.client_name, amount: parseFloat(r.amount_usd || 0) })),
       anomalies:         [],
       billingNote:       annualBillingNote,
       prevRevenue,
@@ -191,16 +219,21 @@ export async function POST(req: NextRequest) {
       .sort((a, b) => safeAmt(b) - safeAmt(a))
       .map(r => ({ vendor: r.description || 'Unknown', amount: safeAmt(r), account: r.account || 'Other' }))
 
-    const mrrByClient = [...mrrRes.rows]
-      .sort((a, b) => parseFloat(b.amount_usd || 0) - parseFloat(a.amount_usd || 0))
-      .map(r => ({ client: r.client_name, amount: parseFloat(r.amount_usd || 0) }))
+    // Use active MRR rows (fallback to latest period if current has none)
+    const mrrByClient = [...activeMrrRows]
+      .sort((a: any, b: any) => parseFloat(b.amount_usd || 0) - parseFloat(a.amount_usd || 0))
+      .map((r: any) => ({ client: r.client_name, amount: parseFloat(r.amount_usd || 0) }))
+
+    // Use avg monthly burn as the realistic expense baseline for hypothetical questions
+    // (current period may be $0 if bank statements not yet imported for this month)
+    const expenseBaseline = totalBankExpenses > 0 ? totalBankExpenses : avgMonthlyBurn
 
     const answer = await answerFinancialQuestion(question, {
       period:             p.label,
       totalRevenue:       totalMrr,
       cashRevenue:        totalCashRevenue,
-      totalExpenses:      totalBankExpenses,
-      netProfit:          totalMrr - totalBankExpenses,
+      totalExpenses:      expenseBaseline,
+      netProfit:          totalMrr - expenseBaseline,
       cashBalance,
       runway,
       totalMrr,
@@ -209,6 +242,8 @@ export async function POST(req: NextRequest) {
       topExpenses,
       mrrByClient,
       prevRevenue,
+      avgMonthlyBurn,
+      mrrPeriodNote:      mrrIsFallback && latestMrrPeriodLabel ? `MRR data shown is from ${latestMrrPeriodLabel} (most recent closed month) — these contracts auto-renew annually so clients are still active.` : '',
     })
     result.answer = answer
   }

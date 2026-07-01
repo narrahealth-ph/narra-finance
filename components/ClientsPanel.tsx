@@ -53,7 +53,7 @@ export default function ClientsPanel() {
   const [selectedIds,     setSelectedIds]     = useState<Set<number>>(new Set())
   const [bulkHoldingId,     setBulkHoldingId]     = useState<string>('')
   const [bulkSaving,        setBulkSaving]        = useState(false)
-  const [bulkContractMonth, setBulkContractMonth] = useState<string>('')  // YYYY-MM
+  const [bulkContractStart, setBulkContractStart] = useState<string>('')  // YYYY-MM-DD
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -171,27 +171,27 @@ export default function ClientsPanel() {
     load()
   }
 
-  // Given a contract start (YYYY-MM-DD) and billing type, return the last day of the final active month
-  function calcContractEnd(startYYYYMM: string, billingType: string): string {
-    const [y, m] = startYYYYMM.split('-').map(Number)
-    const start = new Date(y, m - 1, 1) // first of start month
-    let months = 12 // default annual
-    if (billingType === 'quarterly') months = 3
-    else if (billingType === 'monthly') months = 1
-    // end = start + N months, then last day of that month
-    const endFirstDay = new Date(start.getFullYear(), start.getMonth() + months, 1)
-    const lastDay = new Date(endFirstDay.getTime() - 86400000) // day before
-    return lastDay.toISOString().split('T')[0]
+  // Given a contract start date (YYYY-MM-DD) and billing type, return start + full period - 1 day
+  function calcContractEnd(startDate: string, billingType: string): string {
+    const [y, m, d] = startDate.split('-').map(Number)
+    let endY = y, endM = m, endD = d
+    if (billingType === 'quarterly') endM += 3
+    else if (billingType === 'monthly') endM += 1
+    else { endY += 1 } // annual
+    // Normalise month overflow
+    while (endM > 12) { endM -= 12; endY += 1 }
+    // Subtract 1 day
+    const end = new Date(endY, endM - 1, endD - 1)
+    return end.toISOString().split('T')[0]
   }
 
   async function bulkSetContractDates() {
-    if (!selectedIds.size || !bulkContractMonth) return
+    if (!selectedIds.size || !bulkContractStart) return
     setBulkSaving(true)
-    const startDate = bulkContractMonth + '-01' // first of month
     await Promise.all(
       Array.from(selectedIds).map(id => {
         const c = clients.find(x => x.id === id)!
-        const endDate = calcContractEnd(bulkContractMonth, c.billing_type)
+        const endDate = calcContractEnd(bulkContractStart, c.billing_type)
         return fetch('/api/clients', {
           method: 'PATCH', credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
@@ -199,7 +199,7 @@ export default function ClientsPanel() {
             id: c.id, name: c.name, holding_company_id: c.holding_company_id,
             distributor: c.distributor, billing_type: c.billing_type,
             notes: c.notes, active: c.active,
-            contract_start: startDate,
+            contract_start: bulkContractStart,
             contract_end:   endDate,
           }),
         })
@@ -207,8 +207,8 @@ export default function ClientsPanel() {
     )
     setBulkSaving(false)
     setSelectedIds(new Set())
-    setBulkContractMonth('')
-    setMsg(`Contract dates set for ${selectedIds.size} client${selectedIds.size !== 1 ? 's' : ''} starting ${bulkContractMonth}.`)
+    setBulkContractStart('')
+    setMsg(`Contract dates set for ${selectedIds.size} client${selectedIds.size !== 1 ? 's' : ''} starting ${bulkContractStart}.`)
     setTimeout(() => setMsg(''), 4000)
     load()
   }
@@ -317,26 +317,25 @@ export default function ClientsPanel() {
 
           {/* Contract dates */}
           <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-sm text-indigo-700 font-medium shrink-0">Set contract start month:</span>
+            <span className="text-sm text-indigo-700 font-medium shrink-0">Set contract start date:</span>
             <input
-              type="month"
-              value={bulkContractMonth}
-              onChange={e => setBulkContractMonth(e.target.value)}
+              type="date"
+              value={bulkContractStart}
+              onChange={e => setBulkContractStart(e.target.value)}
               className="border border-indigo-300 rounded-lg px-3 py-1.5 text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-300"
             />
-            {bulkContractMonth && (
-              <span className="text-xs text-indigo-500">
-                End dates auto-calculated per billing type
-                {Array.from(selectedIds).length <= 5 && ': '}
-                {Array.from(selectedIds).slice(0, 5).map(id => {
+            {bulkContractStart && (
+              <span className="text-xs text-indigo-500 flex flex-wrap gap-1">
+                <span className="shrink-0">End dates per billing type:</span>
+                {Array.from(selectedIds).slice(0, 6).map(id => {
                   const c = clients.find(x => x.id === id)
                   if (!c) return null
-                  return <span key={id} className="ml-1 bg-white/60 px-1.5 py-0.5 rounded text-indigo-700">{c.name} → {calcContractEnd(bulkContractMonth, c.billing_type)}</span>
+                  return <span key={id} className="bg-white/70 px-1.5 py-0.5 rounded text-indigo-700">{c.name} → {calcContractEnd(bulkContractStart, c.billing_type)}</span>
                 })}
-                {selectedIds.size > 5 && <span className="ml-1 text-indigo-400">+{selectedIds.size - 5} more</span>}
+                {selectedIds.size > 6 && <span className="text-indigo-400">+{selectedIds.size - 6} more</span>}
               </span>
             )}
-            <button onClick={bulkSetContractDates} disabled={bulkSaving || !bulkContractMonth}
+            <button onClick={bulkSetContractDates} disabled={bulkSaving || !bulkContractStart}
               className="px-4 py-1.5 bg-indigo-700 text-white rounded-lg text-sm font-body hover:bg-indigo-800 transition-all disabled:opacity-50 shrink-0">
               {bulkSaving ? 'Saving…' : 'Set Dates'}
             </button>

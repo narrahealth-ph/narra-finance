@@ -459,7 +459,7 @@ export default function ClientsPanel() {
           {/* Invoice assignment — per-client dropdown */}
           <div className="border-t border-indigo-200 pt-3 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm text-indigo-700 font-medium">Assign invoice to each client:</span>
+              <span className="text-sm text-indigo-700 font-medium">Assign outgoing invoice to each client:</span>
               <button
                 onClick={applyBulkInvoicePicks}
                 disabled={bulkInvoiceSaving || Object.values(bulkInvoicePicks).filter(Boolean).length === 0}
@@ -467,10 +467,15 @@ export default function ClientsPanel() {
                 {bulkInvoiceSaving ? 'Saving…' : `Apply ${Object.values(bulkInvoicePicks).filter(Boolean).length > 0 ? `(${Object.values(bulkInvoicePicks).filter(Boolean).length})` : ''}`}
               </button>
             </div>
+            {allInvoices.length === 0 && (
+              <p className="text-xs text-indigo-400 italic">Loading invoices from sheet…</p>
+            )}
             <div className="space-y-1.5">
               {Array.from(selectedIds).map(id => {
                 const c = clients.find(x => x.id === id)
                 if (!c) return null
+                // Show unassigned invoices + any already assigned to this specific client
+                const options = allInvoices.filter((inv: any) => inv.client_id === null || inv.client_id === id)
                 return (
                   <div key={id} className="flex items-center gap-3">
                     <span className="text-sm text-indigo-800 w-40 truncate shrink-0">{c.name}</span>
@@ -479,13 +484,12 @@ export default function ClientsPanel() {
                       onChange={e => setBulkInvoicePicks(prev => ({ ...prev, [id]: e.target.value }))}
                       className="flex-1 border border-indigo-300 rounded-lg px-3 py-1.5 text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-300">
                       <option value="">— Pick invoice —</option>
-                      {allInvoices.map((inv: any) => (
-                        <option key={inv.id} value={inv.id}>
-                          {inv.invoice_id || `#${inv.id}`}
-                          {inv.period_label ? ` · ${inv.period_label}` : ''}
+                      {options.map((inv: any) => (
+                        <option key={inv.invoice_id} value={inv.invoice_id}>
+                          {inv.invoice_id}
+                          {inv.issue_date ? ` · ${inv.issue_date}` : ''}
                           {inv.vendor ? ` · ${inv.vendor}` : ''}
                           {inv.amount_usd ? ` · $${parseFloat(inv.amount_usd).toLocaleString()}` : ''}
-                          {inv.client_name ? ` [→ ${inv.client_name}]` : ''}
                         </option>
                       ))}
                     </select>
@@ -790,8 +794,8 @@ export default function ClientsPanel() {
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-indigo-700 font-medium">
                         {selectedInvoiceIds.size} selected ·{' '}
-                        ${Array.from(selectedInvoiceIds).reduce((s, id) => {
-                          const inv = availableInvoices.find(i => i.id === id)
+                        ${Array.from(selectedInvoiceIds).reduce((s, invoiceId) => {
+                          const inv = availableInvoices.find((i: any) => i.invoice_id === invoiceId)
                           return s + parseFloat(inv?.amount_usd || 0)
                         }, 0).toLocaleString()}
                       </span>

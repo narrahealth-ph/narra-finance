@@ -310,8 +310,9 @@ export default function FinancePage() {
           </button>
 
           <button onClick={signOut}
-            className="text-white/40 hover:text-white text-xs transition-colors px-2 sm:px-3 py-1.5 rounded-lg hover:bg-white/10 hidden sm:block">
-            Sign out
+            className="text-white/40 hover:text-white text-xs transition-colors px-2 sm:px-3 py-1.5 rounded-lg hover:bg-white/10">
+            <span className="hidden sm:inline">Sign out</span>
+            <span className="sm:hidden" title="Sign out">↪</span>
           </button>
         </div>
       </header>

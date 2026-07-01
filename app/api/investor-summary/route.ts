@@ -36,7 +36,11 @@ export async function GET(req: NextRequest) {
       SELECT
         p.label,
         p.start_date,
-        COALESCE(SUM(bt.amount_usd), 0) AS revenue
+        COALESCE(SUM(
+          CASE WHEN bt.amount_usd IS NOT NULL AND bt.amount_usd > 0 THEN bt.amount_usd
+               WHEN bt.currency = 'USD' OR bt.currency IS NULL THEN bt.amount
+               ELSE 0 END
+        ), 0) AS revenue
       FROM periods p
       LEFT JOIN bank_transactions bt ON bt.period_id = p.id AND bt.type = 'revenue'
       WHERE p.start_date >= NOW() - INTERVAL '18 months'
@@ -49,7 +53,11 @@ export async function GET(req: NextRequest) {
       SELECT
         p.label,
         p.start_date,
-        COALESCE(SUM(bt.amount_usd), 0) AS expenses
+        COALESCE(SUM(
+          CASE WHEN bt.amount_usd IS NOT NULL AND bt.amount_usd > 0 THEN bt.amount_usd
+               WHEN bt.currency = 'USD' OR bt.currency IS NULL THEN bt.amount
+               ELSE 0 END
+        ), 0) AS expenses
       FROM periods p
       LEFT JOIN bank_transactions bt ON bt.period_id = p.id AND bt.type = 'expense'
       WHERE p.start_date >= NOW() - INTERVAL '18 months'
@@ -150,7 +158,11 @@ export async function GET(req: NextRequest) {
 
   // Total revenue all time (client revenue only, excludes investments)
   const totalRevenueRes = await query(`
-    SELECT COALESCE(SUM(amount_usd), 0) AS total
+    SELECT COALESCE(SUM(
+      CASE WHEN amount_usd IS NOT NULL AND amount_usd > 0 THEN amount_usd
+           WHEN currency = 'USD' OR currency IS NULL THEN amount
+           ELSE 0 END
+    ), 0) AS total
     FROM bank_transactions WHERE type = 'revenue'
   `)
   const totalRevenue = parseFloat(totalRevenueRes.rows[0]?.total || 0)

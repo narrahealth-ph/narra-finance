@@ -511,7 +511,8 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
               <h3 className="font-heading font-semibold text-white">Annual General Ledger</h3>
               <p className="text-xs text-white/50 mt-0.5">{aYear} · {(annualData.allTransactions||[]).length} bank transactions</p>
             </div>
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[600px] text-sm">
               <thead>
                 <tr className="border-b border-narra-border bg-narra-surface">
                   <th className="text-left px-4 py-3 text-xs text-narra-muted font-body uppercase tracking-widest">Date</th>
@@ -543,6 +544,7 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
                 })()}
               </tbody>
             </table>
+            </div>
           </div>
         )}
       </div>
@@ -672,11 +674,12 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
               <div className="text-xs text-white/40">{pl.netProfit >= 0 ? 'Profit' : 'Loss'} for the period</div>
             </div>
           </div>
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[360px] text-sm">
             <thead>
               <tr className="border-b border-narra-border">
-                <th className="text-left px-6 py-2.5 text-xs text-narra-muted font-body uppercase tracking-widest">Account</th>
-                <th className="text-right px-6 py-2.5 text-xs text-narra-muted font-body uppercase tracking-widest">{period.split('_')[1]} ({displayCurrency})</th>
+                <th className="text-left px-3 sm:px-6 py-2.5 text-xs text-narra-muted font-body uppercase tracking-widest">Account</th>
+                <th className="text-right px-3 sm:px-6 py-2.5 text-xs text-narra-muted font-body uppercase tracking-widest">{period.split('_')[1]} ({displayCurrency})</th>
               </tr>
             </thead>
             <tbody>
@@ -726,13 +729,14 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
 
               {/* Bottom line */}
               <tr className="border-t-2 border-narra-dark">
-                <td className="px-6 py-4 font-heading font-bold text-narra-dark text-base">Net Profit / (Loss) for the period</td>
-                <td className={`px-6 py-4 text-right font-heading font-bold text-base ${pl.netProfit >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                <td className="px-3 sm:px-6 py-4 font-heading font-bold text-narra-dark text-base">Net Profit / (Loss) for the period</td>
+                <td className={`px-3 sm:px-6 py-4 text-right font-heading font-bold text-base ${pl.netProfit >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                   {pl.netProfit < 0 ? '(' : ''}{sym}{fmt(Math.abs(cvt(pl.netProfit)))}{pl.netProfit < 0 ? ')' : ''}
                 </td>
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -776,11 +780,12 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
               )
             })()}
           </div>
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[360px] text-sm">
             <thead>
               <tr className="border-b border-narra-border">
-                <th className="text-left px-6 py-2.5 text-xs text-narra-muted font-body uppercase tracking-widest">Account</th>
-                <th className="text-right px-6 py-2.5 text-xs text-narra-muted font-body uppercase tracking-widest">{period.split('_')[1]}</th>
+                <th className="text-left px-3 sm:px-6 py-2.5 text-xs text-narra-muted font-body uppercase tracking-widest">Account</th>
+                <th className="text-right px-3 sm:px-6 py-2.5 text-xs text-narra-muted font-body uppercase tracking-widest">{period.split('_')[1]}</th>
               </tr>
             </thead>
             <tbody>
@@ -960,7 +965,7 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
 
               {/* Balance check */}
               <tr className={`border-t ${bs.balanceCheck ? 'bg-green-50' : 'bg-red-50'}`}>
-                <td colSpan={2} className={`px-6 py-2 text-xs font-body ${bs.balanceCheck ? 'text-green-700' : 'text-red-600'}`}>
+                <td colSpan={2} className={`px-3 sm:px-6 py-2 text-xs font-body ${bs.balanceCheck ? 'text-green-700' : 'text-red-600'}`}>
                   {bs.balanceCheck
                     ? '✓ Balanced — Assets equal Liabilities + Equity'
                     : '⚠ Out of balance — check manual entries in the Adjustments tab'}
@@ -968,6 +973,7 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -979,7 +985,8 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
             <h3 className="font-heading font-semibold text-white">General Ledger</h3>
             <p className="text-xs text-white/50 mt-0.5">{period.replace('_', ' ')} · All accounts</p>
           </div>
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="border-b border-narra-border bg-narra-surface">
                 <th className="text-left px-4 py-3 text-xs text-narra-muted font-body uppercase tracking-widest">Posting Date</th>
@@ -1114,6 +1121,7 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
               })()}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

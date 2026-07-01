@@ -127,7 +127,7 @@ export default function InvestorPanel() {
         {/* Invested */}
         <div className="bg-narra-dark border border-white/10 rounded-2xl p-6 flex flex-col gap-2">
           <div className="text-white/40 text-xs uppercase tracking-widest font-body">Total Raised</div>
-          <div className="font-heading text-3xl font-light text-white">{sym}{fmt(cvt(TOTAL_INVESTED_USD))}</div>
+          <div className="font-heading text-2xl sm:text-3xl font-light text-white">{sym}{fmt(cvt(TOTAL_INVESTED_USD))}</div>
           <div className="text-white/30 text-xs font-body">Invested by founders to build the product</div>
           <div className="mt-3 pt-3 border-t border-white/10 text-xs text-white/40 font-body space-y-1">
             <div className="flex justify-between"><span>Mike</span><span className="text-white/60">{sym}{fmt(cvt(30000))}</span></div>
@@ -138,7 +138,7 @@ export default function InvestorPanel() {
         {/* Revenue earned back */}
         <div className="bg-narra-dark border border-white/10 rounded-2xl p-6 flex flex-col gap-2">
           <div className="text-white/40 text-xs uppercase tracking-widest font-body">Total Revenue Earned</div>
-          <div className="font-heading text-3xl font-light text-narra-green">{sym}{fmt(cvt(totalRevenue))}</div>
+          <div className="font-heading text-2xl sm:text-3xl font-light text-narra-green">{sym}{fmt(cvt(totalRevenue))}</div>
           <div className="text-white/30 text-xs font-body">
             All cash received from clients
             {earliestBank && latestBank && (
@@ -159,7 +159,7 @@ export default function InvestorPanel() {
         {/* What was built */}
         <div className="bg-narra-dark border border-white/10 rounded-2xl p-6 flex flex-col gap-2">
           <div className="text-white/40 text-xs uppercase tracking-widest font-body">What Was Built</div>
-          <div className="font-heading text-2xl font-light text-white leading-tight">A working product with paying clients</div>
+          <div className="font-heading text-xl sm:text-2xl font-light text-white leading-tight">A working product with paying clients</div>
           <div className="mt-auto pt-3 border-t border-white/10 text-xs text-white/40 font-body space-y-1">
             <div className="flex justify-between"><span>Active clients</span><span className="text-white/60">{activeClients}</span></div>
             <div className="flex justify-between"><span>Monthly recurring</span><span className="text-narra-green">{sym}{fmt(cvt(avgRevenue))}/mo</span></div>
@@ -277,8 +277,8 @@ export default function InvestorPanel() {
         <p className="text-narra-muted text-xs mb-5 font-body">
           Total in company bank accounts · all time (opening balance + revenue + investments − expenses)
         </p>
-        <div className="flex items-end gap-4">
-          <div className={`font-heading text-3xl sm:text-4xl font-light ${cashPosition >= 0 ? 'text-narra-dark' : 'text-red-500'}`}>
+        <div className="flex flex-wrap items-end gap-4">
+          <div className={`font-heading text-2xl sm:text-3xl lg:text-4xl font-light ${cashPosition >= 0 ? 'text-narra-dark' : 'text-red-500'}`}>
             {cashPosition < 0 ? '(' : ''}{sym}{fmt(Math.abs(cvt(cashPosition)))}{cashPosition < 0 ? ')' : ''}
           </div>
           {runway !== null && (

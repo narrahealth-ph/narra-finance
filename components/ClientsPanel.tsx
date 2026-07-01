@@ -371,7 +371,8 @@ export default function ClientsPanel() {
               + Add
             </button>
           </div>
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[480px] text-sm">
             <thead>
               <tr className="bg-narra-dark text-white">
                 {['Name', 'Notes', 'Clients', ''].map(h => (
@@ -386,8 +387,8 @@ export default function ClientsPanel() {
                 <tr key={hc.id} className="border-t border-narra-border hover:bg-narra-surface">
                   <td className="px-4 py-2.5 font-medium text-narra-dark">{hc.name}</td>
                   <td className="px-4 py-2.5 text-narra-muted">{hc.notes || '—'}</td>
-                  <td className="px-4 py-2.5 text-narra-muted text-xs">
-                    {clients.filter(c => c.holding_company_id === hc.id).map(c => c.name).join(', ') || '—'}
+                  <td className="px-4 py-2.5 text-narra-muted text-xs max-w-[200px]">
+                    <span className="break-words">{clients.filter(c => c.holding_company_id === hc.id).map(c => c.name).join(', ') || '—'}</span>
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="flex gap-2 justify-end">
@@ -401,6 +402,7 @@ export default function ClientsPanel() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -440,15 +442,17 @@ export default function ClientsPanel() {
               className="border border-indigo-300 rounded-lg px-3 py-1.5 text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-300"
             />
             {bulkContractStart && (
-              <span className="text-xs text-indigo-500 flex flex-wrap gap-1">
-                <span className="shrink-0">End dates per billing type:</span>
-                {Array.from(selectedIds).slice(0, 6).map(id => {
-                  const c = clients.find(x => x.id === id)
-                  if (!c) return null
-                  return <span key={id} className="bg-white/70 px-1.5 py-0.5 rounded text-indigo-700">{c.name} → {calcContractEnd(bulkContractStart, c.billing_type)}</span>
-                })}
-                {selectedIds.size > 6 && <span className="text-indigo-400">+{selectedIds.size - 6} more</span>}
-              </span>
+              <div className="text-xs text-indigo-500 w-full">
+                <span className="shrink-0 block mb-1">End dates per billing type:</span>
+                <div className="flex flex-wrap gap-1">
+                  {Array.from(selectedIds).slice(0, 6).map(id => {
+                    const c = clients.find(x => x.id === id)
+                    if (!c) return null
+                    return <span key={id} className="bg-white/70 px-1.5 py-0.5 rounded text-indigo-700 max-w-[180px] truncate">{c.name} → {calcContractEnd(bulkContractStart, c.billing_type)}</span>
+                  })}
+                  {selectedIds.size > 6 && <span className="text-indigo-400">+{selectedIds.size - 6} more</span>}
+                </div>
+              </div>
             )}
             <button onClick={bulkSetContractDates} disabled={bulkSaving || !bulkContractStart}
               className="px-4 py-1.5 bg-indigo-700 text-white rounded-lg text-sm font-body hover:bg-indigo-800 transition-all disabled:opacity-50 shrink-0">
@@ -478,7 +482,7 @@ export default function ClientsPanel() {
                 const options = allInvoices.filter((inv: any) => inv.client_id === null || inv.client_id === id)
                 return (
                   <div key={id} className="flex items-center gap-3">
-                    <span className="text-sm text-indigo-800 w-40 truncate shrink-0">{c.name}</span>
+                    <span className="text-sm text-indigo-800 w-24 sm:w-40 truncate shrink-0">{c.name}</span>
                     <select
                       value={bulkInvoicePicks[id] || ''}
                       onChange={e => setBulkInvoicePicks(prev => ({ ...prev, [id]: e.target.value }))}
@@ -517,7 +521,8 @@ export default function ClientsPanel() {
 
       {/* Clients table */}
       <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[900px] text-sm">
           <thead>
             <tr className="bg-narra-dark text-white">
               <th className="px-4 py-3 w-8">
@@ -638,6 +643,7 @@ export default function ClientsPanel() {
             </tfoot>
           )}
         </table>
+        </div>
       </div>
 
       {/* Churn insight */}

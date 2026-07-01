@@ -86,6 +86,7 @@ export default function FinancePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ label: selectedMonth, startDate, endDate }),
       })
+      if (res.status === 401) { router.push('/login'); return }
       const data = await res.json()
       setPeriodId(data.id)
     }

@@ -332,7 +332,7 @@ export async function GET(req: NextRequest) {
       const clientName   = (r[1] || '').trim()
       const amount       = parseNum((r[5] || '').toString())
       const rawStatus    = (r[6] || '').trim()
-      const status       = rawStatus.toLowerCase().replace(/\s+/g, '-') // normalise spaces → hyphens
+      const status       = rawStatus.toLowerCase().replace(/[\s-]+/g, '-') // normalise "Sales - Sent" → "sales-sent"
       const billingType  = (r[7] || 'annual').toLowerCase().trim()
       const issueDateStr = (r[4] || '').trim()
       const notes        = (r[8] || '').trim()

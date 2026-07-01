@@ -68,7 +68,8 @@ If you cannot extract a field, use null.`
 // ── Generate monthly AI narrative for investors ───────────────────────────────
 export async function generateInvestorNarrative(data: {
   period:        string
-  totalRevenue:  number
+  totalRevenue:  number   // accrual MRR (earned this month under contracts)
+  cashRevenue:   number   // actual bank cash received this month
   totalExpenses: number
   netProfit:     number
   mrr:           number
@@ -78,7 +79,14 @@ export async function generateInvestorNarrative(data: {
   runway:        number
   topClients:    { name: string; amount: number }[]
   anomalies:     string[]
+  billingNote:   string
+  prevRevenue:   { label: string; revenue: number }[]
+  prevBurn:      { label: string; expenses: number }[]
 }) {
+  const prevRevenueStr = data.prevRevenue.length > 0
+    ? data.prevRevenue.map(r => `  ${r.label}: $${r.revenue.toLocaleString()} cash received`).join('\n')
+    : '  No prior months on record'
+
   const response = await client.messages.create({
     model:      'claude-sonnet-4-5',
     max_tokens: 1000,
@@ -87,23 +95,28 @@ export async function generateInvestorNarrative(data: {
       content: `You are the CFO of Narra Health PTE. LTD., a B2B SaaS health platform based in Singapore.
 Write a concise, professional monthly financial narrative for ${data.period} to share with investors.
 
-Financial data:
-- MRR: $${data.mrr.toLocaleString()} (${data.mrrGrowth >= 0 ? '+' : ''}${data.mrrGrowth.toFixed(1)}% MoM)
-- Revenue: $${data.totalRevenue.toLocaleString()}
-- Expenses: $${data.totalExpenses.toLocaleString()}
-- Net Profit/Loss: $${data.netProfit.toLocaleString()}
+BILLING MODEL: Narra Health clients are on annual contracts — they pay once per year upfront. This means cash received in the bank may be $0 in months where clients already pre-paid earlier in the year. MRR (accrual) reflects the revenue earned each month regardless of when cash is received.
+
+${data.billingNote ? data.billingNote + '\n' : ''}
+Financial data for ${data.period}:
+- MRR (accrual revenue earned): $${data.mrr.toLocaleString()}
+- Cash received from clients this month: $${data.cashRevenue.toLocaleString()}
+- Operating expenses (from bank): $${data.totalExpenses.toLocaleString()}
+- Net Profit/Loss (accrual): $${data.netProfit.toLocaleString()}
 - Cash Balance: $${data.cashBalance.toLocaleString()}
 - Cash Runway: ${data.runway} months
 - Active Clients: ${data.clientCount}
-- Top clients: ${data.topClients.map(c => `${c.name} ($${c.amount.toLocaleString()})`).join(', ')}
-${data.anomalies.length > 0 ? `- Flagged items: ${data.anomalies.join('; ')}` : ''}
+- Top clients by MRR: ${data.topClients.map(c => `${c.name} ($${c.amount.toLocaleString()}/mo)`).join(', ')}
+
+Recent cash received (prior months for context):
+${prevRevenueStr}
 
 Write 3 short paragraphs:
-1. Month headline — key metric and overall tone
-2. Revenue & growth — MRR, top clients, any notable changes
+1. Month headline — use MRR as the primary revenue metric, note if $0 cash was received and why (annual billing)
+2. Revenue & growth — MRR, top clients, cash timing explanation if relevant
 3. Cost & outlook — main expenses, runway, forward-looking
 
-Tone: confident, transparent, investor-appropriate. No bullet points. Max 200 words.`
+Tone: confident, transparent, investor-appropriate. Do not flag $0 cash months as a problem — explain they are expected under annual billing. No bullet points. Max 220 words.`
     }]
   })
 
@@ -111,18 +124,20 @@ Tone: confident, transparent, investor-appropriate. No bullet points. Max 200 wo
 }
 
 // ── Detect anomalies in expense data ─────────────────────────────────────────
-export async function detectAnomalies(transactions: any[], prevMonthAvg: any) {
+export async function detectAnomalies(transactions: any[], prevMonthAvg: any, billingNote = '') {
   const response = await client.messages.create({
     model:      'claude-sonnet-4-5',
     max_tokens: 1000,
     messages: [{
       role:    'user',
-      content: `Analyze these expense transactions for Narra Health and flag anomalies.
+      content: `Analyze these EXPENSE transactions for Narra Health and flag anomalies.
 
-Current month transactions:
-${JSON.stringify(transactions, null, 2)}
+IMPORTANT: Only analyze expenses (outgoing bank payments). Do NOT flag missing revenue or $0 revenue as an anomaly — Narra Health clients are on annual plans so cash revenue may be $0 in many months by design.
+${billingNote ? '\n' + billingNote + '\n' : ''}
+Current month expense transactions:
+${JSON.stringify(transactions.map(t => ({ description: t.description, amount: t.amount_usd || t.amount, account: t.account })), null, 2)}
 
-Previous month averages by category:
+Expense totals by category:
 ${JSON.stringify(prevMonthAvg, null, 2)}
 
 Return ONLY valid JSON array of anomalies, no markdown:
@@ -149,15 +164,18 @@ If no anomalies, return empty array [].`
 // ── Answer a financial question ───────────────────────────────────────────────
 export async function answerFinancialQuestion(question: string, ctx: {
   period:              string
-  totalRevenue:        number
+  totalRevenue:        number   // accrual MRR
+  cashRevenue:         number   // cash received this month
   totalExpenses:       number
   netProfit:           number
   cashBalance:         number
   runway:              number
   totalMrr:            number
+  billingNote:         string
   expensesByCategory:  { category: string; amount: number }[]
   topExpenses:         { vendor: string; amount: number; account: string }[]
   mrrByClient:         { client: string; amount: number }[]
+  prevRevenue:         { label: string; revenue: number }[]
 }) {
   const response = await client.messages.create({
     model:      'claude-sonnet-4-5',
@@ -167,15 +185,20 @@ export async function answerFinancialQuestion(question: string, ctx: {
       content: `You are the CFO of Narra Health PTE. LTD., a B2B SaaS health platform based in Singapore.
 Answer the following question using the financial data below. Be direct, specific, and use actual numbers.
 
+BILLING MODEL: Clients are on annual contracts — they pay once per year upfront. Cash received from clients can be $0 in months where annual clients already pre-paid. MRR (accrual) is the true monthly revenue figure.
+${ctx.billingNote ? '\n' + ctx.billingNote + '\n' : ''}
 QUESTION: ${question}
 
 FINANCIAL DATA FOR ${ctx.period}:
+- MRR (accrual revenue earned this month): $${ctx.totalMrr.toLocaleString()}
+- Cash received from clients this month: $${ctx.cashRevenue.toLocaleString()}
+- Operating expenses (bank outflows): $${ctx.totalExpenses.toLocaleString()}
+- Net profit/loss (accrual): $${ctx.netProfit.toLocaleString()}
 - Cash balance: $${ctx.cashBalance.toLocaleString()}
-- Monthly revenue: $${ctx.totalRevenue.toLocaleString()}
-- Monthly expenses: $${ctx.totalExpenses.toLocaleString()}
-- Net profit/loss: $${ctx.netProfit.toLocaleString()}
-- MRR: $${ctx.totalMrr.toLocaleString()}
 - Cash runway: ${ctx.runway} months
+
+Recent cash received from clients (prior months):
+${ctx.prevRevenue.map(r => `  ${r.label}: $${r.revenue.toLocaleString()}`).join('\n') || '  No prior data'}
 
 Expenses by category:
 ${ctx.expensesByCategory.map(e => `  ${e.category}: $${e.amount.toLocaleString()}`).join('\n')}
@@ -183,10 +206,10 @@ ${ctx.expensesByCategory.map(e => `  ${e.category}: $${e.amount.toLocaleString()
 Top expense vendors:
 ${ctx.topExpenses.slice(0, 8).map(e => `  ${e.vendor} (${e.account}): $${e.amount.toLocaleString()}`).join('\n')}
 
-Revenue by client (MRR):
-${ctx.mrrByClient.map(c => `  ${c.client}: $${c.amount.toLocaleString()}`).join('\n')}
+MRR by client (monthly accrual):
+${ctx.mrrByClient.map(c => `  ${c.client}: $${c.amount.toLocaleString()}/mo`).join('\n')}
 
-Answer in 3–5 sentences. Lead with a clear yes/no or direct finding when applicable. Use specific dollar amounts.`
+Answer in 3–5 sentences. Lead with a clear yes/no or direct finding when applicable. Use specific dollar amounts. When discussing revenue, use MRR as the primary figure and note cash timing only if relevant.`
     }]
   })
   return response.content[0].type === 'text' ? response.content[0].text : ''

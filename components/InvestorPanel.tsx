@@ -72,10 +72,10 @@ export default function InvestorPanel() {
     : 0
 
   const chartData = months.map((m: any) => ({
-    name:    shortLabel(m.label),
-    MRR:     Math.round(m.mrr),
-    Revenue: Math.round(m.cashRevenue),
-    Burn:    Math.round(m.burn),
+    name:       shortLabel(m.label),
+    MRR:        Math.round(m.mrr),        // accrual revenue — use this as primary
+    'Cash In':  Math.round(m.cashRevenue), // actual bank deposits (may be $0 for annual billing months)
+    Burn:       Math.round(m.burn),
   }))
 
   if (loading) {
@@ -237,8 +237,8 @@ export default function InvestorPanel() {
                 itemStyle={{ color: '#fff' }}
               />
               <Legend wrapperStyle={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }} />
-              <Bar dataKey="Revenue" fill="#c7e995" radius={[3,3,0,0]} />
-              <Bar dataKey="Burn"    fill="#ef4444" radius={[3,3,0,0]} />
+              <Bar dataKey="MRR"     fill="#c7e995" radius={[3,3,0,0]} />
+              <Bar dataKey="Burn"   fill="#ef4444" radius={[3,3,0,0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>

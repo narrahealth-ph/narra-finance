@@ -492,7 +492,7 @@ export default function ClientsPanel() {
                         <option key={inv.invoice_id} value={inv.invoice_id}>
                           {inv.invoice_id}
                           {inv.issue_date ? ` · ${inv.issue_date}` : ''}
-                          {inv.vendor ? ` · ${inv.vendor}` : ''}
+                          {(inv.sheet_client_name || inv.vendor) ? ` · ${inv.sheet_client_name || inv.vendor}` : ''}
                           {inv.amount_usd ? ` · $${parseFloat(inv.amount_usd).toLocaleString()}` : ''}
                         </option>
                       ))}
@@ -778,7 +778,7 @@ export default function ClientsPanel() {
                         <div className="flex-1 min-w-0">
                           <span className="text-sm font-medium text-narra-dark">{inv.invoice_id}</span>
                           {inv.issue_date && <span className="text-xs text-narra-muted ml-2">{inv.issue_date}</span>}
-                          {inv.vendor && <span className="text-xs text-narra-muted ml-2">· {inv.vendor}</span>}
+                          {(inv.sheet_client_name || inv.vendor) && <span className="text-xs text-narra-muted ml-2">· {inv.sheet_client_name || inv.vendor}</span>}
                           {inv.status && <span className="text-xs text-narra-muted ml-2">· {inv.status}</span>}
                         </div>
                         <span className="text-sm font-heading font-semibold text-narra-dark shrink-0">
@@ -828,6 +828,7 @@ export default function ClientsPanel() {
                   const filtered = unassignedPool.filter((inv: any) =>
                     !q ||
                     (inv.invoice_id || '').toLowerCase().includes(q) ||
+                    (inv.sheet_client_name || '').toLowerCase().includes(q) ||
                     (inv.vendor || '').toLowerCase().includes(q) ||
                     (inv.issue_date || '').toLowerCase().includes(q) ||
                     (inv.status || '').toLowerCase().includes(q)
@@ -867,7 +868,7 @@ export default function ClientsPanel() {
                           <div className="flex-1 min-w-0">
                             <span className="text-sm font-medium text-narra-dark">{inv.invoice_id}</span>
                             {inv.issue_date && <span className="text-xs text-narra-muted ml-2">{inv.issue_date}</span>}
-                            {inv.vendor && <span className="text-xs text-narra-muted ml-2">· {inv.vendor}</span>}
+                            {(inv.sheet_client_name || inv.vendor) && <span className="text-xs text-narra-muted ml-2">· {inv.sheet_client_name || inv.vendor}</span>}
                             {inv.status && <span className="text-xs text-narra-muted ml-2">· {inv.status}</span>}
                           </div>
                           <span className="text-sm font-heading font-semibold text-narra-dark shrink-0">

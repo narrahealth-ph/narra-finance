@@ -54,14 +54,15 @@ async function fetchSheetInvoices() {
 
   return rows
     .map((r: any[]) => ({
-      invoice_id:   (r[0] || '').trim(),
-      vendor:       (r[1] || '').trim(),
-      description:  (r[2] || '').trim(),
-      notes:        (r[3] || '').trim(),
-      issue_date:   (r[4] || '').trim(),
-      amount_usd:   parseNum(r[5]),
-      status:       (r[6] || '').trim(),
-      billing_type: (r[7] || 'annual').trim(),
+      invoice_id:        (r[0] || '').trim(),
+      vendor:            (r[1] || '').trim(),
+      description:       (r[2] || '').trim(),
+      notes:             (r[3] || '').trim(),
+      issue_date:        (r[4] || '').trim(),
+      amount_usd:        parseNum(r[5]),
+      status:            (r[6] || '').trim(),
+      billing_type:      (r[7] || 'annual').trim(),
+      sheet_client_name: (r[8] || '').trim(),  // Col I: Client Name
     }))
     .filter((r: any) => r.invoice_id && r.amount_usd > 0)
 }

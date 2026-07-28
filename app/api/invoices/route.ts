@@ -47,12 +47,12 @@ export async function GET(req: NextRequest) {
 
       return NextResponse.json({
         invoiceId:   row[0] || '',
-        clientName:  row[1] || '',
+        clientName:  row[8] || row[1] || '',
+        vendorName:  row[1] || '',
         issueDate:   row[4] || '',
         amount:      parseNum(row[5]),
         status:      row[6] || '',
         billingType: row[7] || '',
-        notes:       row[8] || '',
       })
     } catch (err: any) {
       return NextResponse.json({ error: err.message || 'Sheet lookup failed' }, { status: 500 })

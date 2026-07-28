@@ -184,7 +184,7 @@ export async function GET(req: NextRequest) {
     // Only include invoices issued on or before the period end date
     if (!['paid', 'cancelled', 'void'].includes(status) && (!issueDate || issueDate <= periodEnd)) {
       arTotal += amount
-      arItems.push({ invoiceId: r[0], clientName: r[1], amount, status, billingType, issueDate: issueDateStr })
+      arItems.push({ invoiceId: r[0], clientName: r[8] || r[1], amount, status, billingType, issueDate: issueDateStr })
     }
     if (status === 'paid' && issueDateStr) {
       const issueDate = new Date(issueDateStr)

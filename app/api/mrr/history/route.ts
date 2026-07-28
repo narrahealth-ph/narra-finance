@@ -103,7 +103,7 @@ function calcMrrForMonth(invRows: any[][], monthStart: Date, monthEnd: Date): nu
   let total = 0
   for (const r of invRows) {
     const invoiceId    = (r[0] || '').trim()
-    const clientName   = (r[1] || '').trim()
+    const clientName   = (r[8] || r[1] || '').trim()
     const amount       = parseNum((r[5] || '').toString())
     const status       = (r[6] || '').toLowerCase().trim()
     const billingType  = (r[7] || 'annual').toLowerCase().trim()
@@ -266,7 +266,7 @@ export async function GET(req: NextRequest) {
 
       for (const r of invRows) {
         const invoiceId    = (r[0] || '').trim()
-        const clientName   = (r[1] || '').trim()
+        const clientName   = (r[8] || r[1] || '').trim()
         const amount       = parseNum((r[5] || '').toString())
         const status       = (r[6] || '').toLowerCase().trim()
         const billingType  = (r[7] || 'annual').toLowerCase().trim()
@@ -337,14 +337,14 @@ export async function GET(req: NextRequest) {
 
     for (const r of invRows) {
       const invoiceId    = (r[0] || '').trim()
-      const clientName   = (r[1] || '').trim()
+      const clientName   = (r[8] || r[1] || '').trim()
       const amount       = parseNum((r[5] || '').toString())
       const rawStatus    = (r[6] || '').trim()
       const statusNorm   = rawStatus.toLowerCase().replace(/[\s\-]+/g, '') // strip all spaces/hyphens for matching
       const status       = rawStatus.toLowerCase().replace(/[\s-]+/g, '-') // normalise for other checks
       const billingType  = (r[7] || 'annual').toLowerCase().trim()
       const issueDateStr = (r[4] || '').trim()
-      const notes        = (r[8] || '').trim()
+      const notes        = '' // Col I is now Client Name, not notes
       if (!clientName && !invoiceId) continue  // skip truly empty rows
 
       if (statusNorm === 'sent' && amount > 0) {
@@ -382,7 +382,7 @@ export async function GET(req: NextRequest) {
       const seenKeys = new Set<string>()
       for (const r of invRows) {
         const invoiceId    = (r[0] || '').trim()
-        const clientName   = (r[1] || '').trim()
+        const clientName   = (r[8] || r[1] || '').trim()
         const amount       = parseNum((r[5] || '').toString())
         const status       = (r[6] || '').toLowerCase().trim()
         const issueDateStr = (r[4] || '').trim()

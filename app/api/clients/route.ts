@@ -147,7 +147,7 @@ export async function GET(req: NextRequest) {
       // If all subsidiaries are inactive, the HC match is ignored and we fall
       // through to direct name matching (avoids ghost-split inflation).
       let distributed = false
-      for (const hcKey of matchedHcKeys) {
+      for (const hcKey of Array.from(matchedHcKeys)) {
         const subCount = holdingSubCount[hcKey] || 0
         if (subCount === 0) continue  // no active subs for this HC — skip
         const share = amount / subCount

@@ -13,8 +13,10 @@ type Client = {
   contract_end: string | null
   notes: string | null
   active: boolean
-  ltv: number           // total invoiced (from outgoing invoices)
+  ltv: number
   invoice_count: number
+  group_invoice_count: number
+  group_ltv: number
   cash_received: number
 }
 
@@ -41,30 +43,29 @@ function Badge({ label, color }: { label: string; color: string }) {
 }
 
 export default function ClientsPanel() {
-  const [clients,         setClients]         = useState<Client[]>([])
-  const [holdingCos,      setHoldingCos]      = useState<HoldingCompany[]>([])
-  const [loading,         setLoading]         = useState(true)
-  const [editingClient,   setEditingClient]   = useState<Partial<Client> | null>(null)
-  const [editingHolding,  setEditingHolding]  = useState<Partial<HoldingCompany> | null>(null)
-  const [showHolding,     setShowHolding]     = useState(false)
-  const [saving,          setSaving]          = useState(false)
-  const [msg,             setMsg]             = useState('')
-  const [search,          setSearch]          = useState('')
-  const [filterActive,    setFilterActive]    = useState<'all' | 'active' | 'inactive'>('active')
-  const [selectedIds,     setSelectedIds]     = useState<Set<number>>(new Set())
-  const [bulkHoldingId,     setBulkHoldingId]     = useState<string>('')
-  const [bulkSaving,        setBulkSaving]        = useState(false)
-  const [bulkContractStart, setBulkContractStart] = useState<string>('')  // YYYY-MM-DD
-  const [assigningClient,    setAssigningClient]    = useState<Client | null>(null)
-  const [assignedInvoices,   setAssignedInvoices]   = useState<any[]>([])
-  const [availableInvoices,  setAvailableInvoices]  = useState<any[]>([])
-  const [invoiceSearch,      setInvoiceSearch]      = useState('')
-  const [invoiceLoading,     setInvoiceLoading]     = useState(false)
-  const [selectedInvoiceIds,  setSelectedInvoiceIds]  = useState<Set<string>>(new Set())
-  const [bulkAssigning,       setBulkAssigning]       = useState(false)
-  const [allInvoices,         setAllInvoices]         = useState<any[]>([])  // for bulk invoice picker
-  const [bulkInvoicePicks,    setBulkInvoicePicks]    = useState<Record<number, string>>({})  // clientId → invoiceId
-  const [bulkInvoiceSaving,   setBulkInvoiceSaving]   = useState(false)
+  const [clients,        setClients]        = useState<Client[]>([])
+  const [holdingCos,     setHoldingCos]     = useState<HoldingCompany[]>([])
+  const [unmatched,      setUnmatched]      = useState<{ name: string; total: number; count: number; last_date: string }[]>([])
+  const [loading,        setLoading]        = useState(true)
+  const [editingClient,  setEditingClient]  = useState<Partial<Client> | null>(null)
+  const [editingHolding, setEditingHolding] = useState<Partial<HoldingCompany> | null>(null)
+  const [showHolding,    setShowHolding]    = useState(false)
+  const [saving,         setSaving]         = useState(false)
+  const [msg,            setMsg]            = useState('')
+  const [search,         setSearch]         = useState('')
+  const [filterActive,   setFilterActive]   = useState<'all' | 'active' | 'inactive'>('active')
+  const [selectedIds,    setSelectedIds]    = useState<Set<number>>(new Set())
+  const [bulkHoldingId,      setBulkHoldingId]      = useState<string>('')
+  const [bulkSaving,         setBulkSaving]          = useState(false)
+  const [sortCol,            setSortCol]             = useState<string>('name')
+  const [sortDir,            setSortDir]             = useState<'asc' | 'desc'>('asc')
+  const [bulkContractStart,  setBulkContractStart]   = useState<string>('')
+
+  // Invoice viewer (read-only, matched from sheet)
+  const [viewingClient,  setViewingClient]  = useState<Client | null>(null)
+  const [clientInvoices, setClientInvoices] = useState<any[]>([])
+  const [invoiceLoading, setInvoiceLoading] = useState(false)
+  const [invoiceSearch,  setInvoiceSearch]  = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -72,28 +73,46 @@ export default function ClientsPanel() {
     const data = await res.json()
     setClients(data.clients || [])
     setHoldingCos(data.holdingCompanies || [])
+    setUnmatched(data.unmatchedNames || [])
     setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  // Fetch all invoices when bulk selection is active (for the invoice dropdown)
-  useEffect(() => {
-    if (selectedIds.size === 0) { setAllInvoices([]); setBulkInvoicePicks({}); return }
-    fetch('/api/clients/invoices', { credentials: 'include' })
-      .then(r => r.json())
-      .then(d => setAllInvoices(d.invoices || []))
-  }, [selectedIds])
+  const activeCount    = clients.filter(c => c.active).length
+  const churnCount     = clients.filter(c => !c.active).length
+  const unmatchedTotal = unmatched.reduce((s, u) => s + Math.round(u.total), 0)
+  const unmatchedCount = unmatched.reduce((s, u) => s + u.count, 0)
+  const grandTotal     = clients.reduce((s, c) => s + (c.ltv || 0), 0) + unmatchedTotal
 
-  const totalLtv    = clients.reduce((s, c) => s + (c.ltv || 0), 0)
-  const activeCount = clients.filter(c => c.active).length
-  const churnCount  = clients.filter(c => !c.active).length
+  function toggleSort(col: string) {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(col); setSortDir('asc') }
+  }
 
-  const filtered = clients.filter(c => {
-    const matchSearch = !search || c.name.toLowerCase().includes(search.toLowerCase()) || (c.distributor || '').toLowerCase().includes(search.toLowerCase())
-    const matchActive = filterActive === 'all' || (filterActive === 'active' ? c.active : !c.active)
-    return matchSearch && matchActive
-  })
+  const filtered = clients
+    .filter(c => {
+      const matchSearch = !search || c.name.toLowerCase().includes(search.toLowerCase()) || (c.distributor || '').toLowerCase().includes(search.toLowerCase())
+      const matchActive = filterActive === 'all' || (filterActive === 'active' ? c.active : !c.active)
+      return matchSearch && matchActive
+    })
+    .sort((a, b) => {
+      let av: any, bv: any
+      switch (sortCol) {
+        case 'name':           av = a.name; bv = b.name; break
+        case 'holding':        av = a.holding_company_name || ''; bv = b.holding_company_name || ''; break
+        case 'distributor':    av = a.distributor || ''; bv = b.distributor || ''; break
+        case 'billing':        av = a.billing_type; bv = b.billing_type; break
+        case 'contract_start': av = a.contract_start || ''; bv = b.contract_start || ''; break
+        case 'contract_end':   av = a.contract_end || ''; bv = b.contract_end || ''; break
+        case 'ltv':            av = a.ltv; bv = b.ltv; break
+        case 'pct':            av = a.ltv; bv = b.ltv; break
+        default:               av = a.name; bv = b.name
+      }
+      if (av < bv) return sortDir === 'asc' ? -1 : 1
+      if (av > bv) return sortDir === 'asc' ? 1 : -1
+      return 0
+    })
 
   async function saveClient() {
     if (!editingClient?.name?.trim()) return
@@ -123,8 +142,6 @@ export default function ClientsPanel() {
     const data = await res.json()
     setSaving(false)
     setEditingHolding(null)
-
-    // Optimistically update local state so UI reflects change immediately
     if (data.holdingCompany) {
       setHoldingCos(prev => {
         const existing = prev.findIndex(h => h.id === data.holdingCompany.id)
@@ -136,7 +153,6 @@ export default function ClientsPanel() {
         return [...prev, data.holdingCompany].sort((a, b) => a.name.localeCompare(b.name))
       })
     }
-
     setMsg('Holding company saved.')
     setTimeout(() => setMsg(''), 3000)
     load()
@@ -190,16 +206,13 @@ export default function ClientsPanel() {
     load()
   }
 
-  // Given a contract start date (YYYY-MM-DD) and billing type, return start + full period - 1 day
   function calcContractEnd(startDate: string, billingType: string): string {
     const [y, m, d] = startDate.split('-').map(Number)
     let endY = y, endM = m, endD = d
     if (billingType === 'quarterly') endM += 3
     else if (billingType === 'monthly') endM += 1
-    else { endY += 1 } // annual
-    // Normalise month overflow
+    else { endY += 1 }
     while (endM > 12) { endM -= 12; endY += 1 }
-    // Subtract 1 day
     const end = new Date(endY, endM - 1, endD - 1)
     return end.toISOString().split('T')[0]
   }
@@ -232,100 +245,14 @@ export default function ClientsPanel() {
     load()
   }
 
-  async function openInvoiceAssignment(c: Client) {
-    setAssigningClient(c)
+  async function openInvoices(c: Client) {
+    setViewingClient(c)
     setInvoiceSearch('')
-    setSelectedInvoiceIds(new Set())
     setInvoiceLoading(true)
-    const [assignedRes, availableRes] = await Promise.all([
-      fetch(`/api/clients/invoices?clientId=${c.id}`, { credentials: 'include' }).then(r => r.json()),
-      fetch(`/api/clients/invoices?unassigned=true`, { credentials: 'include' }).then(r => r.json()),
-    ])
-    setAssignedInvoices(assignedRes.invoices || [])
-    setAvailableInvoices(availableRes.invoices || [])
+    const res  = await fetch(`/api/clients/invoices?clientId=${c.id}`, { credentials: 'include' })
+    const data = await res.json()
+    setClientInvoices(data.invoices || [])
     setInvoiceLoading(false)
-  }
-
-  async function refreshInvoiceLists() {
-    if (!assigningClient) return
-    const [assignedRes, availableRes] = await Promise.all([
-      fetch(`/api/clients/invoices?clientId=${assigningClient.id}`, { credentials: 'include' }).then(r => r.json()),
-      fetch(`/api/clients/invoices?unassigned=true`, { credentials: 'include' }).then(r => r.json()),
-    ])
-    setAssignedInvoices(assignedRes.invoices || [])
-    setAvailableInvoices(availableRes.invoices || [])
-    load()
-  }
-
-  async function toggleInvoice(inv: any, assign: boolean) {
-    if (!assigningClient) return
-    await fetch('/api/clients/invoices', {
-      method: 'PATCH', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        invoiceId:   inv.invoice_id,
-        clientId:    assign ? assigningClient.id : null,
-        amount:      inv.amount_usd,
-        vendor:      inv.vendor,
-        issueDate:   inv.issue_date,
-        billingType: inv.billing_type,
-      }),
-    })
-    await refreshInvoiceLists()
-  }
-
-  async function bulkAssignInvoices() {
-    if (!assigningClient || selectedInvoiceIds.size === 0) return
-    setBulkAssigning(true)
-    await Promise.all(
-      Array.from(selectedInvoiceIds).map(invoiceId => {
-        const inv = availableInvoices.find((i: any) => i.invoice_id === invoiceId)
-        return fetch('/api/clients/invoices', {
-          method: 'PATCH', credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            invoiceId,
-            clientId:    assigningClient.id,
-            amount:      inv?.amount_usd,
-            vendor:      inv?.vendor,
-            issueDate:   inv?.issue_date,
-            billingType: inv?.billing_type,
-          }),
-        })
-      })
-    )
-    setSelectedInvoiceIds(new Set())
-    setBulkAssigning(false)
-    await refreshInvoiceLists()
-  }
-
-  async function applyBulkInvoicePicks() {
-    const entries = Object.entries(bulkInvoicePicks).filter(([, invoiceId]) => invoiceId)
-    if (!entries.length) return
-    setBulkInvoiceSaving(true)
-    await Promise.all(
-      entries.map(([clientId, invoiceId]) => {
-        const inv = allInvoices.find((i: any) => i.invoice_id === invoiceId)
-        return fetch('/api/clients/invoices', {
-          method: 'PATCH', credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            invoiceId,
-            clientId:    parseInt(clientId),
-            amount:      inv?.amount_usd,
-            vendor:      inv?.vendor,
-            issueDate:   inv?.issue_date,
-            billingType: inv?.billing_type,
-          }),
-        })
-      })
-    )
-    setBulkInvoicePicks({})
-    setBulkInvoiceSaving(false)
-    setSelectedIds(new Set())
-    load()
-    setMsg(`Invoices assigned to ${entries.length} client${entries.length !== 1 ? 's' : ''}.`)
-    setTimeout(() => setMsg(''), 4000)
   }
 
   const billingColor = (bt: string) => {
@@ -333,6 +260,14 @@ export default function ClientsPanel() {
     if (bt === 'quarterly') return 'bg-purple-100 text-purple-700'
     if (bt === 'monthly')   return 'bg-green-100 text-green-700'
     return 'bg-gray-100 text-gray-600'
+  }
+
+  const statusColor = (s: string) => {
+    const st = (s || '').toLowerCase()
+    if (st === 'paid')   return 'text-green-600'
+    if (st === 'sent' || st === 'invoiced') return 'text-blue-600'
+    if (st === 'outstanding' || st === 'due') return 'text-amber-600'
+    return 'text-narra-muted'
   }
 
   return (
@@ -344,7 +279,7 @@ export default function ClientsPanel() {
         <div>
           <h2 className="font-heading text-xl font-semibold text-narra-dark">Client Registry</h2>
           <p className="text-sm text-narra-muted mt-0.5">
-            {activeCount} active · {churnCount} inactive · Total invoiced ${clients.reduce((s, c) => s + (c.ltv || 0), 0).toLocaleString()}
+            {activeCount} active · {churnCount} inactive · Total invoiced ${(clients.reduce((s, c) => s + (c.ltv || 0), 0) + unmatchedTotal).toLocaleString()}
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -460,49 +395,6 @@ export default function ClientsPanel() {
             </button>
           </div>
 
-          {/* Invoice assignment — per-client dropdown */}
-          <div className="border-t border-indigo-200 pt-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-indigo-700 font-medium">Assign outgoing invoice to each client:</span>
-              <button
-                onClick={applyBulkInvoicePicks}
-                disabled={bulkInvoiceSaving || Object.values(bulkInvoicePicks).filter(Boolean).length === 0}
-                className="px-4 py-1.5 bg-indigo-700 text-white rounded-lg text-xs font-body hover:bg-indigo-800 transition-all disabled:opacity-40">
-                {bulkInvoiceSaving ? 'Saving…' : `Apply ${Object.values(bulkInvoicePicks).filter(Boolean).length > 0 ? `(${Object.values(bulkInvoicePicks).filter(Boolean).length})` : ''}`}
-              </button>
-            </div>
-            {allInvoices.length === 0 && (
-              <p className="text-xs text-indigo-400 italic">Loading invoices from sheet…</p>
-            )}
-            <div className="space-y-1.5">
-              {Array.from(selectedIds).map(id => {
-                const c = clients.find(x => x.id === id)
-                if (!c) return null
-                // Show unassigned invoices + any already assigned to this specific client
-                const options = allInvoices.filter((inv: any) => inv.client_id === null || inv.client_id === id)
-                return (
-                  <div key={id} className="flex items-center gap-3">
-                    <span className="text-sm text-indigo-800 w-24 sm:w-40 truncate shrink-0">{c.name}</span>
-                    <select
-                      value={bulkInvoicePicks[id] || ''}
-                      onChange={e => setBulkInvoicePicks(prev => ({ ...prev, [id]: e.target.value }))}
-                      className="flex-1 border border-indigo-300 rounded-lg px-3 py-1.5 text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-300">
-                      <option value="">— Pick invoice —</option>
-                      {options.map((inv: any) => (
-                        <option key={inv.invoice_id} value={inv.invoice_id}>
-                          {inv.invoice_id}
-                          {inv.issue_date ? ` · ${inv.issue_date}` : ''}
-                          {(inv.sheet_client_name || inv.vendor) ? ` · ${inv.sheet_client_name || inv.vendor}` : ''}
-                          {inv.amount_usd ? ` · $${parseFloat(inv.amount_usd).toLocaleString()}` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
           {/* Holding company */}
           <div className="flex items-center gap-3 flex-wrap border-t border-indigo-200 pt-3">
             <span className="text-sm text-indigo-700 font-medium shrink-0">Assign holding company:</span>
@@ -535,16 +427,33 @@ export default function ClientsPanel() {
                   className="rounded accent-narra-green cursor-pointer"
                 />
               </th>
-              {['Client', 'Holding Group', 'Distributor / Payer', 'Billing', 'Contract Start', 'Contract End', 'Total Invoiced', 'Cash Received', 'Notes', 'Status', ''].map(h => (
-                <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'Total Invoiced' || h === 'Cash Received' ? 'text-right' : 'text-left'}`}>{h}</th>
+              {([
+                { label: 'Client',               col: 'name',           right: false },
+                { label: 'Holding Group',         col: 'holding',        right: false },
+                { label: 'Distributor / Payer',   col: 'distributor',    right: false },
+                { label: 'Billing',               col: 'billing',        right: false },
+                { label: 'Contract Start',        col: 'contract_start', right: false },
+                { label: 'Contract End',          col: 'contract_end',   right: false },
+                { label: 'Total Invoiced',        col: 'ltv',            right: true  },
+                { label: '% of Total',            col: 'pct',            right: true  },
+                { label: 'Notes',                 col: '',               right: false },
+                { label: 'Status',                col: '',               right: false },
+                { label: '',                      col: '',               right: false },
+              ] as { label: string; col: string; right: boolean }[]).map(({ label, col, right }) => (
+                <th key={label}
+                  onClick={() => col && toggleSort(col)}
+                  className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${right ? 'text-right' : 'text-left'} ${col ? 'cursor-pointer hover:text-white select-none' : ''}`}>
+                  {label}
+                  {col && sortCol === col && <span className="ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+                </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={12} className="px-4 py-10 text-center text-narra-muted">Loading…</td></tr>
+              <tr><td colSpan={13} className="px-4 py-10 text-center text-narra-muted">Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={12} className="px-4 py-10 text-center text-narra-muted">
+              <tr><td colSpan={13} className="px-4 py-10 text-center text-narra-muted">
                 {clients.length === 0 ? 'No clients yet — add your first client above.' : 'No results match your filter.'}
               </td></tr>
             ) : filtered.map(c => (
@@ -593,11 +502,18 @@ export default function ClientsPanel() {
                     <div>
                       <div className="font-medium text-narra-dark">${c.ltv.toLocaleString()}</div>
                       <div className="text-narra-muted text-xs">{c.invoice_count} invoice{c.invoice_count !== 1 ? 's' : ''}</div>
+                      {c.group_invoice_count > 0 && (
+                        <div className="text-xs text-indigo-500 mt-0.5">
+                          incl. {c.group_invoice_count} group split{c.group_invoice_count !== 1 ? 's' : ''}
+                        </div>
+                      )}
                     </div>
                   ) : <span className="text-narra-border">—</span>}
                 </td>
-                <td className="px-4 py-3 text-right font-medium text-green-700">
-                  {c.cash_received > 0 ? `$${c.cash_received.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : <span className="text-narra-border font-normal">—</span>}
+                <td className="px-4 py-3 text-right">
+                  {c.ltv > 0 && grandTotal > 0
+                    ? <span className="text-sm text-narra-muted">{((c.ltv / grandTotal) * 100).toFixed(1)}%</span>
+                    : <span className="text-narra-border">—</span>}
                 </td>
                 <td className="px-4 py-3 text-narra-muted text-xs max-w-[160px] truncate">{c.notes || '—'}</td>
                 <td className="px-4 py-3">
@@ -609,9 +525,9 @@ export default function ClientsPanel() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2 justify-end">
-                    <button onClick={() => openInvoiceAssignment(c)}
+                    <button onClick={() => openInvoices(c)}
                       className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">
-                      Invoices{c.invoice_count > 0 ? ` (${c.invoice_count})` : ''}
+                      {c.invoice_count > 0 ? `History (${c.invoice_count})` : 'History'}
                     </button>
                     <button onClick={() => setEditingClient({
                       id: c.id, name: c.name, holding_company_id: c.holding_company_id,
@@ -625,18 +541,31 @@ export default function ClientsPanel() {
                 </td>
               </tr>
             ))}
+            {unmatched.length > 0 && (
+              <tr className="border-t-2 border-amber-200 bg-amber-50/60">
+                <td className="px-4 py-3" />
+                <td colSpan={6} className="px-4 py-3">
+                  <span className="text-sm font-medium text-amber-800">Unmatched invoices</span>
+                  <span className="text-xs text-amber-600 ml-2">
+                    {unmatchedCount} invoice{unmatchedCount !== 1 ? 's' : ''} from {unmatched.length} unrecognized name{unmatched.length !== 1 ? 's' : ''} — not linked to any client
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <div className="font-medium text-amber-800">${unmatchedTotal.toLocaleString()}</div>
+                </td>
+                <td colSpan={4} />
+              </tr>
+            )}
           </tbody>
           {filtered.length > 0 && (
             <tfoot>
               <tr className="border-t-2 border-narra-dark bg-narra-surface">
                 <td colSpan={7} className="px-4 py-3 font-heading font-semibold text-narra-dark text-sm">
                   {filtered.length} client{filtered.length !== 1 ? 's' : ''}
+                  {unmatched.length > 0 && <span className="font-normal text-amber-600"> + {unmatched.length} unmatched</span>}
                 </td>
                 <td className="px-4 py-3 text-right font-heading font-semibold text-narra-dark">
-                  ${filtered.reduce((s, c) => s + (c.ltv || 0), 0).toLocaleString()}
-                </td>
-                <td className="px-4 py-3 text-right font-heading font-semibold text-green-700">
-                  ${filtered.reduce((s, c) => s + (c.cash_received || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  ${(filtered.reduce((s, c) => s + (c.ltv || 0), 0) + unmatchedTotal).toLocaleString()}
                 </td>
                 <td colSpan={5} />
               </tr>
@@ -645,6 +574,40 @@ export default function ClientsPanel() {
         </table>
         </div>
       </div>
+
+      {/* Unmatched invoice names */}
+      {unmatched.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl overflow-hidden">
+          <div className="px-5 py-3 border-b border-amber-200 flex items-center justify-between">
+            <div>
+              <h3 className="font-heading font-semibold text-amber-900 text-sm">
+                {unmatched.length} unmatched name{unmatched.length !== 1 ? 's' : ''} in the invoice tracker
+              </h3>
+              <p className="text-xs text-amber-700 mt-0.5">
+                These names appear in column I of the outgoing invoice tracker but don't match any client or holding company. Add them to start tracking their revenue.
+              </p>
+            </div>
+          </div>
+          <div className="divide-y divide-amber-100">
+            {unmatched.map(u => (
+              <div key={u.name} className="px-5 py-3 flex items-center gap-4">
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium text-amber-900">{u.name}</span>
+                  <span className="text-xs text-amber-600 ml-3">
+                    {u.count} invoice{u.count !== 1 ? 's' : ''} · ${Math.round(u.total).toLocaleString()} total
+                    {u.last_date && <span> · last {u.last_date}</span>}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setEditingClient({ billing_type: 'annual', active: true, name: u.name })}
+                  className="text-xs px-3 py-1.5 bg-amber-700 text-white rounded-lg hover:bg-amber-800 transition-all shrink-0">
+                  + Add as client
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Churn insight */}
       {clients.filter(c => !c.active).length > 0 && (
@@ -661,6 +624,96 @@ export default function ClientsPanel() {
 
     </div>{/* end animate-fade-up */}
 
+      {/* Invoice Viewer Modal */}
+      {viewingClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setViewingClient(null)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+
+            <div className="px-6 py-4 border-b border-narra-border flex items-center justify-between">
+              <div>
+                <h3 className="font-heading font-semibold text-narra-dark text-lg">{viewingClient.name}</h3>
+                <p className="text-xs text-narra-muted mt-0.5">Auto-matched from outgoing invoice tracker · accumulates over time</p>
+              </div>
+              <button onClick={() => setViewingClient(null)} className="text-narra-muted hover:text-narra-dark text-xl leading-none">✕</button>
+            </div>
+
+            <div className="px-6 py-4 border-b border-narra-border">
+              <input
+                placeholder="Search by invoice ID, date, or status…"
+                value={invoiceSearch}
+                onChange={e => setInvoiceSearch(e.target.value)}
+                className="w-full border border-narra-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-narra-green/30"
+              />
+            </div>
+
+            <div className="overflow-y-auto flex-1 px-6 py-4">
+              {invoiceLoading ? (
+                <p className="text-sm text-narra-muted">Loading…</p>
+              ) : (() => {
+                const q = invoiceSearch.toLowerCase()
+                const shown = clientInvoices.filter((inv: any) =>
+                  !q ||
+                  (inv.invoice_id || '').toLowerCase().includes(q) ||
+                  (inv.issue_date || '').toLowerCase().includes(q) ||
+                  (inv.status || '').toLowerCase().includes(q) ||
+                  (inv.description || '').toLowerCase().includes(q)
+                )
+                if (shown.length === 0) return (
+                  <p className="text-sm text-narra-muted italic">
+                    {clientInvoices.length === 0
+                      ? `No invoices found for "${viewingClient.name}" in the tracker. Make sure the Client Name column (col I) matches exactly.`
+                      : 'No results match your search.'}
+                  </p>
+                )
+                const total = shown.reduce((s: number, i: any) => s + parseFloat(i.amount_usd || 0), 0)
+                return (
+                  <div className="space-y-2">
+                    <p className="text-xs text-narra-muted mb-3">
+                      {shown.length} invoice{shown.length !== 1 ? 's' : ''} · Total{' '}
+                      <span className="font-semibold text-narra-dark">${total.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                    </p>
+                    {shown.map((inv: any) => (
+                      <div key={inv.invoice_id} className="flex items-start gap-3 bg-narra-surface border border-narra-border rounded-lg px-3 py-2.5">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium text-narra-dark">{inv.invoice_id}</span>
+                            {inv.is_holding_split && (
+                              <span className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-200 px-1.5 py-0.5 rounded-full">group split</span>
+                            )}
+                            <span className={`text-xs font-medium ${statusColor(inv.status)}`}>{inv.status}</span>
+                          </div>
+                          <div className="text-xs text-narra-muted mt-0.5 flex flex-wrap gap-x-2">
+                            {inv.issue_date && <span>{inv.issue_date}</span>}
+                            {inv.billing_type && <span>· {inv.billing_type}</span>}
+                            {inv.description && <span className="truncate max-w-[240px]">· {inv.description}</span>}
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="text-sm font-heading font-semibold text-narra-dark">
+                            ${parseFloat(inv.amount_usd || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </div>
+                          {inv.is_holding_split && inv.original_amount_usd && (
+                            <div className="text-xs text-narra-muted">of ${parseFloat(inv.original_amount_usd).toLocaleString()}</div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })()}
+            </div>
+
+            <div className="px-6 py-4 border-t border-narra-border">
+              <button onClick={() => setViewingClient(null)}
+                className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all">
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Edit Client Modal */}
       {editingClient && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -675,7 +728,8 @@ export default function ClientsPanel() {
                 <label className="text-xs text-narra-muted uppercase tracking-widest font-body block mb-1">Client Name *</label>
                 <input value={editingClient.name || ''} onChange={e => setEditingClient(p => ({ ...p!, name: e.target.value }))}
                   className="w-full border border-narra-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-narra-green/30"
-                  placeholder="e.g. OFII" />
+                  placeholder="Must match col I in the invoice tracker" />
+                <p className="text-xs text-narra-muted mt-1">Must match exactly the Client Name (col I) in the outgoing invoice tracker.</p>
               </div>
 
               <div>
@@ -734,158 +788,6 @@ export default function ClientsPanel() {
               <button onClick={saveClient} disabled={saving || !editingClient.name?.trim()}
                 className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50">
                 {saving ? 'Saving…' : 'Save Client'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Invoice Assignment Modal */}
-      {assigningClient && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setAssigningClient(null)} />
-          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
-
-            {/* Header */}
-            <div className="px-6 py-4 border-b border-narra-border flex items-center justify-between">
-              <div>
-                <h3 className="font-heading font-semibold text-narra-dark text-lg">{assigningClient.name}</h3>
-                <p className="text-xs text-narra-muted mt-0.5">Select which invoices belong to this client</p>
-              </div>
-              <button onClick={() => { setAssigningClient(null); setSelectedInvoiceIds(new Set()) }} className="text-narra-muted hover:text-narra-dark text-xl leading-none">✕</button>
-            </div>
-
-            <div className="overflow-y-auto flex-1 divide-y divide-narra-border">
-
-              {/* Assigned invoices */}
-              <div className="px-6 py-4">
-                <h4 className="text-xs font-body uppercase tracking-widest text-narra-muted mb-3">
-                  Assigned to {assigningClient.name}
-                  {assignedInvoices.length > 0 && (
-                    <span className="ml-2 text-narra-green font-medium normal-case tracking-normal">
-                      ${assignedInvoices.reduce((s, i) => s + parseFloat(i.amount_usd || 0), 0).toLocaleString()} total
-                    </span>
-                  )}
-                </h4>
-                {invoiceLoading ? (
-                  <p className="text-sm text-narra-muted">Loading…</p>
-                ) : assignedInvoices.length === 0 ? (
-                  <p className="text-sm text-narra-muted italic">No invoices assigned yet — add from below</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {assignedInvoices.map((inv: any) => (
-                      <div key={inv.invoice_id} className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-                        <div className="flex-1 min-w-0">
-                          <span className="text-sm font-medium text-narra-dark">{inv.invoice_id}</span>
-                          {inv.issue_date && <span className="text-xs text-narra-muted ml-2">{inv.issue_date}</span>}
-                          {(inv.sheet_client_name || inv.vendor) && <span className="text-xs text-narra-muted ml-2">· {inv.sheet_client_name || inv.vendor}</span>}
-                          {inv.status && <span className="text-xs text-narra-muted ml-2">· {inv.status}</span>}
-                        </div>
-                        <span className="text-sm font-heading font-semibold text-narra-dark shrink-0">
-                          ${parseFloat(inv.amount_usd || 0).toLocaleString()}
-                        </span>
-                        <button onClick={() => toggleInvoice(inv, false)}
-                          className="text-xs text-red-400 hover:text-red-600 shrink-0">Remove</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Available invoices */}
-              <div className="px-6 py-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-xs font-body uppercase tracking-widest text-narra-muted">Unassigned invoices</h4>
-                  {selectedInvoiceIds.size > 0 && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-indigo-700 font-medium">
-                        {selectedInvoiceIds.size} selected ·{' '}
-                        ${Array.from(selectedInvoiceIds).reduce((s, invoiceId) => {
-                          const inv = availableInvoices.find((i: any) => i.invoice_id === invoiceId)
-                          return s + parseFloat(inv?.amount_usd || 0)
-                        }, 0).toLocaleString()}
-                      </span>
-                      <button onClick={bulkAssignInvoices} disabled={bulkAssigning}
-                        className="px-3 py-1 bg-indigo-700 text-white rounded-lg text-xs font-body hover:bg-indigo-800 transition-all disabled:opacity-50">
-                        {bulkAssigning ? 'Adding…' : `Add ${selectedInvoiceIds.size} to ${assigningClient?.name}`}
-                      </button>
-                      <button onClick={() => setSelectedInvoiceIds(new Set())} className="text-xs text-indigo-400 hover:text-indigo-700">Clear</button>
-                    </div>
-                  )}
-                </div>
-                <input
-                  placeholder="Search by invoice ID, vendor, or period…"
-                  value={invoiceSearch}
-                  onChange={e => setInvoiceSearch(e.target.value)}
-                  className="w-full border border-narra-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-narra-green/30 mb-3"
-                />
-                {invoiceLoading ? (
-                  <p className="text-sm text-narra-muted">Loading…</p>
-                ) : (() => {
-                  const q = invoiceSearch.toLowerCase()
-                  // Show unassigned invoices (no client_id) plus already-assigned to this client
-                  const unassignedPool = availableInvoices.filter((inv: any) => inv.client_id === null)
-                  const filtered = unassignedPool.filter((inv: any) =>
-                    !q ||
-                    (inv.invoice_id || '').toLowerCase().includes(q) ||
-                    (inv.sheet_client_name || '').toLowerCase().includes(q) ||
-                    (inv.vendor || '').toLowerCase().includes(q) ||
-                    (inv.issue_date || '').toLowerCase().includes(q) ||
-                    (inv.status || '').toLowerCase().includes(q)
-                  )
-                  if (filtered.length === 0) return (
-                    <p className="text-sm text-narra-muted italic">
-                      {unassignedPool.length === 0 ? 'All invoices are assigned to clients.' : 'No results match your search.'}
-                    </p>
-                  )
-                  const allFilteredSelected = filtered.every((inv: any) => selectedInvoiceIds.has(inv.invoice_id))
-                  return (
-                    <div className="space-y-1.5">
-                      {/* Select all row */}
-                      <div className="flex items-center gap-3 px-3 py-1.5">
-                        <input type="checkbox"
-                          checked={allFilteredSelected && filtered.length > 0}
-                          onChange={e => {
-                            const next = new Set(selectedInvoiceIds)
-                            filtered.forEach((inv: any) => e.target.checked ? next.add(inv.invoice_id) : next.delete(inv.invoice_id))
-                            setSelectedInvoiceIds(next)
-                          }}
-                          className="rounded accent-indigo-600 cursor-pointer"
-                        />
-                        <span className="text-xs text-narra-muted">Select all {filtered.length} shown</span>
-                      </div>
-                      {filtered.map((inv: any) => (
-                        <div key={inv.invoice_id}
-                          className={`flex items-center gap-3 border rounded-lg px-3 py-2 cursor-pointer transition-colors ${selectedInvoiceIds.has(inv.invoice_id) ? 'bg-indigo-50 border-indigo-300' : 'bg-narra-surface border-narra-border hover:border-indigo-200'}`}
-                          onClick={() => {
-                            const next = new Set(selectedInvoiceIds)
-                            selectedInvoiceIds.has(inv.invoice_id) ? next.delete(inv.invoice_id) : next.add(inv.invoice_id)
-                            setSelectedInvoiceIds(next)
-                          }}
-                        >
-                          <input type="checkbox" checked={selectedInvoiceIds.has(inv.invoice_id)} readOnly
-                            className="rounded accent-indigo-600 pointer-events-none" />
-                          <div className="flex-1 min-w-0">
-                            <span className="text-sm font-medium text-narra-dark">{inv.invoice_id}</span>
-                            {inv.issue_date && <span className="text-xs text-narra-muted ml-2">{inv.issue_date}</span>}
-                            {(inv.sheet_client_name || inv.vendor) && <span className="text-xs text-narra-muted ml-2">· {inv.sheet_client_name || inv.vendor}</span>}
-                            {inv.status && <span className="text-xs text-narra-muted ml-2">· {inv.status}</span>}
-                          </div>
-                          <span className="text-sm font-heading font-semibold text-narra-dark shrink-0">
-                            ${parseFloat(inv.amount_usd || 0).toLocaleString()}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )
-                })()}
-              </div>
-            </div>
-
-            <div className="px-6 py-4 border-t border-narra-border">
-              <button onClick={() => { setAssigningClient(null); setSelectedInvoiceIds(new Set()) }}
-                className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all">
-                Done
               </button>
             </div>
           </div>

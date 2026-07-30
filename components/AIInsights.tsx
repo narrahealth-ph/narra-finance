@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { FileText, Search, Users, Sparkles, MessageCircle, SendHorizonal } from 'lucide-react'
 
 
@@ -8,6 +8,18 @@ export default function AIInsights({ periodId, data, selectedMonth }: { periodId
   const [results, setResults] = useState<{ narrative?: string; anomalies?: any[]; churn?: any[]; answer?: string }>({})
   const [question, setQuestion] = useState('')
   const [viewMode, setViewMode] = useState<'period' | 'annual'>('period')
+  const [annualData, setAnnualData] = useState<any>(null)
+
+  const year = selectedMonth?.split('_')[1]
+
+  useEffect(() => {
+    if (viewMode === 'annual' && year && !annualData) {
+      fetch(`/api/annual-report?year=${year}`, { credentials: 'include' })
+        .then(r => r.json())
+        .then(d => setAnnualData(d))
+        .catch(() => {})
+    }
+  }, [viewMode, year, annualData])
 
   async function generate(type: string) {
     setLoading(type)
@@ -52,10 +64,14 @@ export default function AIInsights({ periodId, data, selectedMonth }: { periodId
     setLoading(null)
   }
 
-  const total = data?.pl
-  const runway = total?.totalExpenses > 0
-    ? Math.floor((data?.bs?.cashClosing || 0) / (total.totalExpenses))
-    : null
+  const periodTotal = data?.pl
+  const annualTotal = annualData?.totals
+
+  const statsRevenue  = viewMode === 'annual' ? (annualTotal?.revenue  || 0) : (periodTotal?.totalRevenue  || 0)
+  const statsExpenses = viewMode === 'annual' ? ((annualTotal?.expenses || 0) + (annualTotal?.capex || 0)) : (periodTotal?.totalExpenses || 0)
+  const statsNet      = viewMode === 'annual' ? (annualTotal?.net      || 0) : (periodTotal?.netProfit      || 0)
+  const statsCash     = viewMode === 'annual' ? (annualTotal?.closingCash || 0) : (data?.bs?.cashClosing    || 0)
+  const runway = statsExpenses > 0 ? Math.floor(statsCash / (statsExpenses / (viewMode === 'annual' ? 12 : 1))) : null
 
   return (
     <div className="space-y-6 animate-fade-up">
@@ -66,7 +82,7 @@ export default function AIInsights({ periodId, data, selectedMonth }: { periodId
         </div>
         <div className="flex items-center gap-1 bg-narra-surface border border-narra-border rounded-lg p-1 self-start sm:self-auto">
           <button
-            onClick={() => { setViewMode('period'); setResults({}) }}
+            onClick={() => { setViewMode('period'); setResults({}); setAnnualData(null) }}
             className={`px-3 py-1.5 rounded text-sm font-body transition-all ${viewMode === 'period' ? 'bg-narra-dark text-narra-green shadow-sm' : 'text-narra-muted hover:text-narra-dark'}`}
           >
             This Period
@@ -86,12 +102,12 @@ export default function AIInsights({ periodId, data, selectedMonth }: { periodId
       )}
 
       {/* Quick stats */}
-      {total && (
+      {(periodTotal || annualTotal) && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
-            { label: 'Revenue', value: `$${(total.totalRevenue || 0).toLocaleString()}` },
-            { label: 'Expenses', value: `$${(total.totalExpenses || 0).toLocaleString()}` },
-            { label: 'Net', value: `${total.netProfit >= 0 ? '+' : ''}$${(total.netProfit || 0).toLocaleString()}`, color: total.netProfit >= 0 ? 'text-green-600' : 'text-red-500' },
+            { label: viewMode === 'annual' ? `${year} Revenue` : 'Revenue', value: `$${Math.round(statsRevenue).toLocaleString()}` },
+            { label: viewMode === 'annual' ? `${year} Expenses` : 'Expenses', value: `$${Math.round(statsExpenses).toLocaleString()}` },
+            { label: 'Net', value: `${statsNet >= 0 ? '+' : ''}$${Math.round(statsNet).toLocaleString()}`, color: statsNet >= 0 ? 'text-green-600' : 'text-red-500' },
             { label: 'Runway', value: runway ? `${runway}mo` : '—' },
           ].map(s => (
             <div key={s.label} className="bg-white border border-narra-border rounded-xl p-4">

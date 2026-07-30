@@ -54,21 +54,25 @@ export default function FinancePage() {
   const [clearConfirm,    setClearConfirm]    = useState<string | null>(null) // null | 'all' | type key
   const [mrrRefreshKey,   setMrrRefreshKey]   = useState(0)
   const [bankRefreshKey,  setBankRefreshKey]  = useState(0)
+  const [currency,        setCurrency]        = useState<'USD' | 'SGD'>('USD')
 
   useEffect(() => {
     async function loadClosedPeriods() {
-      const res = await fetch('/api/periods')
-      const data = await res.json()
-      const locked: any[] = (data.periods || []).filter((p: any) => p.locked)
-      setClosedPeriods(locked.map((p: any) => p.label))
-      if (locked.length > 0) {
-        // Default to most recently closed period (API returns DESC order)
-        const [month, year] = locked[0].label.split('_')
-        if (MONTHS.includes(month) && year) {
-          setSelectedMonthName(month)
-          setSelectedYear(year)
+      try {
+        const res = await fetch('/api/periods')
+        if (!res.ok) return
+        const data = await res.json()
+        const locked: any[] = (data.periods || []).filter((p: any) => p.locked)
+        setClosedPeriods(locked.map((p: any) => p.label))
+        if (locked.length > 0) {
+          // Default to most recently closed period (API returns DESC order)
+          const [month, year] = locked[0].label.split('_')
+          if (MONTHS.includes(month) && year) {
+            setSelectedMonthName(month)
+            setSelectedYear(year)
+          }
         }
-      }
+      } catch { /* non-fatal — closed period highlighting simply won't show */ }
     }
     loadClosedPeriods()
   }, [])
@@ -162,17 +166,31 @@ export default function FinancePage() {
 
   const tabs: { id: Tab; label: string; Icon: LucideIcon }[] = [
     { id: 'investor',     label: 'Business Overview', Icon: LayoutDashboard },
-    { id: 'clients',      label: 'Clients',            Icon: Building2       },
-    { id: 'bank',         label: 'Bank Import',        Icon: Landmark        },
     { id: 'mrr',          label: 'Revenue',            Icon: TrendingUp      },
+    { id: 'annual',       label: 'Profit & Loss',      Icon: Banknote        },
     { id: 'invoices',     label: 'Invoices',           Icon: FileText        },
+    { id: 'bank',         label: 'Bank Import',        Icon: Landmark        },
     { id: 'reconcile',    label: 'Reconciliation',     Icon: Scale           },
-    { id: 'entries',      label: 'Adjustments',        Icon: PenLine         },
     { id: 'reports',      label: 'Reports',            Icon: BarChart2       },
-    { id: 'annual',       label: 'Cash Flow',          Icon: Banknote        },
     { id: 'ai',           label: 'AI Insights',        Icon: Sparkles        },
     { id: 'instructions', label: 'How to Use',         Icon: BookOpen        },
+    { id: 'clients',      label: 'Clients',            Icon: Building2       },
+    { id: 'entries',      label: 'Adjustments',        Icon: PenLine         },
   ]
+
+  const TAB_INFO: Record<Tab, { source: string; description: string }> = {
+    investor:     { source: 'Google Sheets (Invoice Tracker) + Bank Transactions', description: 'High-level business health — accrual MRR, cash position, runway, and active client breakdown.' },
+    mrr:          { source: 'Google Sheets (Invoice Tracker — All time tab)',       description: 'Accrual MRR by client and contract status for the selected month. Answers: who is paying and how much?' },
+    annual:       { source: 'Bank Transactions (imported statements)',              description: 'Cash-basis profit & loss by month across the full year — revenue collected, expenses paid, and net income.' },
+    invoices:     { source: 'Google Drive (expense invoice folder)',                description: 'Expense invoices imported from Google Drive for the selected period.' },
+    bank:         { source: 'Bank Statements (CSV upload)',                         description: 'Raw bank transactions for the selected period — the foundation of all cash reporting.' },
+    reconcile:    { source: 'Bank Transactions + Google Sheets',                   description: 'Match bank deposits to invoices to confirm collected revenue for the period.' },
+    reports:      { source: 'Bank Transactions + Google Sheets + Manual Entries',  description: 'Monthly P&L, Balance Sheet, and General Ledger for the selected period.' },
+    ai:           { source: 'All period data',                                      description: 'AI-generated analysis of the selected period\'s financial position and key signals.' },
+    instructions: { source: 'Documentation',                                        description: 'Step-by-step guide for using Narra Finance correctly.' },
+    clients:      { source: 'Google Sheets (Invoice Tracker)',                      description: 'Per-client LTV, MRR share, and billing history derived from the invoice tracker.' },
+    entries:      { source: 'Manual input (journal entries)',                       description: 'Adjustments and off-bank entries — e.g. payroll paid by founders via Director Current Accounts.' },
+  }
 
   const isLoading = loadingReport || !periodId || clearing
 
@@ -248,6 +266,12 @@ export default function FinancePage() {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+          {/* Currency toggle */}
+          <div className="flex rounded-lg border border-white/20 overflow-hidden text-xs font-body shrink-0">
+            <button onClick={() => setCurrency('USD')} className={`px-2.5 py-1.5 transition-all ${currency === 'USD' ? 'bg-narra-green text-narra-dark font-medium' : 'text-white/40 hover:text-white/70'}`}>USD</button>
+            <button onClick={() => setCurrency('SGD')} className={`px-2.5 py-1.5 transition-all ${currency === 'SGD' ? 'bg-narra-green text-narra-dark font-medium' : 'text-white/40 hover:text-white/70'}`}>SGD</button>
+          </div>
+
           {/* Clear period — dropdown menu */}
           <div className="relative">
             {clearConfirm ? (
@@ -335,12 +359,28 @@ export default function FinancePage() {
 
       {/* Content */}
       <main className="flex-1 px-3 sm:px-6 py-3 sm:py-6 max-w-7xl mx-auto w-full">
+
+        {/* Data source + description bubble */}
+        {TAB_INFO[tab] && (
+          <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
+            <span className="bg-narra-dark/8 border border-narra-border rounded-full px-3 py-1 text-narra-muted">
+              <span className="font-medium text-narra-dark/60">Source:</span>{' '}
+              {TAB_INFO[tab].source}
+            </span>
+            <span className="text-narra-muted/70">{TAB_INFO[tab].description}</span>
+          </div>
+        )}
+
         {tab === 'instructions' ? (
           <InstructionsPanel />
         ) : tab === 'investor' ? (
-          <InvestorPanel key={`inv-${mrrRefreshKey}-${bankRefreshKey}`} />
+          <InvestorPanel key={`inv-${mrrRefreshKey}-${bankRefreshKey}`} currency={currency} />
         ) : tab === 'annual' ? (
-          <AnnualReportPanel selectedYear={selectedYear} />
+          <AnnualReportPanel
+            selectedYear={selectedYear}
+            currency={currency}
+            sgdRate={reportData?.fxRates?.find((r: any) => r.currency === 'SGD')?.rate}
+          />
         ) : !periodId ? (
           <div className="flex items-center justify-center h-64 text-narra-muted">
             Loading period…

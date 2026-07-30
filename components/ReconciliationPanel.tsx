@@ -88,6 +88,8 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   const [yearView,        setYearView]        = useState(false)
   const [yearTxns,        setYearTxns]        = useState<any[]>([])
   const [yearLoading,     setYearLoading]     = useState(false)
+  const [yearViewYear,    setYearViewYear]    = useState<string>(() => selectedMonth ? selectedMonth.split('_')[1] : String(new Date().getFullYear()))
+  const [typeFilter,      setTypeFilter]      = useState<'all' | 'expense' | 'revenue' | 'capex' | 'investment'>('all')
 
   const selectedYear = selectedMonth ? selectedMonth.split('_')[1] : String(new Date().getFullYear())
 
@@ -99,13 +101,13 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   useEffect(() => {
     if (!yearView) return
     loadYearData()
-  }, [yearView, selectedYear])
+  }, [yearView, yearViewYear])
 
   async function loadYearData() {
     setYearLoading(true)
     try {
       const [txRes, clientsRes] = await Promise.all([
-        fetch(`/api/bank?action=year_all&year=${selectedYear}`, { credentials: 'include' }),
+        fetch(`/api/bank?action=year_all&year=${yearViewYear}`, { credentials: 'include' }),
         fetch('/api/clients', { credentials: 'include' }),
       ])
       if (txRes.ok) {
@@ -371,6 +373,21 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
     }
   }
 
+  async function retypeTx(txId: number, newType: string, isYearView: boolean) {
+    await fetch('/api/bank', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ action: 'retype', bankTxId: txId, account: newType }),
+    })
+    if (isYearView) {
+      await loadYearData()
+    } else {
+      await loadData()
+      onRefresh()
+    }
+  }
+
   async function tagClient(txId: number, clientIds: number[], invoiceRef?: string) {
     setTaggingTx(txId)
     const body: any = { action: 'tag_client', bankTxId: txId, clientIds, clientId: clientIds[0] ?? null }
@@ -516,7 +533,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
         <div>
           <h2 className="font-heading text-xl font-semibold text-narra-dark">Reconciliation</h2>
           <p className="text-sm text-narra-muted mt-0.5">
-            {yearView ? `${selectedYear} · All transactions` : `${selectedMonth?.replace('_', ' ')} · Bank vs Invoices`}
+            {yearView ? `${yearViewYear} · All transactions` : `${selectedMonth?.replace('_', ' ')} · Bank vs Invoices`}
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -552,10 +569,21 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
             </>
           )}
           {yearView && (
-            <button onClick={loadYearData}
-              className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">
-              ↻ Refresh
-            </button>
+            <>
+              <select
+                value={yearViewYear}
+                onChange={e => { setYearViewYear(e.target.value); setTypeFilter('all') }}
+                className="px-3 py-1.5 border border-narra-border rounded-lg text-sm font-body text-narra-dark bg-white outline-none cursor-pointer"
+              >
+                {[2024, 2025, 2026, 2027].map(y => (
+                  <option key={y} value={String(y)}>{y}</option>
+                ))}
+              </select>
+              <button onClick={loadYearData}
+                className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">
+                ↻ Refresh
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -572,25 +600,59 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
           ) : (
             <>
               {/* Summary row */}
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {[
-                  { label: 'Revenue',  value: yearTxns.filter(t => t.type === 'revenue').reduce((s, t) => s + parseFloat(t.amount_usd || 0), 0), color: 'text-green-600' },
-                  { label: 'Expenses', value: yearTxns.filter(t => t.type === 'expense').reduce((s, t) => s + parseFloat(t.amount_usd || 0), 0), color: 'text-red-500' },
-                  { label: 'Tagged',   value: yearTxns.filter(t => t.type === 'revenue' && t.client_id).length, color: 'text-narra-dark', isTxCount: true, total: yearTxns.filter(t => t.type === 'revenue').length },
+                  { label: 'Revenue',            value: yearTxns.filter(t => t.type === 'revenue').reduce((s, t) => s + parseFloat(t.amount_usd || 0), 0), color: 'text-green-600' },
+                  { label: 'Operating Expenses', value: yearTxns.filter(t => t.type === 'expense').reduce((s, t) => s + parseFloat(t.amount_usd || 0), 0), color: 'text-red-500' },
+                  { label: 'Product Investment', value: yearTxns.filter(t => t.type === 'capex').reduce((s, t) => s + parseFloat(t.amount_usd || 0), 0), color: 'text-purple-600' },
+                  { label: 'Investor Deposits',  value: yearTxns.filter(t => t.type === 'investment').reduce((s, t) => s + parseFloat(t.amount_usd || 0), 0), color: 'text-emerald-600' },
                 ].map(k => (
                   <div key={k.label} className="bg-white border border-narra-border rounded-xl p-4">
                     <div className="text-xs text-narra-muted uppercase tracking-widest mb-1 font-body">{k.label}</div>
                     <div className={`font-heading text-xl font-semibold ${k.color}`}>
-                      {(k as any).isTxCount
-                        ? `${k.value} / ${(k as any).total} txns`
-                        : `$${(k.value as number).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
-                      }
+                      ${(k.value as number).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                     </div>
                   </div>
                 ))}
               </div>
 
+              {/* Type filter tabs */}
+              {(() => {
+                const tabs: { label: string; value: typeof typeFilter; type?: string; color: string; activeClass: string }[] = [
+                  { label: 'All',               value: 'all',        color: 'text-narra-dark',   activeClass: 'bg-narra-dark text-white' },
+                  { label: 'Revenue',           value: 'revenue',    color: 'text-green-700',    activeClass: 'bg-green-100 text-green-800 border-green-300' },
+                  { label: 'Expenses',          value: 'expense',    color: 'text-red-600',      activeClass: 'bg-red-50 text-red-700 border-red-300' },
+                  { label: 'Product Inv.',      value: 'capex',      color: 'text-purple-700',   activeClass: 'bg-purple-100 text-purple-800 border-purple-300' },
+                  { label: 'Investor Deposits', value: 'investment', color: 'text-emerald-700',  activeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
+                ]
+                return (
+                  <div className="flex flex-wrap gap-2">
+                    {tabs.map(tab => {
+                      const count = tab.value === 'all' ? yearTxns.length : yearTxns.filter(t => t.type === tab.value).length
+                      const active = typeFilter === tab.value
+                      return (
+                        <button
+                          key={tab.value}
+                          onClick={() => setTypeFilter(tab.value)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                            active ? tab.activeClass : `bg-white border-narra-border ${tab.color} hover:bg-narra-surface`
+                          }`}
+                        >
+                          {tab.label}
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${active ? 'bg-white/20' : 'bg-narra-surface'}`}>
+                            {count}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
+
               {/* Transaction table */}
+              {(() => {
+                const filteredTxns = typeFilter === 'all' ? yearTxns : yearTxns.filter(t => t.type === typeFilter)
+                return (
               <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
                 <table className="w-full text-sm">
                   <thead>
@@ -601,16 +663,20 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                     </tr>
                   </thead>
                   <tbody>
-                    {yearTxns.map((tx: any, i) => {
-                      const isRevenue = tx.type === 'revenue'
+                    {filteredTxns.map((tx: any, i) => {
+                      const isRevenue   = tx.type === 'revenue'
+                      const isCapex     = tx.type === 'capex'
+                      const isInvestment = tx.type === 'investment'
+                      const rowColor = isRevenue ? 'border-blue-100' : isCapex ? 'border-purple-100' : isInvestment ? 'border-emerald-100' : 'border-narra-border/40'
+                      const amtColor = isRevenue ? 'text-green-600' : isCapex ? 'text-purple-600' : isInvestment ? 'text-emerald-600' : 'text-red-500'
                       return (
-                        <tr key={tx.id} className={`border-t hover:bg-narra-surface transition-colors ${isRevenue ? 'border-blue-100' : 'border-narra-border/40'}`}>
+                        <tr key={tx.id} className={`border-t hover:bg-narra-surface transition-colors ${rowColor}`}>
                           <td className="px-4 py-2.5 text-xs text-narra-muted whitespace-nowrap">{(tx.period_label || '').replace('_', ' ')}</td>
                           <td className="px-4 py-2.5 text-xs text-narra-muted whitespace-nowrap">{String(tx.date).split('T')[0]}</td>
                           <td className="px-4 py-2.5 text-narra-dark max-w-xs">
                             <div className="truncate">{tx.description}</div>
                           </td>
-                          <td className={`px-4 py-2.5 text-right font-medium whitespace-nowrap ${isRevenue ? 'text-green-600' : 'text-red-500'}`}>
+                          <td className={`px-4 py-2.5 text-right font-medium whitespace-nowrap ${amtColor}`}>
                             {tx.currency !== 'USD' && <span className="text-xs text-narra-muted mr-1">{tx.currency}</span>}
                             $<input
                               defaultValue={parseFloat(tx.amount_usd || tx.amount || 0).toFixed(2)}
@@ -620,13 +686,32 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                                 if (!isNaN(val) && val > 0 && Math.abs(val - cur) > 0.001) updateAmount(tx.id, val)
                               }}
                               onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                              className={`w-24 text-right bg-transparent border-b border-transparent hover:border-current focus:border-current outline-none ${isRevenue ? 'text-green-600' : 'text-red-500'}`}
+                              className={`w-24 text-right bg-transparent border-b border-transparent hover:border-current focus:border-current outline-none ${amtColor}`}
                             />
                           </td>
                           <td className="px-4 py-2.5">
-                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${isRevenue ? 'bg-blue-100 text-blue-700' : 'bg-red-50 text-red-600'}`}>
-                              {isRevenue ? 'Revenue' : 'Expense'}
-                            </span>
+                            <select
+                              value={tx.type}
+                              onChange={e => {
+                                const val = e.target.value
+                                if (val !== tx.type) {
+                                  // optimistic update
+                                  setYearTxns(prev => prev.map(t => t.id === tx.id ? { ...t, type: val } : t))
+                                  retypeTx(tx.id, val, true)
+                                }
+                              }}
+                              className={`text-xs px-2 py-0.5 rounded-full font-medium border cursor-pointer outline-none ${
+                                isRevenue   ? 'bg-blue-100 text-blue-700 border-blue-200' :
+                                isCapex     ? 'bg-purple-100 text-purple-700 border-purple-200' :
+                                isInvestment ? 'bg-emerald-100 text-emerald-700 border-emerald-200' :
+                                              'bg-red-50 text-red-600 border-red-200'
+                              }`}
+                            >
+                              <option value="revenue">Revenue</option>
+                              <option value="expense">Expense (Operating)</option>
+                              <option value="capex">Product Investment</option>
+                              <option value="investment">Investor Deposit</option>
+                            </select>
                           </td>
                           <td className="px-4 py-2.5">
                             {isRevenue && clients.length > 0 ? (
@@ -681,10 +766,16 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                     })}
                   </tbody>
                 </table>
-                {yearTxns.length === 0 && (
-                  <div className="p-8 text-center text-narra-muted text-sm">No transactions found for {selectedYear}.</div>
+                {filteredTxns.length === 0 && (
+                  <div className="p-8 text-center text-narra-muted text-sm">
+                    {yearTxns.length === 0
+                      ? `No transactions found for ${yearViewYear}.`
+                      : `No ${typeFilter} transactions in ${yearViewYear}.`}
+                  </div>
                 )}
               </div>
+                )
+              })()}
             </>
           )}
         </div>
@@ -788,7 +879,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="bg-narra-surface">
-                            {['Date', 'Vendor / Description', 'Amount', 'Invoice', 'Account', 'Status', ''].map(h => (
+                            {['Date', 'Vendor / Description', 'Amount', 'Invoice', 'Account', 'Reclassify', 'Status', ''].map(h => (
                               <th key={h} className={`px-4 py-2 text-xs font-body text-narra-muted uppercase tracking-wider ${h === 'Amount' ? 'text-right' : 'text-left'}`}>{h}</th>
                             ))}
                           </tr>
@@ -839,6 +930,18 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                                 </select>
                               </td>
                               <td className="px-4 py-2.5">
+                                <select
+                                  defaultValue=""
+                                  onChange={e => { if (e.target.value) retypeTx(item.id, e.target.value, false) }}
+                                  className="text-xs px-2 py-1 bg-violet-50 text-violet-700 hover:bg-violet-100 rounded-lg border border-violet-200 outline-none cursor-pointer whitespace-nowrap"
+                                  title="Move this out of operating expenses"
+                                >
+                                  <option value="">↷ Reclassify…</option>
+                                  <option value="capex">Product Investment</option>
+                                  <option value="investment">Investor Deposit</option>
+                                </select>
+                              </td>
+                              <td className="px-4 py-2.5">
                                 <span className={`text-xs px-2 py-0.5 rounded-full ${
                                   item.status === 'matched'   ? 'bg-green-50 text-green-700' :
                                   item.status === 'proposed'  ? 'bg-amber-50 text-amber-700' :
@@ -864,7 +967,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                             <td className="px-4 py-2.5 text-right font-heading font-bold text-red-500">
                               ${group.total.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                             </td>
-                            <td colSpan={2} />
+                            <td colSpan={5} />
                           </tr>
                         </tfoot>
                       </table>
@@ -921,12 +1024,20 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                       </div>
                     </div>
                     {/* Actions */}
-                    <div className={`px-4 py-2.5 border-t flex items-center justify-between ${pair.status === 'flagged' ? 'border-red-200 bg-red-100/50' : 'border-amber-200 bg-amber-100/50'}`}>
+                    <div className={`px-4 py-2.5 border-t flex items-center justify-between gap-2 flex-wrap ${pair.status === 'flagged' ? 'border-red-200 bg-red-100/50' : 'border-amber-200 bg-amber-100/50'}`}>
                       <span className={`text-xs ${pair.status === 'flagged' ? 'text-red-700 font-medium' : 'text-amber-700'}`}>
                         Amount diff: ${Math.abs((pair.bankAmount || 0) - (pair.invoiceAmount || 0)).toFixed(2)}
                         {pair.discrepancyPct && pair.discrepancyPct > 5 ? ` (${pair.discrepancyPct.toFixed(1)}%)` : ''}
                       </span>
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 flex-wrap">
+                        <select
+                          defaultValue=""
+                          onChange={e => { if (e.target.value) retypeTx(pair.bankTxId, e.target.value, false) }}
+                          className="text-xs px-2 py-1.5 bg-violet-50 text-violet-700 hover:bg-violet-100 rounded-lg border border-violet-200 outline-none cursor-pointer"
+                        >
+                          <option value="">↷ Reclassify…</option>
+                          <option value="capex">Product Investment (capex)</option>
+                        </select>
                         <button
                           onClick={() => unmatch(pair)}
                           disabled={unmatching === pair.bankTxId}
@@ -959,7 +1070,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-narra-dark text-white">
-                      {['Bank Transaction', 'Date', 'Amount', 'Invoice', 'Account', ''].map(h => (
+                      {['Bank Transaction', 'Date', 'Amount', 'Invoice', 'Account', 'Reclassify', ''].map(h => (
                         <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'Amount' ? 'text-right' : 'text-left'}`}>{h}</th>
                       ))}
                     </tr>
@@ -1004,6 +1115,16 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                           )}
                         </td>
                         <td className="px-4 py-3 text-xs text-narra-muted">{pair.accountCode}</td>
+                        <td className="px-4 py-3">
+                          <select
+                            defaultValue=""
+                            onChange={e => { if (e.target.value) retypeTx(pair.bankTxId, e.target.value, false) }}
+                            className="text-xs px-2 py-1 bg-violet-50 text-violet-700 hover:bg-violet-100 rounded-lg border border-violet-200 outline-none cursor-pointer whitespace-nowrap"
+                          >
+                            <option value="">↷ Reclassify…</option>
+                            <option value="capex">Product Investment</option>
+                          </select>
+                        </td>
                         <td className="px-4 py-3">
                           <button
                             onClick={() => unmatch(pair)}
@@ -1183,6 +1304,14 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                                   ? <p className="text-xs text-red-500">{invoiceLookups[tx.id]?.error}</p>
                                   : <p className="text-xs text-green-700">✓ {invoiceLookups[tx.id]?.clientName} · ${invoiceLookups[tx.id]?.amount?.toLocaleString()}</p>
                               )}
+                              {/* Reclassify revenue as investor deposit */}
+                              <button
+                                onClick={() => retypeTx(tx.id, 'investment', false)}
+                                title="This is money from an investor, not a client — remove from revenue"
+                                className="text-xs px-2 py-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-full transition-all border border-emerald-200 whitespace-nowrap w-fit"
+                              >
+                                ↷ Mark as Investor Deposit
+                              </button>
                             </div>
                           )}
                           {!isRevenue && allInvoices.length > 0 ? (
@@ -1214,6 +1343,18 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                                 >
                                   ⊕ Split
                                 </button>
+                                <select
+                                  defaultValue=""
+                                  onChange={e => {
+                                    if (!e.target.value) return
+                                    retypeTx(tx.id, e.target.value, false)
+                                  }}
+                                  className="text-xs px-2 py-1 bg-violet-50 text-violet-700 hover:bg-violet-100 rounded-full transition-all border border-violet-200 outline-none cursor-pointer whitespace-nowrap"
+                                >
+                                  <option value="">↷ Reclassify as…</option>
+                                  <option value="capex">Product Investment (capex)</option>
+                                  <option value="revenue">Revenue (correction)</option>
+                                </select>
                                 <select
                                   defaultValue=""
                                   onChange={async e => {
@@ -1258,6 +1399,19 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                               >
                                 ⊕ Split
                               </button>
+                              <select
+                                defaultValue=""
+                                onChange={e => {
+                                  if (!e.target.value) return
+                                  retypeTx(tx.id, e.target.value, false)
+                                }}
+                                className="text-xs px-2 py-1 bg-violet-50 text-violet-700 hover:bg-violet-100 rounded-full transition-all border border-violet-200 outline-none cursor-pointer whitespace-nowrap"
+                              >
+                                <option value="">↷ Reclassify as…</option>
+                                <option value="capex">Product Investment</option>
+                                <option value="investment">Investor Deposit</option>
+                                <option value="revenue">Revenue</option>
+                              </select>
                               <select
                                 defaultValue=""
                                 onChange={async e => {

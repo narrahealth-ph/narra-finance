@@ -110,6 +110,28 @@ export async function fetchAllTimeRows(): Promise<any[][]> {
   })
 }
 
+const INVESTMENT_SHEET_ID = '1-cffcfsSWRsJQSEIumyTacs4xEjBtOwqgmJ3c-Vd0nE'
+
+/** Fetch founder investment totals from the "Total Investments" tab */
+export async function fetchInvestmentTotals(): Promise<{ rene: number; mike: number; total: number }> {
+  return cachedSheet('investment-totals', async () => {
+    const sheets = getSheetClient()
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: INVESTMENT_SHEET_ID,
+      range: 'Total Investments!A1:D10',
+    })
+    const rows: any[][] = res.data.values || []
+    let rene = 0, mike = 0
+    for (const row of rows) {
+      const label = (row[0] || '').toString().trim().toLowerCase()
+      const total  = parseNum((row[3] || '').toString())
+      if (label === 'rene' || label === 'rene ')  rene = total
+      if (label === 'mike')                        mike = total
+    }
+    return { rene, mike, total: rene + mike }
+  })
+}
+
 /** Calculate MRR for a period directly from the invoice sheet (no DB sync required) */
 export async function calcMrrForPeriod(startDate: string, endDate: string): Promise<number> {
   const rows = await fetchAllTimeRows()

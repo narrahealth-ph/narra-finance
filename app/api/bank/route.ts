@@ -22,6 +22,12 @@ export async function POST(req: NextRequest) {
   const userEmail = (session as any).email || 'unknown'
   const saved = []
 
+  // Ensure unique constraint exists so ON CONFLICT can deduplicate re-imports
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_tx_period_date_desc_amount
+    ON bank_transactions (period_id, date, description, amount)
+  `).catch(() => {})
+
   for (const tx of transactions) {
     const currency  = tx.currency || 'USD'
     const txDate    = tx.date || new Date().toISOString().split('T')[0]
@@ -33,7 +39,7 @@ export async function POST(req: NextRequest) {
       `INSERT INTO bank_transactions
         (period_id, date, description, amount, currency, amount_usd, type, account, status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'unmatched')
-       ON CONFLICT DO NOTHING
+       ON CONFLICT (period_id, date, description, amount) DO NOTHING
        RETURNING id`,
       [periodId, txDate, tx.description, tx.amount,
        currency, amountUsd, tx.type, tx.account || tx.sourceAccount || '']
@@ -63,8 +69,8 @@ export async function GET(req: NextRequest) {
     const res = await query(
       `SELECT p.label, p.start_date,
               COUNT(bt.id)::int                                       AS tx_count,
-              COALESCE(SUM(CASE WHEN bt.type='revenue'  THEN bt.amount_usd ELSE 0 END), 0) AS revenue,
-              COALESCE(SUM(CASE WHEN bt.type='expense'  THEN bt.amount_usd ELSE 0 END), 0) AS expenses
+              COALESCE(SUM(CASE WHEN bt.type='revenue'                    THEN bt.amount_usd ELSE 0 END), 0) AS revenue,
+              COALESCE(SUM(CASE WHEN bt.type IN ('expense','capex') THEN bt.amount_usd ELSE 0 END), 0) AS expenses
        FROM periods p
        LEFT JOIN bank_transactions bt ON bt.period_id = p.id
        GROUP BY p.id, p.label, p.start_date
@@ -105,6 +111,28 @@ export async function GET(req: NextRequest) {
   if (action === 'year_all') {
     const year = searchParams.get('year')
     if (!year) return NextResponse.json({ error: 'year required' }, { status: 400 })
+
+    // Ensure unique constraint exists, then silently remove any exact duplicates
+    // (same period, date, description, amount — keep the lowest id)
+    await query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_tx_period_date_desc_amount
+      ON bank_transactions (period_id, date, description, amount)
+    `).catch(() => {}) // index may already exist from a prior run — safe to ignore
+    await query(`
+      DELETE FROM bank_transactions
+      WHERE id IN (
+        SELECT id FROM (
+          SELECT id,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY period_id, date, description, amount
+                   ORDER BY id
+                 ) AS rn
+          FROM bank_transactions
+        ) ranked
+        WHERE rn > 1
+      )
+    `).catch(() => {})
+
     const res = await query(
       `SELECT bt.id, bt.date, bt.description, bt.amount, bt.currency, bt.amount_usd,
               bt.account, bt.status, bt.type, bt.client_id, bt.invoice_ref,
@@ -112,7 +140,7 @@ export async function GET(req: NextRequest) {
        FROM bank_transactions bt
        JOIN periods p ON p.id = bt.period_id
        WHERE EXTRACT(YEAR FROM p.start_date) = $1
-         AND bt.type IN ('revenue', 'expense')
+         AND bt.type IN ('revenue', 'expense', 'capex', 'investment')
        ORDER BY bt.date`,
       [parseInt(year)]
     )
@@ -274,6 +302,34 @@ export async function PATCH(req: NextRequest) {
     if (!bodyAccount) return NextResponse.json({ error: 'account required' }, { status: 400 })
     await query('UPDATE bank_transactions SET account=$1 WHERE id=$2', [bodyAccount, bankTxId])
     await writeAudit('bank_transactions', bankTxId, 'retag', null, { account: bodyAccount }, userEmail)
+    return NextResponse.json({ ok: true })
+  }
+
+  // ── retype — change transaction type (e.g. expense → capex / investment) ────
+  // Caller sends { action: 'retype', bankTxId, account: '<newType>' }
+  // We reuse the 'account' slot since it's already destructured from the body.
+  if (action === 'retype') {
+    const newTxType = bodyAccount
+    const allowed = ['revenue', 'expense', 'capex', 'investment']
+    if (!newTxType || !allowed.includes(newTxType)) {
+      return NextResponse.json({ error: 'type must be one of: ' + allowed.join(', ') }, { status: 400 })
+    }
+    const old = await query('SELECT type, matched_invoice_id FROM bank_transactions WHERE id=$1', [bankTxId])
+    const oldRow = old.rows[0]
+    if (!oldRow) return NextResponse.json({ error: 'Transaction not found' }, { status: 404 })
+    // Unlink matched invoice when type is no longer expense
+    if (oldRow.matched_invoice_id && newTxType !== 'expense') {
+      await query(
+        "UPDATE invoices SET status='unmatched', matched_bank_id=NULL WHERE matched_bank_id=$1",
+        [bankTxId]
+      )
+    }
+    await query(
+      "UPDATE bank_transactions SET type=$1, status='unmatched', matched_invoice_id=NULL, discrepancy_pct=NULL WHERE id=$2",
+      [newTxType, bankTxId]
+    )
+    await writeAudit('bank_transactions', bankTxId, 'retype',
+      { type: oldRow.type }, { type: newTxType }, userEmail)
     return NextResponse.json({ ok: true })
   }
 

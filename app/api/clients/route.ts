@@ -2,8 +2,22 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireRole } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { google } from 'googleapis'
+import { cachedSheet } from '@/lib/sheets-cache'
+import { namesMatch } from '@/lib/name-match'
 
-const SPREADSHEET_ID = '1057EJCsrTPT7LFHBYqsqYVVERuwgZ7kScmHy8j1Or8s'
+const SPREADSHEET_ID      = '1057EJCsrTPT7LFHBYqsqYVVERuwgZ7kScmHy8j1Or8s'
+const INVOICE_SHEET_ID    = '1qYn8BxBfSNsYMAXeqN84dsoxIbd7pszglt4YDbsJO2k'
+// Count invoices that are confirmed (sent, invoiced, outstanding, due, or any form of paid)
+// Excludes drafts, cancelled, void, and pipeline (sales-sent)
+function isCountableStatus(status: string): boolean {
+  const s = (status || '').toLowerCase().trim()
+  return s.includes('paid') || s === 'sent' || s === 'invoiced' || s === 'outstanding' || s === 'due'
+}
+
+function parseNum(val: any): number {
+  if (!val) return 0
+  return parseFloat(val.toString().replace(/[$,\s]/g, '')) || 0
+}
 
 function getSheetsClient() {
   const auth = new google.auth.GoogleAuth({
@@ -61,7 +75,7 @@ export async function GET(req: NextRequest) {
 
   await ensureTables()
 
-  const [clientsRes, holdingRes, invoiceRevenueRes, cashRes] = await Promise.all([
+  const [clientsRes, holdingRes, invRows, cashRes] = await Promise.all([
     query(`
       SELECT c.*, hc.name AS holding_company_name
       FROM clients c
@@ -69,14 +83,15 @@ export async function GET(req: NextRequest) {
       ORDER BY c.name
     `),
     query('SELECT * FROM holding_companies ORDER BY name'),
-    // Total invoiced per client from explicit sheet invoice assignments
-    query(`
-      SELECT client_id AS id,
-             COALESCE(SUM(amount_usd), 0) AS assigned_total,
-             COUNT(*) AS assigned_count
-      FROM client_invoice_assignments
-      GROUP BY client_id
-    `),
+    // LTV from outgoing invoice sheet — matched by client name (col I) or holding company name
+    cachedSheet('invoice-sheet', async () => {
+      const sheets = getSheetsClient()
+      const res = await sheets.spreadsheets.values.get({
+        spreadsheetId: INVOICE_SHEET_ID,
+        range: 'All time!A2:I500',
+      })
+      return res.data.values || []
+    }).catch(() => []),
     query(`
       SELECT client_id, SUM(amount_usd) AS cash_received
       FROM bank_transactions
@@ -85,22 +100,125 @@ export async function GET(req: NextRequest) {
     `),
   ])
 
-  const invoiceMap: Record<number, { total: number; count: number }> = {}
-  for (const row of invoiceRevenueRes.rows) {
-    invoiceMap[parseInt(row.id)] = { total: parseFloat(row.assigned_total || 0), count: parseInt(row.assigned_count || 0) }
+  // Build holding company subsidiary count (active only) for split calculation
+  const holdingSubCount: Record<string, number> = {}
+  for (const c of clientsRes.rows) {
+    if (c.holding_company_name && c.active) {
+      const key = c.holding_company_name.toLowerCase().trim()
+      holdingSubCount[key] = (holdingSubCount[key] || 0) + 1
+    }
   }
+
+  // Compute LTV per client from sheet: match by client name or holding company name
+  type LtvEntry = { total: number; count: number; groupTotal: number; groupCount: number }
+  const ltvMap: Record<number, LtvEntry> = {}
+  const blank = (): LtvEntry => ({ total: 0, count: 0, groupTotal: 0, groupCount: 0 })
+  const matchedSheetNames = new Set<string>() // track which sheet names were matched
+
+  // Normalize for HC word matching (same rules as name-match.ts)
+  const normalizeWords = (s: string) =>
+    s.toLowerCase().replace(/[.,\/#!$%^&*;:{}=_`~()'"]/g, '').split(' ').filter(w => w.length > 1)
+
+  for (const r of (invRows as any[])) {
+    const rawName   = ((r[8] || r[1]) || '').trim()
+    const sheetName = rawName.toLowerCase()
+    const amount    = parseNum(r[5])
+    const status    = (r[6] || '').toLowerCase().trim()
+    if (!sheetName || !amount || !isCountableStatus(status)) continue
+
+    const sheetWords = normalizeWords(sheetName)
+
+    // Holding company match: ALL words of the HC name must appear in the sheet name.
+    // This is directional (HC ⊆ sheet) so "Rayomar Group" won't accidentally match
+    // a client named "Rayomar" whose name is a subset of the HC name.
+    const matchedHcKeys = new Set<string>()
+    for (const c of clientsRes.rows) {
+      if (!c.holding_company_name) continue
+      const hcKey   = (c.holding_company_name as string).toLowerCase().trim()
+      if (matchedHcKeys.has(hcKey)) continue
+      const hcWords = normalizeWords(hcKey)
+      if (hcWords.length > 0 && hcWords.every(w => sheetWords.includes(w))) {
+        matchedHcKeys.add(hcKey)
+      }
+    }
+
+    if (matchedHcKeys.size > 0) {
+      // Holding company invoice — split across ACTIVE subsidiaries only.
+      // If all subsidiaries are inactive, the HC match is ignored and we fall
+      // through to direct name matching (avoids ghost-split inflation).
+      let distributed = false
+      for (const hcKey of matchedHcKeys) {
+        const subCount = holdingSubCount[hcKey] || 0
+        if (subCount === 0) continue  // no active subs for this HC — skip
+        const share = amount / subCount
+        for (const c of clientsRes.rows) {
+          if (!c.active) continue
+          if (!c.holding_company_name) continue
+          if ((c.holding_company_name as string).toLowerCase().trim() !== hcKey) continue
+          if (!ltvMap[c.id]) ltvMap[c.id] = blank()
+          ltvMap[c.id].total      += share
+          ltvMap[c.id].count      += 1
+          ltvMap[c.id].groupTotal += share
+          ltvMap[c.id].groupCount += 1
+          distributed = true
+        }
+      }
+      if (distributed) {
+        matchedSheetNames.add(sheetName)
+      } else {
+        // All matched HCs had no active subsidiaries — fall through to direct match
+        for (const c of clientsRes.rows) {
+          if (namesMatch(sheetName, c.name)) {
+            matchedSheetNames.add(sheetName)
+            if (!ltvMap[c.id]) ltvMap[c.id] = blank()
+            ltvMap[c.id].total += amount
+            ltvMap[c.id].count += 1
+          }
+        }
+      }
+    } else {
+      // No HC match — try direct client name match (fuzzy, bidirectional)
+      for (const c of clientsRes.rows) {
+        if (namesMatch(sheetName, c.name)) {
+          matchedSheetNames.add(sheetName)
+          if (!ltvMap[c.id]) ltvMap[c.id] = blank()
+          ltvMap[c.id].total += amount
+          ltvMap[c.id].count += 1
+        }
+      }
+    }
+  }
+
+  // Unmatched invoice names — names in the sheet not matched to any client or holding company
+  const unmatchedMap: Record<string, { name: string; total: number; count: number; last_date: string }> = {}
+  for (const r of (invRows as any[])) {
+    const rawName   = ((r[8] || r[1]) || '').trim()
+    const sheetName = rawName.toLowerCase()
+    if (!rawName || matchedSheetNames.has(sheetName)) continue
+    const amount = parseNum(r[5])
+    const status = (r[6] || '').toLowerCase().trim()
+    if (!amount || !isCountableStatus(status)) continue
+    if (!unmatchedMap[sheetName]) unmatchedMap[sheetName] = { name: rawName, total: 0, count: 0, last_date: '' }
+    unmatchedMap[sheetName].total += amount
+    unmatchedMap[sheetName].count += 1
+    const date = (r[4] || '').trim()
+    if (date > unmatchedMap[sheetName].last_date) unmatchedMap[sheetName].last_date = date
+  }
+  const unmatchedNames = Object.values(unmatchedMap).sort((a, b) => b.total - a.total)
 
   const cashMap: Record<number, number> = {}
   for (const row of cashRes.rows) cashMap[parseInt(row.client_id)] = parseFloat(row.cash_received || 0)
 
   const clients = clientsRes.rows.map((c: any) => ({
     ...c,
-    ltv:           invoiceMap[c.id]?.total || 0,
-    invoice_count: invoiceMap[c.id]?.count || 0,
-    cash_received: cashMap[c.id] || 0,
+    ltv:                 Math.round(ltvMap[c.id]?.total || 0),
+    invoice_count:       ltvMap[c.id]?.count || 0,
+    group_invoice_count: ltvMap[c.id]?.groupCount || 0,
+    group_ltv:           Math.round(ltvMap[c.id]?.groupTotal || 0),
+    cash_received:       cashMap[c.id] || 0,
   }))
 
-  return NextResponse.json({ clients, holdingCompanies: holdingRes.rows })
+  return NextResponse.json({ clients, holdingCompanies: holdingRes.rows, unmatchedNames })
 }
 
 // POST /api/clients — create client or holding company

@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
   const p = periodRes.rows[0]
 
   // ── Raw data for this period — all queries in parallel ───────────────────────
-  const [invoicesRes, bankTxsRes, mrrRes, fxRes, arSheetRes, retainedRes, prepayRes, manualRes2, cumulativeCashRes] = await Promise.all([
+  const [invoicesRes, bankTxsRes, mrrRes, fxRes, arSheetRes, retainedRes, prepayRes, manualRes2, cumulativeCashRes, holdingRes] = await Promise.all([
     query('SELECT * FROM invoices WHERE period_id = $1 ORDER BY account_name, date', [periodId]),
     query('SELECT * FROM bank_transactions WHERE period_id = $1 ORDER BY date', [periodId]),
     query('SELECT * FROM mrr_entries WHERE period_id = $1 ORDER BY amount_usd DESC', [periodId]),
@@ -81,12 +81,26 @@ export async function GET(req: NextRequest) {
        ORDER BY pp.start_date ASC, bt.date ASC`,
       [p.end_date]
     ).catch(() => ({ rows: [] })),
+    query(`
+      SELECT hc.name AS hc_name, c.name AS client_name
+      FROM holding_companies hc
+      JOIN clients c ON c.holding_company_id = hc.id
+      WHERE c.active = TRUE
+    `).catch(() => ({ rows: [] })),
   ])
 
   const invoices  = invoicesRes.rows
   const bankTxs   = bankTxsRes.rows
   const mrrRows   = mrrRes.rows
   const fxRates   = (fxRes as any).rows || []
+
+  // Build holding company map for AR split
+  const holdingMap: Record<string, string[]> = {}
+  for (const row of (holdingRes as any).rows) {
+    const key = (row.hc_name || '').toLowerCase().trim()
+    if (!holdingMap[key]) holdingMap[key] = []
+    holdingMap[key].push(row.client_name)
+  }
 
   // Safe USD amount: use amount_usd if set, fall back to amount ONLY for USD transactions
   const safeUsd = (r: any) => {
@@ -181,10 +195,21 @@ export async function GET(req: NextRequest) {
     const billingType  = (r[7] || 'annual').toLowerCase().trim()
     const issueDateStr = r[4] || ''
     const issueDate    = issueDateStr ? new Date(issueDateStr) : null
-    // Only include invoices issued on or before the period end date
-    if (!['paid', 'cancelled', 'void'].includes(status) && (!issueDate || issueDate <= periodEnd)) {
+    // AR = outstanding invoices only (cash not yet received).
+    // Paid invoices are already in the cash balance — including them here would double-count.
+    const isArStatus = status === 'sent' || status === 'invoiced' || status === 'outstanding' || status === 'due'
+    if (isArStatus && (!issueDate || issueDate <= periodEnd)) {
       arTotal += amount
-      arItems.push({ invoiceId: r[0], clientName: r[8] || r[1], amount, status, billingType, issueDate: issueDateStr })
+      const arClientName = r[8] || r[1]
+      const arSubsidiaries = holdingMap[(arClientName || '').toLowerCase().trim()]
+      if (arSubsidiaries && arSubsidiaries.length > 0) {
+        const share = amount / arSubsidiaries.length
+        arSubsidiaries.forEach(subName => {
+          arItems.push({ invoiceId: r[0], clientName: subName, amount: share, status, billingType, issueDate: issueDateStr })
+        })
+      } else {
+        arItems.push({ invoiceId: r[0], clientName: arClientName, amount, status, billingType, issueDate: issueDateStr })
+      }
     }
     if (status === 'paid' && issueDateStr) {
       const issueDate = new Date(issueDateStr)
@@ -240,11 +265,10 @@ export async function GET(req: NextRequest) {
   const incomeTax         = m('860', 0)
   const gstPayable        = m('gst', 0)
 
-  // AR is shown informally but excluded from the balance sheet equation because
-  // P&L is cash-basis — revenue is only recognised when cash is received (bank tx).
-  // Including accrual AR in assets without a matching credit in equity would break
-  // the accounting equation. AR is passed through as a memo item for display only.
-  const totalCurrentAssets     = totalCash + prepayments
+  // AR is included in current assets (accrual basis).
+  // To keep Assets = Liabilities + Equity, the same amount is added to equity as
+  // an "Accrual Adjustment" — bridging the cash-basis P&L with the accrual balance sheet.
+  const totalCurrentAssets     = totalCash + arTotal + prepayments
   const totalNonCurrentAssets  = fixedAssets + intangibleAssets
   const totalAssets            = totalCurrentAssets + totalNonCurrentAssets
 
@@ -252,8 +276,10 @@ export async function GET(req: NextRequest) {
   const totalNonCurrentLiabilities = loans + investment852 + investment853
   const totalLiabilities           = totalCurrentLiabilities + totalNonCurrentLiabilities
 
-  // Equity = Share Capital + Retained Earnings + Current Period P&L
-  const totalEquity = shareCapital + retainedEarnings + netProfit
+  // Equity = Share Capital + Retained Earnings + Current Period P&L + Accrual Adjustment (AR)
+  // The accrual adjustment offsets the AR asset so the equation balances.
+  const accrualAdjustment = arTotal
+  const totalEquity = shareCapital + retainedEarnings + netProfit + accrualAdjustment
 
   const bsData = {
     period: p,
@@ -287,7 +313,8 @@ export async function GET(req: NextRequest) {
     // Equity
     shareCapital,
     retainedEarnings,
-    provisionalPL:  netProfit,
+    provisionalPL:      netProfit,
+    accrualAdjustment,
     totalEquity,
     // Check: totalAssets should equal totalLiabilities + totalEquity
     balanceCheck:   Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01,

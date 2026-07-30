@@ -6,7 +6,7 @@ import {
 } from 'recharts'
 import { fmt, shortLabel } from '@/lib/format'
 
-const TOTAL_INVESTED_USD = 60000 // $30k Mike + $30k Rene (remainder paid directly to suppliers)
+// totalInvested comes from the API (sum of all 'investment' bank transactions)
 
 function KpiTooltip({ text }: { text: string }) {
   return (
@@ -32,22 +32,28 @@ function fmtDate(dateStr: string) {
   return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
 }
 
-export default function InvestorPanel() {
-  const [data,            setData]            = useState<any>(null)
-  const [loading,         setLoading]         = useState(true)
-  const [displayCurrency, setDisplayCurrency] = useState<'USD' | 'SGD'>('USD')
+export default function InvestorPanel({ currency = 'USD' }: { currency?: 'USD' | 'SGD' }) {
+  const [data,        setData]        = useState<any>(null)
+  const [loading,     setLoading]     = useState(true)
+  const [sheetClients, setSheetClients] = useState<any[]>([])
+  const [sheetUnmatched, setSheetUnmatched] = useState<any[]>([])
 
   useEffect(() => {
     fetch('/api/investor-summary', { credentials: 'include' })
-      .then(r => r.json())
-      .then(setData)
+      .then(r => r.ok ? r.json() : r.json().catch(() => null))
+      .then(d => { if (d && !d.error) setData(d) })
+      .catch(err => console.error('investor-summary fetch error:', err))
       .finally(() => setLoading(false))
+    fetch('/api/clients', { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => {
+        setSheetClients(d.clients || [])
+        setSheetUnmatched(d.unmatchedNames || [])
+      })
   }, [])
 
   const months         = data?.months         || []
   const clients        = data?.clients        || []
-  const avgRevenue     = data?.avgRevenue     || 0
-  const arr            = data?.arr            || 0
   const avgBurn        = data?.avgBurn        || 0
   const cashPosition   = data?.cashPosition   || 0
   const runway         = data?.runway
@@ -60,15 +66,32 @@ export default function InvestorPanel() {
   const mrrMonth       = data?.mrrMonth       || null
   const revenueMonths  = data?.revenueMonths  || []
   const burnMonths     = data?.burnMonths     || []
-  const totalInvested  = data?.totalInvested  || 0
+  // Accrual MRR avg — last 3 months from invoice sheet
+  const last3Mrr   = months.slice(-3)
+  const avgMrr     = last3Mrr.length > 0
+    ? Math.round(last3Mrr.reduce((s: number, m: any) => s + (m.mrr || 0), 0) / last3Mrr.length)
+    : 0
+  const arr        = avgMrr * 12
+  const mrrMonths  = last3Mrr.map((m: any) => m.label)
+
+  const totalInvested      = data?.totalInvested      || 0
+  const investmentTotals   = data?.investmentTotals   || { rene: 0, mike: 0, total: 0 }
+  const sheetTotalRaised   = investmentTotals.total   || totalInvested
 
   // Currency conversion
   const sgdRate = data?.sgdRate || 0.74
-  const cvt = (n: number) => displayCurrency === 'SGD' ? (n || 0) / sgdRate : (n || 0)
-  const sym = displayCurrency === 'SGD' ? 'S$' : '$'
+  const cvt = (n: number) => currency === 'SGD' ? (n || 0) / sgdRate : (n || 0)
+  const sym = currency === 'SGD' ? 'S$' : '$'
 
-  const revenueVsInvested = TOTAL_INVESTED_USD > 0
-    ? Math.min(100, Math.round((totalRevenue / TOTAL_INVESTED_USD) * 100))
+  // Sheet-based client breakdown (replaces mrr_entries paying clients)
+  const activeSheetClients = sheetClients
+    .filter(c => c.ltv > 0 && c.active)
+    .sort((a: any, b: any) => b.ltv - a.ltv)
+  const unmatchedTotal = sheetUnmatched.reduce((s: number, u: any) => s + Math.round(u.total), 0)
+  const sheetGrandTotal = activeSheetClients.reduce((s: number, c: any) => s + c.ltv, 0) + unmatchedTotal
+
+  const revenueVsInvested = totalInvested > 0
+    ? Math.min(100, Math.round((totalRevenue / totalInvested) * 100))
     : 0
 
   const chartData = months.map((m: any) => ({
@@ -90,15 +113,9 @@ export default function InvestorPanel() {
     <div className="space-y-6 animate-fade-up">
 
       {/* Title */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="font-heading text-2xl font-light text-narra-dark">Business Overview</h2>
-          <p className="text-narra-muted text-sm mt-1">Live data · Narra Health PTE. LTD. · Confidential</p>
-        </div>
-        <div className="flex rounded-lg border border-narra-border overflow-hidden text-xs font-body shrink-0">
-          <button onClick={() => setDisplayCurrency('USD')} className={`px-3 py-2 transition-all ${displayCurrency === 'USD' ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:bg-narra-light'}`}>USD</button>
-          <button onClick={() => setDisplayCurrency('SGD')} className={`px-3 py-2 transition-all ${displayCurrency === 'SGD' ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:bg-narra-light'}`}>SGD</button>
-        </div>
+      <div>
+        <h2 className="font-heading text-xl font-semibold text-narra-dark">Business Overview</h2>
+        <p className="text-narra-muted text-sm mt-0.5">Live data · Narra Health PTE. LTD.</p>
       </div>
 
       {/* Data coverage banner */}
@@ -127,11 +144,11 @@ export default function InvestorPanel() {
         {/* Invested */}
         <div className="bg-narra-dark border border-white/10 rounded-2xl p-6 flex flex-col gap-2">
           <div className="text-white/40 text-xs uppercase tracking-widest font-body">Total Raised</div>
-          <div className="font-heading text-2xl sm:text-3xl font-light text-white">{sym}{fmt(cvt(TOTAL_INVESTED_USD))}</div>
-          <div className="text-white/30 text-xs font-body">Invested by founders to build the product</div>
+          <div className="font-heading text-2xl sm:text-3xl font-light text-white">{sym}{fmt(cvt(sheetTotalRaised))}</div>
+          <div className="text-white/30 text-xs font-body">Invested by founders across both rounds</div>
           <div className="mt-3 pt-3 border-t border-white/10 text-xs text-white/40 font-body space-y-1">
-            <div className="flex justify-between"><span>Mike</span><span className="text-white/60">{sym}{fmt(cvt(30000))}</span></div>
-            <div className="flex justify-between"><span>Rene</span><span className="text-white/60">{sym}{fmt(cvt(30000))}</span></div>
+            <div className="flex justify-between"><span>Rene</span><span className="text-white/60">{sym}{fmt(cvt(investmentTotals.rene))}</span></div>
+            <div className="flex justify-between"><span>Mike</span><span className="text-white/60">{sym}{fmt(cvt(investmentTotals.mike))}</span></div>
           </div>
         </div>
 
@@ -145,14 +162,9 @@ export default function InvestorPanel() {
               <span> · {fmtDate(earliestBank)} – {fmtDate(latestBank)}</span>
             )}
           </div>
-          <div className="mt-3 pt-3 border-t border-white/10">
-            <div className="flex justify-between text-xs mb-1.5">
-              <span className="text-white/40">Recovered</span>
-              <span className="text-narra-green">{revenueVsInvested}% of investment</span>
-            </div>
-            <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
-              <div className="h-full bg-narra-green rounded-full transition-all" style={{ width: `${revenueVsInvested}%` }} />
-            </div>
+          <div className="mt-3 pt-3 border-t border-white/10 text-xs text-white/40 font-body space-y-1">
+            <div className="flex justify-between"><span>Cash in bank</span><span className="text-narra-green">{sym}{fmt(cvt(cashPosition))}</span></div>
+            <div className="flex justify-between"><span>Runway</span><span className="text-white/60">{runway !== null ? `${runway} months` : '—'}</span></div>
           </div>
         </div>
 
@@ -162,7 +174,7 @@ export default function InvestorPanel() {
           <div className="font-heading text-xl sm:text-2xl font-light text-white leading-tight">A working product with paying clients</div>
           <div className="mt-auto pt-3 border-t border-white/10 text-xs text-white/40 font-body space-y-1">
             <div className="flex justify-between"><span>Active clients</span><span className="text-white/60">{activeClients}</span></div>
-            <div className="flex justify-between"><span>Monthly recurring</span><span className="text-narra-green">{sym}{fmt(cvt(avgRevenue))}/mo</span></div>
+            <div className="flex justify-between"><span>Monthly recurring</span><span className="text-narra-green">{sym}{fmt(cvt(data?.currentMrr || 0))}/mo</span></div>
           </div>
         </div>
       </div>
@@ -172,13 +184,13 @@ export default function InvestorPanel() {
         <div className="bg-white border border-narra-border rounded-2xl p-5">
           <div className="text-narra-muted text-xs uppercase tracking-widest font-body mb-2 flex items-center">
             Avg Monthly Revenue
-            <KpiTooltip text="Average cash actually received from clients per month, based on your last 3 months of bank deposits." />
+            <KpiTooltip text="Accrual MRR averaged over the last 3 months, calculated from the invoice sheet. Spreads annual/quarterly contracts into monthly amounts — more stable than cash deposits." />
           </div>
-          <div className="font-heading text-2xl font-semibold text-narra-green">{sym}{fmt(cvt(avgRevenue))}</div>
+          <div className="font-heading text-2xl font-semibold text-narra-green">{sym}{fmt(cvt(avgMrr))}</div>
           <div className="text-narra-muted text-xs mt-1 font-body">
-            {revenueMonths.length > 0
-              ? `Avg of ${revenueMonths.map(fmtMonth).join(', ')}`
-              : 'No bank revenue data yet'}
+            {mrrMonths.length > 0
+              ? `Accrual MRR · avg of ${mrrMonths.map(fmtMonth).join(', ')}`
+              : 'No MRR data yet'}
           </div>
         </div>
 
@@ -188,7 +200,7 @@ export default function InvestorPanel() {
             <KpiTooltip text="Your average monthly revenue multiplied by 12. This projects your current pace over a full year — it is not actual annual revenue." />
           </div>
           <div className="font-heading text-2xl font-semibold text-narra-dark">{sym}{fmt(cvt(arr))}</div>
-          <div className="text-narra-muted text-xs mt-1 font-body">Avg monthly revenue × 12</div>
+          <div className="text-narra-muted text-xs mt-1 font-body">Accrual MRR × 12</div>
         </div>
 
         <div className="bg-white border border-narra-border rounded-2xl p-5">
@@ -245,28 +257,41 @@ export default function InvestorPanel() {
       )}
 
 
-      {/* Client breakdown */}
-      {clients.length > 0 && (
+      {/* Client breakdown — from outgoing invoice sheet */}
+      {activeSheetClients.length > 0 && (
         <div className="bg-white border border-narra-border rounded-2xl p-6">
-          <h3 className="font-heading text-lg font-semibold text-narra-dark mb-1">Paying Clients</h3>
+          <h3 className="font-heading text-lg font-semibold text-narra-dark mb-1">Client Revenue</h3>
           <p className="text-narra-muted text-xs mb-5 font-body">
-            Revenue share · {mrrMonth ? fmtMonth(mrrMonth) : 'latest month with data'}
+            All-time total invoiced per client · sent &amp; paid invoices only
           </p>
           <div className="space-y-3">
-            {clients.map((c: any) => (
-              <div key={c.name} className="flex items-center gap-3">
-                <span className="text-narra-dark text-sm font-body w-28 sm:w-40 truncate shrink-0">{c.name}</span>
-                <div className="flex-1 h-1.5 bg-narra-border rounded-full overflow-hidden min-w-0">
-                  <div className="h-full bg-narra-green rounded-full" style={{ width: `${c.pct}%` }} />
+            {activeSheetClients.map((c: any) => {
+              const pct = sheetGrandTotal > 0 ? (c.ltv / sheetGrandTotal) * 100 : 0
+              return (
+                <div key={c.id} className="flex items-center gap-3">
+                  <span className="text-narra-dark text-sm font-body w-28 sm:w-40 truncate shrink-0">{c.name}</span>
+                  <div className="flex-1 h-1.5 bg-narra-border rounded-full overflow-hidden min-w-0">
+                    <div className="h-full bg-narra-green rounded-full" style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="text-narra-muted text-xs w-10 text-right shrink-0">{pct.toFixed(1)}%</span>
+                  <span className="text-narra-dark font-body text-sm w-20 sm:w-24 text-right shrink-0">{sym}{fmt(cvt(c.ltv))}</span>
                 </div>
-                <span className="text-narra-muted text-xs w-8 text-right shrink-0">{c.pct}%</span>
-                <span className="text-narra-dark font-body text-sm w-16 sm:w-20 text-right shrink-0">{sym}{fmt(cvt(c.mrr))}</span>
+              )
+            })}
+            {unmatchedTotal > 0 && (
+              <div className="flex items-center gap-3 opacity-50">
+                <span className="text-amber-700 text-sm font-body w-28 sm:w-40 truncate shrink-0 italic">Unmatched</span>
+                <div className="flex-1 h-1.5 bg-amber-200 rounded-full overflow-hidden min-w-0">
+                  <div className="h-full bg-amber-400 rounded-full" style={{ width: `${sheetGrandTotal > 0 ? (unmatchedTotal / sheetGrandTotal) * 100 : 0}%` }} />
+                </div>
+                <span className="text-narra-muted text-xs w-10 text-right shrink-0">{sheetGrandTotal > 0 ? ((unmatchedTotal / sheetGrandTotal) * 100).toFixed(1) : 0}%</span>
+                <span className="text-amber-700 font-body text-sm w-20 sm:w-24 text-right shrink-0">{sym}{fmt(cvt(unmatchedTotal))}</span>
               </div>
-            ))}
+            )}
           </div>
           <div className="mt-4 pt-4 border-t border-narra-border flex justify-between">
-            <span className="text-narra-muted text-sm font-body">Total monthly recurring</span>
-            <span className="text-narra-green font-heading font-semibold">{sym}{fmt(cvt(totalClientMrr))}</span>
+            <span className="text-narra-muted text-sm font-body">Total invoiced (all time)</span>
+            <span className="text-narra-dark font-heading font-semibold">{sym}{fmt(cvt(sheetGrandTotal))}</span>
           </div>
         </div>
       )}
@@ -289,9 +314,6 @@ export default function InvestorPanel() {
         </div>
       </div>
 
-      <p className="text-center text-narra-muted text-xs pb-6 font-body">
-        This information is confidential and intended solely for Narra Health investors. Do not distribute.
-      </p>
     </div>
   )
 }

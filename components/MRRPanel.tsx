@@ -7,17 +7,10 @@ import {
 import { downloadCSV, toCSV } from '@/lib/csv'
 import { AlertTriangle, ClipboardList, Target } from 'lucide-react'
 
-type HistoryPoint = { month: string; confirmed: number; pending: number; costs: number; net: number }
+type HistoryPoint = { month: string; confirmed: number; pending: number; costs: number; net: number; bankCashIn?: number }
 type PendingInvoice = { invoiceId: string; clientName: string; amount: number; issueDate: string; daysOutstanding: number; billingType: string }
 type PipelineInvoice = { invoiceId: string; clientName: string; amount: number; issueDate: string; billingType: string; notes?: string }
 type Client = { invoiceId?: string; name: string; annualAmount: number; seats: number; billingType: string; issueDate?: string; isNew: boolean; isPending: boolean; isOneOff: boolean; isCarryover?: boolean; countedInMrr?: boolean }
-type Cost = { name: string; amount: number }
-
-const DEFAULT_COSTS: Cost[] = [
-  { name: 'Payroll',         amount: 5264 },
-  { name: 'Subscriptions',   amount: 1315 },
-  { name: 'Sleek+Marketing', amount: 0    },
-]
 
 const FALLBACK_HISTORY: HistoryPoint[] = [
   { month: 'Jan 2025', confirmed: 0,    pending: 0, costs: 1173,  net: -1173 },
@@ -58,7 +51,6 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   const [history,         setHistory]         = useState<HistoryPoint[]>(FALLBACK_HISTORY)
   const [historyLoading,  setHistoryLoading]  = useState(true)
   const [clients,         setClients]         = useState<Client[]>([])
-  const [costs,           setCosts]           = useState<Cost[]>([])
   const [pendingInvoices,  setPendingInvoices]  = useState<PendingInvoice[]>([])
   const [pipelineInvoices, setPipelineInvoices] = useState<PipelineInvoice[]>([])
   const [activeTab,        setActiveTab]        = useState<'outgoing' | 'incoming' | 'pending' | 'pipeline'>('outgoing')
@@ -67,22 +59,26 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   const [overrides,        setOverrides]        = useState<Record<string, string>>({})
   const [editingInvoice,   setEditingInvoice]   = useState<{ invoiceId: string; currentName: string } | null>(null)
   const [editName,         setEditName]         = useState('')
-  const [pushing,         setPushing]         = useState(false)
-  const [pushMsg,         setPushMsg]         = useState('')
   const [syncing,         setSyncing]         = useState(false)
   const [syncResult,      setSyncResult]      = useState<any>(null)
   const [chartView,    setChartView]    = useState<string>('all')
   const [periodView,   setPeriodView]   = useState<'month' | 'year'>('year')
   const [yearTotals,   setYearTotals]   = useState<Record<number, { mrr: number; costs: number; net: number }>>({})
-  const [cumulativeCash,       setCumulativeCash]       = useState<number | null>(null)  // kept for legacy compat
-  const [closing2025,          setClosing2025]          = useState<number>(0)            // kept for legacy compat
   const [totalInvoicedByYear,  setTotalInvoicedByYear]  = useState<Record<number, number>>({})
   const [bankReceivedByYear,   setBankReceivedByYear]   = useState<Record<number, number>>({})
+  const [invoicedCostsByYear,  setInvoicedCostsByYear]  = useState<Record<number, number>>({})
+  const [investmentByYear,     setInvestmentByYear]     = useState<Record<number, number>>({})
+  const [openingCash,          setOpeningCash]          = useState<number>(0)
   const [sheetRefreshKey,      setSheetRefreshKey]      = useState(0)
   const [showCashDetail,       setShowCashDetail]       = useState(false)
   const [cashDetailRows,       setCashDetailRows]       = useState<any[]>([])
   const [cashDetailLoading,    setCashDetailLoading]    = useState(false)
   const [displayCurrency,      setDisplayCurrency]      = useState<'USD' | 'SGD'>('USD')
+  const [sortCol,              setSortCol]              = useState<string>('issueDate')
+  const [sortDir,              setSortDir]              = useState<'asc' | 'desc'>('asc')
+  const [annualData,           setAnnualData]           = useState<any>(null)
+  const [showRevenueBreakdown, setShowRevenueBreakdown] = useState(false)
+  const [showExpenseBreakdown, setShowExpenseBreakdown] = useState(false)
   const selectedYear = selectedMonth?.split('_')[1] || '2026'
 
   // Currency conversion
@@ -94,7 +90,6 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   useEffect(() => {
     setHistoryLoading(true)
     setClients([])
-    setCosts([])
     const yearView = periodView === 'year'
     fetch(`/api/mrr/history?month=${encodeURIComponent(selectedMonth || '')}&yearView=${yearView}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : { history: [], clientBreakdown: [], yearTotals: {} })
@@ -122,11 +117,11 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
         // Year totals for annual view
         if (json.yearTotals) setYearTotals(json.yearTotals)
 
-        // Cumulative cash position
-        if (json.cumulativeCash        !== undefined) setCumulativeCash(json.cumulativeCash)
-        if (json.closing2025           !== undefined) setClosing2025(json.closing2025)
         if (json.totalInvoicedByYear   !== undefined) setTotalInvoicedByYear(json.totalInvoicedByYear)
         if (json.bankReceivedByYear    !== undefined) setBankReceivedByYear(json.bankReceivedByYear)
+        if (json.invoicedCostsByYear   !== undefined) setInvoicedCostsByYear(json.invoicedCostsByYear)
+        if (json.investmentByYear      !== undefined) setInvestmentByYear(json.investmentByYear)
+        if (json.openingCash           !== undefined) setOpeningCash(json.openingCash)
         if (json.pendingFromSheet)  setPendingInvoices(json.pendingFromSheet)
         if (json.pipelineFromSheet) setPipelineInvoices(json.pipelineFromSheet)
       })
@@ -134,6 +129,16 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
       .finally(() => setHistoryLoading(false))
     setChartView('all') // reset chart filter when year changes
   }, [selectedMonth, refreshKey, sheetRefreshKey, periodView]) // re-fetch when month/year-view/refresh changes
+
+  // Fetch annual-report data for the selected year (for P&L-style cards)
+  useEffect(() => {
+    if (!selectedYear) return
+    setAnnualData(null)
+    fetch(`/api/annual-report?year=${selectedYear}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d && !d.error) setAnnualData(d) })
+      .catch(() => {})
+  }, [selectedYear])
 
   // Load incoming (expense) invoices for this period
   useEffect(() => {
@@ -172,7 +177,38 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   // Count all paid recurring clients toward confirmed MRR (one-offs and pending excluded)
   const totalConfirmedMrr = useMemo(() => clients.filter(c => !c.isPending && !c.isOneOff).reduce((s, c) => s + Math.round(c.annualAmount / 12), 0), [clients])
   const totalPendingMrr   = useMemo(() => pendingInvoices.reduce((s, i) => s + calcMonthly(i.amount, i.billingType), 0), [pendingInvoices])
-  const totalCosts        = costs.reduce((s, c) => s + c.amount, 0)
+
+  function toggleSort(col: string) {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(col); setSortDir('asc') }
+  }
+
+  const sortedClients = useMemo(() => [...clients].sort((a, b) => {
+    let av: any, bv: any
+    const mrrA = a.isOneOff ? a.annualAmount : Math.round(a.annualAmount / 12)
+    const mrrB = b.isOneOff ? b.annualAmount : Math.round(b.annualAmount / 12)
+    switch (sortCol) {
+      case 'name':        av = a.name; bv = b.name; break
+      case 'issueDate':   av = a.issueDate || ''; bv = b.issueDate || ''; break
+      case 'billing':     av = a.billingType; bv = b.billingType; break
+      case 'invoiceAmt':  av = a.annualAmount; bv = b.annualAmount; break
+      case 'mrr':         av = mrrA; bv = mrrB; break
+      case 'pct':         av = mrrA; bv = mrrB; break
+      case 'payment':     av = a.isPending ? 1 : 0; bv = b.isPending ? 1 : 0; break
+      default:            av = a.issueDate || ''; bv = b.issueDate || ''
+    }
+    if (av < bv) return sortDir === 'asc' ? -1 : 1
+    if (av > bv) return sortDir === 'asc' ? 1 : -1
+    return 0
+  }), [clients, sortCol, sortDir])
+  // Source costs for the selected month from history (bank_transactions) rather than any hardcoded sheet
+  const selectedHistoryLabel = useMemo(() => {
+    if (!selectedMonth) return ''
+    const [name, yr] = selectedMonth.split('_')
+    const SHORT: Record<string, string> = { January:'Jan', February:'Feb', March:'Mar', April:'Apr', May:'May', June:'Jun', July:'Jul', August:'Aug', September:'Sep', October:'Oct', November:'Nov', December:'Dec' }
+    return `${SHORT[name] || name.slice(0, 3)} ${yr}`
+  }, [selectedMonth])
+  const totalCosts        = history.find(h => h.month === selectedHistoryLabel)?.costs || 0
   const netRevenue        = totalConfirmedMrr - totalCosts
   const opMargin          = totalConfirmedMrr > 0 ? ((netRevenue / totalConfirmedMrr) * 100).toFixed(1) : '0'
   const prevMrr           = history.filter(h => h.confirmed > 0).slice(-2)[0]?.confirmed || 0
@@ -197,10 +233,43 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
     return running
   }, [bankReceivedByYear, yearTotals, selectedYear])
 
+  const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
   const chartData = useMemo(() => {
-    if (chartView !== 'all') return history.filter(h => h.month.includes(chartView))
-    return history
-  }, [history, chartView])
+    const base = chartView !== 'all' ? history.filter(h => h.month.includes(chartView)) : history
+    return base.map(h => {
+      const [monthShort, yearStr] = h.month.split(' ')
+      const mIdx   = MONTH_SHORT.indexOf(monthShort)
+      const yr     = parseInt(yearStr)
+      const mStart = new Date(yr, mIdx, 1)
+      const mEnd   = new Date(yr, mIdx + 1, 0)
+
+      // Compute pipeline MRR for this month from sales-sent invoices
+      let pipeline = 0
+      for (const inv of pipelineInvoices) {
+        const amount      = inv.amount || 0
+        const billingType = (inv.billingType || 'annual').toLowerCase().trim()
+        const d           = inv.issueDate ? new Date(inv.issueDate) : null
+        if (!d || isNaN(d.getTime()) || !amount) continue
+        const isOneOff = billingType === 'one-off' || billingType === 'oneoff' || billingType === 'one off'
+        if (isOneOff) {
+          if (d >= mStart && d <= mEnd) pipeline += amount
+        } else {
+          if (d > mEnd) continue
+          const end = new Date(d)
+          if (billingType === 'quarterly')    end.setMonth(end.getMonth() + 3)
+          else if (billingType === 'monthly') end.setMonth(end.getMonth() + 1)
+          else                               end.setMonth(end.getMonth() + 12)
+          end.setDate(1)
+          if (end <= mStart) continue
+          const monthly = billingType === 'monthly' ? amount : billingType === 'quarterly' ? amount / 3 : amount / 12
+          pipeline += Math.round(monthly)
+        }
+      }
+
+      return { ...h, pipeline }
+    })
+  }, [history, chartView, pipelineInvoices])
 
   async function saveOverride() {
     if (!editingInvoice || !editName.trim()) return
@@ -267,26 +336,6 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
     onRefresh()
   }
 
-  async function pushToSheet() {
-    setPushing(true); setPushMsg('')
-    const year = selectedMonth?.split('_')[1] || '2026'
-    const res = await fetch('/api/sheets-sync', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        year, month: selectedMonth,
-        clients: clients.filter(c => !c.isPending).map(c => ({ name: c.name, monthlyMrr: Math.round(c.annualAmount / 12), isNew: c.isNew })),
-        costs: {
-          payroll:        costs.find(c => c.name.toLowerCase().includes('payroll'))?.amount || 0,
-          subscriptions:  costs.find(c => c.name.toLowerCase().includes('subscriptions'))?.amount || 0,
-          sleekMarketing: costs.find(c => c.name.toLowerCase().includes('sleek'))?.amount || 0,
-        },
-      }),
-    })
-    const r = await res.json()
-    setPushMsg(r.success ? `✓ Sheet updated — ${r.updated} cells written${r.newClientsAdded ? `, ${r.newClientsAdded} new client(s) added` : ''}` : `✗ ${r.error}`)
-    setPushing(false)
-  }
-
   async function openCashDetail() {
     setShowCashDetail(true)
     setCashDetailLoading(true)
@@ -325,7 +374,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
           <h2 className="font-heading text-xl font-semibold text-narra-dark">Monthly Recurring Revenue</h2>
           <p className="text-sm text-narra-muted mt-0.5">
             {historyLoading
-              ? 'Loading from Google Sheet…'
+              ? 'Loading…'
               : periodView === 'year'
                 ? `Full Year ${selectedYear}`
                 : `${selectedMonth?.replace('_', ' ')} · ${history.length} months of history`}
@@ -351,9 +400,9 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
           <button
             onClick={() => setSheetRefreshKey(k => k + 1)}
             disabled={historyLoading}
-            title="Re-fetch latest data from Google Sheet"
+            title="Re-fetch latest data from invoice tracker"
             className="px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all disabled:opacity-50">
-            {historyLoading ? '⟳' : '↻ Sheet'}
+            {historyLoading ? '⟳' : '↻ Refresh'}
           </button>
           <button onClick={syncInvoices} disabled={syncing || clients.length === 0 || !periodId}
             className="hidden sm:block px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-dark hover:bg-narra-light transition-all disabled:opacity-50"
@@ -364,18 +413,9 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
             className="hidden sm:block px-3 py-2 border border-narra-border rounded-lg text-xs font-body text-narra-dark hover:bg-narra-light transition-all">
             ↓ CSV
           </button>
-          {selectedYear === '2026' && (
-            <button onClick={pushToSheet} disabled={pushing}
-              className="px-3 py-2 bg-narra-dark text-narra-green rounded-lg text-xs font-body hover:bg-narra-mid transition-all disabled:opacity-50">
-              {pushing ? '⟳' : '↑ Push'}
-            </button>
-          )}
         </div>
       </div>
 
-      {pushMsg && (
-        <div className={`rounded-xl px-4 py-3 text-sm ${pushMsg.startsWith('✓') ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>{pushMsg}</div>
-      )}
       {syncResult && (
         <div className={`border rounded-xl px-4 py-3 text-sm ${syncResult.error ? 'bg-red-50 border-red-200 text-red-700' : 'bg-green-50 border-green-200 text-green-700'}`}>
           {syncResult.error
@@ -385,67 +425,185 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
         </div>
       )}
 
-      {/* KPI tiles — switches between month and year view */}
-      {periodView === 'year' && yearTotals[parseInt(selectedYear)] ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          {/* Total Invoiced — full cash value of all invoices issued this year */}
-          <div className="bg-narra-dark text-white rounded-xl p-4">
-            <div className="text-[10px] text-white/40 uppercase tracking-widest mb-2 font-body leading-tight">Total Invoiced {selectedYear}</div>
-            <div className="font-heading text-xl sm:text-2xl font-semibold text-narra-green">
-              {sym}{Math.round(cvt(totalInvoicedByYear[parseInt(selectedYear)] || 0)).toLocaleString()}
+      {/* KPI cards — matches P&L template + Total Invoiced + Cash Received */}
+      {(() => {
+        const yr = parseInt(selectedYear)
+        const allYrs = Array.from(new Set([
+          ...Object.keys(bankReceivedByYear).map(Number),
+          ...Object.keys(yearTotals).map(Number),
+          ...Object.keys(investmentByYear).map(Number),
+        ])).filter(n => n >= 2025).sort((a, b) => a - b)
+        const cashInBank = openingCash
+          + allYrs.reduce((s, y) => s + (bankReceivedByYear[y] || 0) + (investmentByYear[y] || 0) - (yearTotals[y]?.costs || 0), 0)
+
+        const at = annualData?.totals
+        const totalRevenue   = at?.revenue   || 0
+        const totalExpenses  = at?.expenses  || 0
+        const totalCapex     = at?.capex     || 0
+        const totalNet       = at?.net       || 0
+        const opMarginStr    = at?.operatingMargin || '0.0'
+        const openingCashYr  = at?.openingCash  || 0
+        const closingCashYr  = at?.closingCash  || 0
+        const totalInvoiced  = totalInvoicedByYear[yr] || 0
+        const cashReceived   = bankReceivedByYear[yr]  || 0
+
+        return (
+          <>
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-9 gap-3">
+
+            {/* 1 — Total Revenue — dark, clickable */}
+            <button onClick={() => { setShowRevenueBreakdown(v => !v); setShowExpenseBreakdown(false) }}
+              className="bg-narra-dark rounded-xl p-4 text-left group relative hover:bg-narra-mid transition-colors">
+              <div className="text-[10px] text-white/40 uppercase tracking-widest mb-2 font-body leading-tight">Total Revenue</div>
+              <div className="font-heading text-lg sm:text-xl font-semibold text-narra-green">{sym}{fmt(cvt(totalRevenue))}</div>
+              <div className="text-xs mt-1 text-white/40 group-hover:text-white/60">Tap to see breakdown ↓</div>
+              <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-white border border-narra-border text-narra-dark text-xs rounded-xl p-3 z-50 shadow-xl leading-relaxed pointer-events-none">
+                All client payments that landed in your bank this year.
+              </div>
+            </button>
+
+            {/* 2 — Operating Expenses — dark, clickable */}
+            <button onClick={() => { setShowExpenseBreakdown(v => !v); setShowRevenueBreakdown(false) }}
+              className="bg-narra-dark rounded-xl p-4 text-left group relative hover:bg-narra-mid transition-colors">
+              <div className="text-[10px] text-white/40 uppercase tracking-widest mb-2 font-body leading-tight">Operating Expenses</div>
+              <div className="font-heading text-lg sm:text-xl font-semibold text-narra-green">{sym}{fmt(cvt(totalExpenses))}</div>
+              <div className="text-xs mt-1 text-white/40 group-hover:text-white/60">Tap to see breakdown ↓</div>
+              <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-white border border-narra-border text-narra-dark text-xs rounded-xl p-3 z-50 shadow-xl leading-relaxed pointer-events-none">
+                Day-to-day running costs — salaries, software, marketing. Excludes product build (capex).
+              </div>
+            </button>
+
+            {/* 3 — Product Capex */}
+            <div className="bg-white border border-narra-border rounded-xl p-4 relative group">
+              <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Product Capex</div>
+              <div className="font-heading text-lg sm:text-xl font-semibold text-amber-600">{sym}{fmt(cvt(totalCapex))}</div>
+              <div className="text-xs mt-1 text-narra-muted">Investor-funded build</div>
+              <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-narra-dark text-white text-xs rounded-xl p-3 z-50 shadow-xl leading-relaxed pointer-events-none">
+                Money spent building the product. Funded by investors — not counted in operating margin.
+              </div>
             </div>
-            <div className="text-xs mt-1 text-white/40 hidden sm:block">Full invoice amounts this year</div>
-          </div>
-          <button onClick={openCashDetail} className="bg-narra-dark text-white rounded-xl p-4 text-left hover:bg-narra-mid transition-colors group">
-            <div className="text-[10px] text-white/40 uppercase tracking-widest mb-2 font-body leading-tight">Cash Received {selectedYear}</div>
-            <div className="font-heading text-xl sm:text-2xl font-semibold text-narra-green">
-              {sym}{Math.round(cvt(bankReceivedByYear[parseInt(selectedYear)] || 0)).toLocaleString()}
+
+            {/* 4 — Net Profit */}
+            <div className="bg-white border border-narra-border rounded-xl p-4 relative group">
+              <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Net Profit</div>
+              <div className={`font-heading text-lg sm:text-xl font-semibold ${totalNet >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                {totalNet < 0 ? `(${sym}${fmt(Math.abs(cvt(totalNet)))})` : `${sym}${fmt(cvt(totalNet))}`}
+              </div>
+              <div className="text-xs mt-1 text-narra-muted">Revenue minus operating costs</div>
+              <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-narra-dark text-white text-xs rounded-xl p-3 z-50 shadow-xl leading-relaxed pointer-events-none">
+                What's left after paying all running costs. Product build spend excluded.
+              </div>
             </div>
-            <div className="text-xs mt-1 text-white/40 group-hover:text-white/60 hidden sm:block">Tap for breakdown →</div>
-          </button>
-          <div className="bg-white border border-narra-border rounded-xl p-4">
-            <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Accrual MRR {selectedYear}</div>
-            <div className="font-heading text-xl sm:text-2xl font-semibold text-narra-dark">{sym}{Math.round(cvt(yearTotals[parseInt(selectedYear)].mrr)).toLocaleString()}</div>
-            <div className="text-xs mt-1 text-narra-muted hidden sm:block">Revenue earned by month</div>
-          </div>
-          <div className="bg-white border border-narra-border rounded-xl p-4">
-            <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Total Costs {selectedYear}</div>
-            <div className="font-heading text-xl sm:text-2xl font-semibold text-red-500">{sym}{Math.round(cvt(yearTotals[parseInt(selectedYear)].costs)).toLocaleString()}</div>
-            <div className="text-xs mt-1 text-narra-muted hidden sm:block">Operating costs</div>
-          </div>
-          <div className="bg-white border border-narra-border rounded-xl p-4">
-            <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Net {selectedYear}</div>
-            <div className={`font-heading text-xl sm:text-2xl font-semibold ${yearTotals[parseInt(selectedYear)].net >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-              {yearTotals[parseInt(selectedYear)].net < 0 ? '(' : ''}{sym}{Math.abs(Math.round(cvt(yearTotals[parseInt(selectedYear)].net))).toLocaleString()}{yearTotals[parseInt(selectedYear)].net < 0 ? ')' : ''}
+
+            {/* 5 — Operating Margin */}
+            <div className="bg-white border border-narra-border rounded-xl p-4 relative group">
+              <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Operating Margin</div>
+              <div className={`font-heading text-lg sm:text-xl font-semibold ${parseFloat(opMarginStr) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                {opMarginStr}%
+              </div>
+              <div className="text-xs mt-1 text-narra-muted">Net ÷ Revenue</div>
+              <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-narra-dark text-white text-xs rounded-xl p-3 z-50 shadow-xl leading-relaxed pointer-events-none">
+                For every dollar you earned, this is how much was profit. 40%+ is healthy for a SaaS business.
+              </div>
             </div>
-            <div className="text-xs mt-1 text-narra-muted hidden sm:block">Revenue minus costs</div>
-          </div>
-          <div className={`rounded-xl p-4 border ${cashPosition >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-            <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Cash Position</div>
-            <div className={`font-heading text-xl sm:text-2xl font-semibold ${cashPosition >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-              {cashPosition < 0 ? '(' : ''}{sym}{Math.abs(Math.round(cvt(cashPosition))).toLocaleString()}{cashPosition < 0 ? ')' : ''}
+
+            {/* 6 — Opening Cash */}
+            <div className="bg-white border border-narra-border rounded-xl p-4 relative group">
+              <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Opening Cash</div>
+              <div className="font-heading text-lg sm:text-xl font-semibold text-narra-dark">{sym}{fmt(cvt(openingCashYr))}</div>
+              <div className="text-xs mt-1 text-narra-muted">1 Jan {selectedYear}</div>
+              <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-narra-dark text-white text-xs rounded-xl p-3 z-50 shadow-xl leading-relaxed pointer-events-none">
+                How much money was in your bank at the start of this year.
+              </div>
             </div>
-            <div className="text-xs mt-1 text-narra-muted hidden sm:block">Bank receipts minus costs to end of {selectedYear}</div>
-          </div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          {[
-            { label: 'Confirmed MRR',  value: `${sym}${Math.round(cvt(totalConfirmedMrr)).toLocaleString()}`,           sub: `${parseFloat(mrrGrowth) >= 0 ? '+' : ''}${mrrGrowth}% vs prev month`, vc: 'text-narra-dark',   sc: parseFloat(mrrGrowth) >= 0 ? 'text-green-600' : 'text-red-500' },
-            { label: 'Pending MRR',    value: `${sym}${Math.round(cvt(totalPendingMrr)).toLocaleString()}`,  sub: `${pendingInvoices.length} invoice(s) awaiting payment`,              vc: 'text-amber-600',   sc: 'text-amber-500' },
-            { label: 'Net Revenue',    value: `${sym}${Math.round(cvt(netRevenue)).toLocaleString()}`,                   sub: `${opMargin}% operating margin`,                                       vc: netRevenue >= 0 ? 'text-green-600' : 'text-red-500', sc: 'text-narra-muted' },
-            { label: 'Cash Runway',    value: hasCurrentYearData ? (runway >= 999 ? '∞' : `${runway} months`) : '—',  sub: hasCurrentYearData ? `$${Math.round(avgBurn).toLocaleString()} avg monthly burn` : 'Sync a month to calculate', vc: !hasCurrentYearData ? 'text-narra-muted' : runway < 3 ? 'text-red-500' : runway < 6 ? 'text-amber-600' : 'text-narra-dark', sc: 'text-narra-muted' },
-            { label: 'Total LTV',      value: dbClients.length > 0 ? `$${dbClients.reduce((s: number, c: any) => s + (c.ltv || 0), 0).toLocaleString()}` : '—', sub: `${dbClients.filter((c: any) => c.ltv > 0).length} clients with revenue`, vc: 'text-narra-dark', sc: 'text-narra-muted' },
-            { label: 'Churn',          value: dbClients.filter((c: any) => !c.active).length > 0 ? `${dbClients.filter((c: any) => !c.active).length}` : '0', sub: dbClients.filter((c: any) => !c.active).length > 0 ? 'inactive clients — check holding groups' : 'No known churn', vc: dbClients.filter((c: any) => !c.active).length > 0 ? 'text-red-500' : 'text-green-600', sc: 'text-narra-muted' },
-          ].map(t => (
-            <div key={t.label} className="bg-white border border-narra-border rounded-xl p-4">
-              <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">{t.label}</div>
-              <div className={`font-heading text-lg sm:text-xl font-semibold ${t.vc} break-words`}>{t.value}</div>
-              <div className={`text-xs mt-1 ${t.sc} hidden sm:block`}>{t.sub}</div>
+
+            {/* 7 — Closing Cash */}
+            <div className="bg-white border border-narra-border rounded-xl p-4 relative group">
+              <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Closing Cash</div>
+              <div className={`font-heading text-lg sm:text-xl font-semibold ${closingCashYr >= 0 ? 'text-narra-dark' : 'text-red-600'}`}>
+                {closingCashYr < 0 ? `(${sym}${fmt(Math.abs(cvt(closingCashYr)))})` : `${sym}${fmt(cvt(closingCashYr))}`}
+              </div>
+              <div className="text-xs mt-1 text-narra-muted">End of {selectedYear}</div>
+              <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-narra-dark text-white text-xs rounded-xl p-3 z-50 shadow-xl leading-relaxed pointer-events-none">
+                Money in your bank at year-end: opening + revenue + investments − all costs.
+              </div>
             </div>
-          ))}
-        </div>
-      )}
+
+            {/* 8 — Total Invoiced */}
+            <div className="bg-white border border-narra-border rounded-xl p-4 relative group">
+              <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Total Invoiced</div>
+              <div className="font-heading text-lg sm:text-xl font-semibold text-narra-dark">{sym}{fmt(cvt(totalInvoiced))}</div>
+              <div className="text-xs mt-1 text-narra-muted">Invoices sent {selectedYear}</div>
+              <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-narra-dark text-white text-xs rounded-xl p-3 z-50 shadow-xl leading-relaxed pointer-events-none">
+                Total value of invoices sent to clients this year — includes paid and still outstanding.
+              </div>
+            </div>
+
+            {/* 9 — Cash Received */}
+            <button onClick={openCashDetail}
+              className="bg-white border border-narra-border rounded-xl p-4 text-left group relative hover:bg-narra-surface transition-colors">
+              <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Cash Received</div>
+              <div className="font-heading text-lg sm:text-xl font-semibold text-narra-dark">{sym}{fmt(cvt(cashReceived))}</div>
+              <div className="text-xs mt-1 text-narra-muted group-hover:text-narra-dark">Tap for breakdown ↓</div>
+              <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-narra-dark text-white text-xs rounded-xl p-3 z-50 shadow-xl leading-relaxed pointer-events-none">
+                Actual client payments that landed in your bank this year — may differ from invoiced if clients pay late or annually.
+              </div>
+            </button>
+
+          </div>
+
+          {/* Revenue breakdown */}
+          {showRevenueBreakdown && annualData?.allTransactions?.filter((t: any) => t.type === 'revenue').length > 0 && (
+            <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-narra-border bg-narra-dark flex items-center justify-between">
+                <h3 className="font-heading font-semibold text-white text-sm">Revenue Breakdown — {selectedYear}</h3>
+                <button onClick={() => setShowRevenueBreakdown(false)} className="text-white/40 hover:text-white text-xs">✕ Close</button>
+              </div>
+              <table className="w-full text-sm">
+                <thead><tr className="bg-narra-light text-narra-muted">
+                  {['Date','Description','Account','Amount'].map(h => <th key={h} className="text-left px-4 py-2 font-body font-normal text-xs tracking-widest uppercase">{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {annualData.allTransactions.filter((t: any) => t.type === 'revenue').map((t: any, i: number) => (
+                    <tr key={i} className="border-t border-narra-border hover:bg-narra-surface">
+                      <td className="px-4 py-2.5 font-body text-narra-muted text-xs">{String(t.date).substring(0,10)}</td>
+                      <td className="px-4 py-2.5 font-body text-narra-dark max-w-xs truncate">{t.description}</td>
+                      <td className="px-4 py-2.5 font-body text-narra-muted text-xs">{t.account || '—'}</td>
+                      <td className="px-4 py-2.5 font-heading font-semibold text-green-700">{sym}{fmt(cvt(t.amount_usd))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Expense breakdown */}
+          {showExpenseBreakdown && annualData?.expensesByDescription?.length > 0 && (
+            <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-narra-border bg-narra-dark flex items-center justify-between">
+                <h3 className="font-heading font-semibold text-white text-sm">Operating Expense Breakdown — {selectedYear}</h3>
+                <button onClick={() => setShowExpenseBreakdown(false)} className="text-white/40 hover:text-white text-xs">✕ Close</button>
+              </div>
+              <table className="w-full text-sm">
+                <thead><tr className="bg-narra-light text-narra-muted">
+                  {['Description','Account','Transactions','Total'].map(h => <th key={h} className="text-left px-4 py-2 font-body font-normal text-xs tracking-widest uppercase">{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {annualData.expensesByDescription.filter((e: any) => e.total > 0).map((e: any, i: number) => (
+                    <tr key={i} className="border-t border-narra-border hover:bg-narra-surface">
+                      <td className="px-4 py-2.5 font-body text-narra-dark max-w-xs truncate">{e.description || '—'}</td>
+                      <td className="px-4 py-2.5 font-body text-narra-muted text-xs">{e.account || '—'}</td>
+                      <td className="px-4 py-2.5 font-body text-narra-muted">{e.txCount}</td>
+                      <td className="px-4 py-2.5 font-heading font-semibold text-narra-dark">{sym}{fmt(cvt(e.total))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          </>
+        )
+      })()}
 
       {/* Chart */}
       <div className="bg-white border border-narra-border rounded-xl p-6">
@@ -456,9 +614,9 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
             {/* Legend */}
             <div className="flex gap-5 mt-3 flex-wrap">
               {[
-                { color: '#173f46', dash: false,  label: 'Confirmed MRR', desc: 'fully paid revenue' },
-                { color: '#c7e995', dash: true,   label: 'Expected MRR',  desc: 'sent, not collected yet' },
-                { color: '#ef4444', dash: true,   label: 'Costs',         desc: 'monthly operating costs' },
+                { color: '#16a34a', dash: false, label: 'Confirmed MRR', desc: 'fully paid revenue' },
+                { color: '#f59e0b', dash: true,  label: 'Pipeline MRR',  desc: 'sales-sent, not yet invoiced' },
+                { color: '#ef4444', dash: true,  label: 'Costs',         desc: 'monthly operating costs' },
               ].map(item => (
                 <div key={item.label} className="flex items-center gap-2">
                   <svg width="20" height="8">
@@ -491,10 +649,10 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                 <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#8aab6e' }} interval={0} angle={-35} textAnchor="end" height={50} />
                 <YAxis tick={{ fontSize: 10, fill: '#8aab6e' }} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} />
                 <Tooltip content={<CustomTooltip />} />
-                <Line type="monotone" dataKey="confirmed" stroke="#173f46" strokeWidth={2.5}
-                  dot={{ fill: '#173f46', r: 3, strokeWidth: 0 }} activeDot={{ r: 6, fill: '#173f46' }} name="Confirmed MRR" />
-                <Line type="monotone" dataKey="pending" stroke="#c7e995" strokeWidth={2} strokeDasharray="5 3"
-                  dot={{ fill: '#c7e995', r: 3, strokeWidth: 0 }} activeDot={{ r: 6, fill: '#c7e995' }} name="Expected MRR" />
+                <Line type="monotone" dataKey="confirmed" stroke="#16a34a" strokeWidth={2.5}
+                  dot={{ fill: '#16a34a', r: 3, strokeWidth: 0 }} activeDot={{ r: 6, fill: '#16a34a' }} name="Confirmed MRR" />
+                <Line type="monotone" dataKey="pipeline" stroke="#f59e0b" strokeWidth={2} strokeDasharray="5 3"
+                  dot={{ fill: '#f59e0b', r: 3, strokeWidth: 0 }} activeDot={{ r: 6, fill: '#f59e0b' }} name="Pipeline MRR" />
                 <Line type="monotone" dataKey="costs" stroke="#ef4444" strokeWidth={1.5} strokeDasharray="3 3"
                   dot={false} activeDot={{ r: 4, fill: '#ef4444' }} name="Costs" />
               </LineChart>
@@ -535,22 +693,31 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
             <thead>
               <tr className="bg-narra-dark text-white">
                 <th className="hidden sm:table-cell px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-left">Invoice #</th>
-                  <th className="px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-left">Client</th>
-                  <th className="hidden sm:table-cell px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-left">Distributor</th>
-                  <th className="hidden sm:table-cell px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-left">Issued</th>
-                  <th className="px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-left">Billing</th>
-                  <th className="px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-right">Invoice Amt</th>
-                  <th className="px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-right">MRR</th>
-                  <th className="px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-left">Payment</th>
-                  <th className="hidden sm:table-cell px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 text-right">% of MRR</th>
+                {([
+                  { label: 'Client',      col: 'name',       right: false, hidden: false },
+                  { label: 'Distributor', col: '',            right: false, hidden: true  },
+                  { label: 'Issued',      col: 'issueDate',  right: false, hidden: true  },
+                  { label: 'Billing',     col: 'billing',    right: false, hidden: false },
+                  { label: 'Invoice Amt', col: 'invoiceAmt', right: true,  hidden: false },
+                  { label: 'MRR',         col: 'mrr',        right: true,  hidden: false },
+                  { label: 'LTV',         col: 'ltv',        right: true,  hidden: true  },
+                  { label: 'Payment',     col: 'payment',    right: false, hidden: false },
+                  { label: '% of MRR',   col: 'pct',        right: true,  hidden: true  },
+                ] as { label: string; col: string; right: boolean; hidden: boolean }[]).map(({ label, col, right, hidden }) => (
+                  <th key={label}
+                    onClick={() => col && toggleSort(col)}
+                    className={`${hidden ? 'hidden sm:table-cell' : ''} px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${right ? 'text-right' : 'text-left'} ${col ? 'cursor-pointer hover:text-white select-none' : ''}`}>
+                    {label}{col && sortCol === col && <span className="ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {clients.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-narra-muted text-sm">
+                <tr><td colSpan={10} className="px-4 py-8 text-center text-narra-muted text-sm">
                   Loading from outgoing invoice tracker…
                 </td></tr>
-              ) : clients.map((c, i) => {
+              ) : sortedClients.map((c, i) => {
                 const displayName = (c.invoiceId && overrides[c.invoiceId]) || c.name
                 const hasOverride = !!(c.invoiceId && overrides[c.invoiceId])
                 const mrr        = c.isOneOff ? c.annualAmount : Math.round(c.annualAmount / 12)
@@ -603,6 +770,9 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                     <td className="px-4 py-2.5 text-right text-narra-dark">{sym}{Math.round(cvt(invoiceAmt)).toLocaleString()}</td>
                     <td className="px-4 py-2.5 text-right font-medium text-narra-dark">
                       {c.isOneOff ? <span className="text-purple-700">{sym}{Math.round(cvt(mrr)).toLocaleString()} this month</span> : `${sym}${Math.round(cvt(mrr)).toLocaleString()}/mo`}
+                    </td>
+                    <td className="hidden sm:table-cell px-4 py-2.5 text-right text-narra-dark">
+                      {dbClient?.ltv ? `${sym}${Math.round(cvt(dbClient.ltv)).toLocaleString()}` : <span className="text-narra-border">—</span>}
                     </td>
                     <td className="px-4 py-2.5">
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.isPending ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>

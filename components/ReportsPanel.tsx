@@ -163,6 +163,7 @@ function buildBSCSV(bs: any, period: string): string {
     ['900 - Share Capital', fmt(bs.shareCapital || 0)],
     ['920 - Retained Earnings', safe(bs.retainedEarnings || 0)],
     [`'Provisional Profit / Loss (Credit)'`, safe(bs.provisionalPL || 0)],
+    ...((bs.accrualAdjustment || 0) > 0 ? [['Accrual Adjustment — Accounts Receivable', fmt(bs.accrualAdjustment)]] : []),
     [`'Total Equity (Credit)'`, safe(bs.totalEquity || 0)],
     ['', ''],
     [`'Total (Credit)'`, fmt(bs.totalAssets || 0)],
@@ -465,9 +466,9 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
                   {Object.entries(bs.cashByAccount||{}).map(([acct,info]:any)=>(
                     <tr key={acct} className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">BANK {acct}</td><td className="px-6 py-3 text-right font-medium">{fmt(info.amount)}</td></tr>
                   ))}
+                  {bs.arTotal>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">600 - Accounts Receivable</td><td className="px-6 py-3 text-right font-medium">{fmt(bs.arTotal)}</td></tr>}
                   {bs.prepayments>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">610 - Prepayments</td><td className="px-6 py-3 text-right">{fmt(bs.prepayments)}</td></tr>}
                   <tr className="border-t border-narra-border bg-narra-surface"><td className="px-6 py-3 font-semibold text-narra-dark">Total Current Assets</td><td className="px-6 py-3 text-right font-semibold">{fmt(bs.totalCurrentAssets||0)}</td></tr>
-                  {bs.arTotal>0&&<tr className="border-t border-narra-border/30 hover:bg-narra-surface"><td className="px-6 py-2.5 text-narra-muted pl-10 italic text-xs">600 - Accounts Receivable (memo — cash basis)</td><td className="px-6 py-2.5 text-right text-narra-muted text-xs italic">{fmt(bs.arTotal)}</td></tr>}
                   <tr className="border-t-2 border-narra-dark"><td className="px-6 py-4 font-heading font-bold text-narra-dark">Total Asset (Debit)</td><td className="px-6 py-4 text-right font-heading font-bold">{fmt(bs.totalAssets||0)}</td></tr>
                   <tr className="bg-narra-light/40"><td colSpan={2} className="px-6 py-2 font-heading font-semibold text-narra-dark text-xs uppercase tracking-wider pt-3">Current Liabilities</td></tr>
                   {bs.accountsPayable>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">800 - Accounts Payable</td><td className="px-6 py-3 text-right">{fmt(bs.accountsPayable)}</td></tr>}
@@ -490,6 +491,7 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
                   <tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">900 - Share Capital</td><td className="px-6 py-3 text-right">{fmt(bs.shareCapital||0)}</td></tr>
                   <tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">920 - Retained Earnings</td><td className={`px-6 py-3 text-right ${(bs.retainedEarnings||0)<0?'text-red-600':''}`}>{(bs.retainedEarnings||0)<0?'(':''}{ fmt(Math.abs(bs.retainedEarnings||0))}{(bs.retainedEarnings||0)<0?')':''}</td></tr>
                   <tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">Provisional Profit / Loss (Credit)</td><td className={`px-6 py-3 text-right ${(bs.provisionalPL||0)>=0?'text-green-700':'text-red-600'}`}>{(bs.provisionalPL||0)<0?'(':''}{fmt(Math.abs(bs.provisionalPL||0))}{(bs.provisionalPL||0)<0?')':''}</td></tr>
+                  {(bs.accrualAdjustment||0)>0&&<tr className="border-t border-narra-border/50 hover:bg-narra-surface"><td className="px-6 py-3 text-narra-ink pl-10">Accrual Adjustment — Accounts Receivable</td><td className="px-6 py-3 text-right font-medium">{fmt(bs.accrualAdjustment)}</td></tr>}
                   <tr className="border-t border-narra-border bg-narra-surface"><td className="px-6 py-3 font-semibold text-narra-dark">Total Equity (Credit)</td><td className={`px-6 py-3 text-right font-semibold ${(bs.totalEquity||0)<0?'text-red-600':''}`}>{(bs.totalEquity||0)<0?'(':''}{fmt(Math.abs(bs.totalEquity||0))}{(bs.totalEquity||0)<0?')':''}</td></tr>
                   <tr className="border-t-2 border-narra-dark"><td className="px-6 py-4 font-heading font-bold text-narra-dark">Total (Credit)</td><td className="px-6 py-4 text-right font-heading font-bold">{fmt(bs.totalAssets||0)}</td></tr>
                   <tr className={`border-t ${bs.balanceCheck?'bg-green-50':'bg-red-50'}`}><td colSpan={2} className={`px-6 py-2 text-xs font-body ${bs.balanceCheck?'text-green-700':'text-red-600'}`}>{bs.balanceCheck?'✓ Balanced — Assets equal Liabilities + Equity':'⚠ Out of balance — check manual entries in the Adjustments tab'}</td></tr>
@@ -801,6 +803,12 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
                   <td className="px-6 py-3 text-right font-medium">{sym}{fmt(cvt(info.amount))}</td>
                 </tr>
               ))}
+              {bs.arTotal > 0 && (
+                <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                  <td className="px-6 py-3 text-narra-ink pl-10">600 - Accounts Receivable</td>
+                  <td className="px-6 py-3 text-right font-medium">{sym}{fmt(cvt(bs.arTotal))}</td>
+                </tr>
+              )}
               {bs.prepayments > 0 && (
                 <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
                   <td className="px-6 py-3 text-narra-ink pl-10">610 - Prepayments</td>
@@ -811,12 +819,6 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
                 <td className="px-6 py-3 font-semibold text-narra-dark">Total Current Assets</td>
                 <td className="px-6 py-3 text-right font-semibold">{sym}{fmt(cvt(bs.totalCurrentAssets || 0))}</td>
               </tr>
-              {bs.arTotal > 0 && (
-                <tr className="border-t border-narra-border/30 hover:bg-narra-surface">
-                  <td className="px-6 py-2 text-narra-muted pl-10 italic text-xs">600 - Accounts Receivable (memo — cash basis)</td>
-                  <td className="px-6 py-2 text-right text-narra-muted text-xs italic">{sym}{fmt(cvt(bs.arTotal))}</td>
-                </tr>
-              )}
 
               {/* ── Non-current Assets ── */}
               {bs.totalNonCurrentAssets > 0 && <>
@@ -951,6 +953,12 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
                   {(bs.provisionalPL || 0) < 0 ? '(' : ''}{fmt(Math.abs(bs.provisionalPL || 0))}{(bs.provisionalPL || 0) < 0 ? ')' : ''}
                 </td>
               </tr>
+              {(bs.accrualAdjustment || 0) > 0 && (
+                <tr className="border-t border-narra-border/50 hover:bg-narra-surface">
+                  <td className="px-6 py-3 text-narra-ink pl-10">Accrual Adjustment — Accounts Receivable</td>
+                  <td className="px-6 py-3 text-right font-medium">{sym}{fmt(cvt(bs.accrualAdjustment))}</td>
+                </tr>
+              )}
               <tr className="border-t border-narra-border bg-narra-surface">
                 <td className="px-6 py-3 font-semibold text-narra-dark">Total Equity (Credit)</td>
                 <td className={`px-6 py-3 text-right font-semibold ${(bs.totalEquity || 0) >= 0 ? '' : 'text-red-600'}`}>

@@ -5,6 +5,7 @@ import {
   Tooltip, ResponsiveContainer
 } from 'recharts'
 import { downloadCSV, toCSV } from '@/lib/csv'
+import { fmt } from '@/lib/format'
 import { AlertTriangle, ClipboardList, Target } from 'lucide-react'
 
 type HistoryPoint = { month: string; confirmed: number; pending: number; costs: number; net: number; bankCashIn?: number }

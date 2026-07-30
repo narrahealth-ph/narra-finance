@@ -95,11 +95,26 @@ async function handleExport() {
   downloadCSV(cfLines, '4_Cash_Flow.csv')
   await delay(150)
 
-  // 5 — Expenses by Category
+  // 5 — Expenses by Category (sorted by category then total desc)
+  const CATEGORY_ORDER = [
+    'Contractor Salaries',
+    'Product Capex',
+    'SaaS & Subscriptions',
+    'Admin & Company Secretary',
+    'Team Healthcare',
+    'Bank & Transfer Fees',
+    'Team & Events',
+    'Other',
+  ]
+  const sortedExpenses = [...d.expensesByCategory].sort((a: any, b: any) => {
+    const ci = CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category)
+    if (ci !== 0) return ci
+    return b.total - a.total
+  })
   const expLines = [
-    csvRow('Description', 'Account', 'Total (USD)', 'Transactions'),
-    ...d.expensesByCategory.map((e: any) =>
-      csvRow(e.description, e.account, e.total, e.txCount)
+    csvRow('Category', 'Description', 'Account', 'Total (USD)', 'Transactions'),
+    ...sortedExpenses.map((e: any) =>
+      csvRow(e.category, e.description, e.account, e.total, e.txCount)
     ),
   ].join('\n')
   downloadCSV(expLines, '5_Expenses_by_Category.csv')

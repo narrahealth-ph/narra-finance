@@ -296,11 +296,117 @@ export async function GET(req: NextRequest) {
       })
 
     // ── Expenses by Category ─────────────────────────────────────────────────
+    const categorizeExpense = (description: string, total: number, txCount: number): string => {
+      const d = description.toLowerCase()
+
+      // Contractor Salaries
+      if (
+        d.includes('idein') ||
+        d.includes('mike paynow') ||
+        d.includes('ekimgarcia') ||
+        d.includes('michael jack bermont') ||
+        d.includes('bermont') ||
+        d.includes('tatiana garcia') ||
+        d.includes('isabel garcia')
+      ) return 'Contractor Salaries'
+
+      // Product Capex — Stella (product dev) and Carl training
+      if (
+        d.includes('stella') ||
+        d.includes('pangilinan') ||
+        d.includes('carl lorenz') ||
+        d.includes('cervantes') ||
+        d.includes('psychologist training')
+      ) return 'Product Capex'
+
+      // SaaS & Subscriptions
+      if (
+        d.includes('notion') ||
+        d.includes('slack') ||
+        d.includes('zoom') ||
+        d.includes('claude') ||
+        d.includes('anthropic') ||
+        d.includes('openai') ||
+        d.includes('chatgpt') ||
+        d.includes('calendly') ||
+        d.includes('netlify') ||
+        d.includes('mailchimp') ||
+        d.includes('google') ||
+        d.includes('planetscale') ||
+        d.includes('linkedin') ||
+        d.includes('canva') ||
+        d.includes('squarespace') ||
+        d.includes('sqsp') ||
+        d.includes('hubspot') ||
+        d.includes('nominus') ||
+        d.includes('groupgreeting') ||
+        d.includes('kahoot') ||
+        d.includes('gumroad') ||
+        d.includes('marketing') ||
+        d.includes('narra website') ||
+        d.includes('wordpress') ||
+        d.includes('aws ') ||
+        d.includes('amazon web') ||
+        d.includes('digitalocean') ||
+        d.includes('vercel') ||
+        d.includes('github')
+      ) return 'SaaS & Subscriptions'
+
+      // Admin & Company Secretary
+      if (
+        d.includes('sleek') ||
+        d.includes('executive center') ||
+        d.includes('intellidesk')
+      ) return 'Admin & Company Secretary'
+
+      // Team Healthcare — Lawina large fee (1 tx)
+      if (d.includes('lawina') && txCount === 1) return 'Team Healthcare'
+
+      // Bank & Transfer Fees — Lawina small fees, K Line, Orient Freight small, PayPal fees
+      if (
+        (d.includes('lawina') && txCount > 1) ||
+        d.includes('pp*1309') ||
+        d.includes('paypal') ||
+        d.includes('wise') ||
+        d.includes('transfer fee') ||
+        d.includes('bank fee') ||
+        d.includes('fx fee') ||
+        d.includes('swift fee')
+      ) return 'Bank & Transfer Fees'
+
+      // Also catch K Line / Orient Freight small fees under Bank & Transfer Fees
+      if (
+        (d.includes('k line') && total < 200) ||
+        (d.includes('orient freight') && total < 200)
+      ) return 'Bank & Transfer Fees'
+
+      // Team & Events
+      if (
+        d.includes('tmg express') ||
+        d.includes('mary jane') ||
+        d.includes('carreon') ||
+        d.includes('tshirt') ||
+        d.includes('t-shirt') ||
+        d.includes('tote') ||
+        d.includes('hotel') ||
+        d.includes('airasia') ||
+        d.includes('air asia') ||
+        d.includes('lighthouse independent') ||
+        d.includes('mc1 enterprises') ||
+        d.includes('event') ||
+        d.includes('catering') ||
+        d.includes('launch')
+      ) return 'Team & Events'
+
+      return 'Other'
+    }
+
     const expensesByCategory = expensesByCategoryRes.rows.map((r: any) => ({
       description: r.description || '',
       account:     r.account     || '',
       total:       Math.round(parseFloat(r.total || 0)),
       txCount:     parseInt(r.tx_count || 0),
+      category:    categorizeExpense(r.description || '', parseFloat(r.total || 0), parseInt(r.tx_count || 0)),
     }))
 
     // ── Pipeline (status = pipeline / proposal / prospect) ──────────────────

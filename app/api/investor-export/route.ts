@@ -5,10 +5,7 @@ import {
   fetchAllTimeRows,
   fetchInvestmentTotals,
   calcMrrForMonth,
-  isActiveStatus,
   parseNum,
-  parseInvDate,
-  contractEnd,
   calcMonthlyMrr,
 } from '@/lib/mrr-calc'
 
@@ -48,6 +45,8 @@ export async function GET(req: NextRequest) {
       activeClientCountRes,
       cashFlowRes,
       expensesByCategoryRes,
+      clientBreakdownRes,
+      totalExpensesRes,
     ] = await Promise.all([
       // Revenue by month (last 24 months)
       query(`
@@ -133,6 +132,31 @@ export async function GET(req: NextRequest) {
         GROUP BY bt.description, bt.account
         ORDER BY total DESC
       `),
+
+      // Client breakdown — all active clients from DB with total cash received
+      query(`
+        SELECT
+          c.id,
+          c.name,
+          c.billing_type,
+          hc.name                        AS holding_company,
+          COALESCE(SUM(bt.amount_usd), 0) AS cash_received
+        FROM clients c
+        LEFT JOIN holding_companies hc ON hc.id = c.holding_company_id
+        LEFT JOIN bank_transactions bt ON bt.client_id = c.id AND bt.type = 'revenue'
+        WHERE c.active = TRUE
+        GROUP BY c.id, c.name, c.billing_type, hc.name
+        ORDER BY cash_received DESC
+      `),
+
+      // Total expenses + capex all time (for reconciliation in summary)
+      query(`
+        SELECT
+          COALESCE(SUM(CASE WHEN type = 'expense' THEN amount_usd ELSE 0 END), 0) AS total_opex,
+          COALESCE(SUM(CASE WHEN type = 'capex'   THEN amount_usd ELSE 0 END), 0) AS total_capex,
+          COALESCE(SUM(amount_usd), 0)                                             AS grand_total
+        FROM bank_transactions WHERE type IN ('expense','capex')
+      `),
     ])
 
     // Total revenue all time
@@ -202,6 +226,9 @@ export async function GET(req: NextRequest) {
     const runway        = avgBurn > 0 ? Math.floor(cashPosition / avgBurn) : null
     const dbActiveClients = parseInt(activeClientCountRes.rows[0]?.count || 0)
 
+    const totalOpex  = parseFloat(totalExpensesRes.rows[0]?.total_opex  || 0)
+    const totalCapex = parseFloat(totalExpensesRes.rows[0]?.total_capex || 0)
+
     const summary = {
       currentMrr,
       avgRevenue,
@@ -209,54 +236,30 @@ export async function GET(req: NextRequest) {
       cashPosition,
       runway,
       totalRevenue,
+      totalOpex,
+      totalCapex,
+      totalCosts: totalOpex + totalCapex,
       totalRaised:     investmentTotals.total,
       activeClients:   dbActiveClients,
       investmentTotals,
     }
 
-    // ── Client Breakdown (current month, active only) ────────────────────────
-    const clientMrrs: Record<string, number> = {}
-    const seenKeys = new Set<string>()
-
-    for (const r of sheetRows) {
-      const invoiceId    = (r[0] || '').trim()
-      const clientName   = (r[1] || '').trim()
-      const amount       = parseNum((r[5] || '').toString())
-      const status       = (r[6] || '').toLowerCase().trim()
-      const billingType  = (r[7] || 'annual').toLowerCase().trim()
-      const issueDateStr = (r[4] || '').trim()
-      if (!clientName || !amount || !isActiveStatus(status)) continue
-
-      const isOneOff = billingType === 'one-off' || billingType === 'one off' || billingType === 'oneoff'
-      const d        = parseInvDate(issueDateStr)
-      const key      = invoiceId || `${clientName.toLowerCase()}|${issueDateStr}|${amount}`
-      if (seenKeys.has(key)) continue
-      seenKeys.add(key)
-
-      const mStart = currentPeriod.startDate
-      const mEnd   = currentPeriod.endDate
-
-      let contribution = 0
-      if (isOneOff) {
-        if (!d || d < mStart || d > mEnd) continue
-        contribution = amount
-      } else {
-        if (!d || d > mEnd) continue
-        if (contractEnd(d, billingType) <= mStart) continue
-        contribution = calcMonthlyMrr(amount, billingType)
+    // ── Client Breakdown — from clients DB table (same source as Clients page) ─
+    const totalClientCash = clientBreakdownRes.rows.reduce(
+      (s: number, r: any) => s + parseFloat(r.cash_received), 0
+    )
+    const clientBreakdown = clientBreakdownRes.rows.map((r: any) => {
+      const cashReceived = Math.round(parseFloat(r.cash_received))
+      return {
+        name:           r.name,
+        holdingCompany: r.holding_company || '',
+        billingType:    r.billing_type    || '',
+        cashReceived,
+        pct: totalClientCash > 0
+          ? Math.round((parseFloat(r.cash_received) / totalClientCash) * 10000) / 100
+          : 0,
       }
-
-      clientMrrs[clientName] = (clientMrrs[clientName] || 0) + contribution
-    }
-
-    const totalClientMrr = Object.values(clientMrrs).reduce((s, v) => s + v, 0)
-    const clientBreakdown = Object.entries(clientMrrs)
-      .map(([name, mrr]) => ({
-        name,
-        mrr:  Math.round(mrr),
-        pct:  totalClientMrr > 0 ? Math.round((mrr / totalClientMrr) * 10000) / 100 : 0,
-      }))
-      .sort((a, b) => b.mrr - a.mrr)
+    })
 
     // ── Cash Flow (2025+, with opening carry-forward) ────────────────────────
     const openingSnapRes = await query(`

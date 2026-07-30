@@ -59,6 +59,9 @@ async function handleExport() {
     csvRow('Runway (months)',        s.runway ?? 'N/A',          'Cash ÷ avg monthly burn'),
     csvRow('Cash Position',          Math.round(s.cashPosition), 'Opening balance + all revenue + investment - all costs'),
     csvRow('Total Revenue Earned',   Math.round(s.totalRevenue), 'All cash received since inception'),
+    csvRow('Total Operating Expenses (All Time)', Math.round(s.totalOpex),  'Sum of all expense transactions — matches Expenses by Category total'),
+    csvRow('Total Capex (All Time)', Math.round(s.totalCapex),  'Sum of all capex transactions — matches Expenses by Category capex rows'),
+    csvRow('Total Costs (All Time)', Math.round(s.totalCosts),  'Opex + capex — sum of all Expenses by Category rows equals this'),
     csvRow('Total Raised',           Math.round(s.totalRaised),  'Founder investments (Rene + Mike)'),
     csvRow('Active Clients',         s.activeClients,            'From client registry'),
   ].join('\n')
@@ -75,12 +78,14 @@ async function handleExport() {
   downloadCSV(mrrLines, '2_MRR_History.csv')
   await delay(150)
 
-  // 3 — Client Breakdown
-  const totalMrr = d.clientBreakdown.reduce((s: number, c: any) => s + c.mrr, 0)
+  // 3 — Client Breakdown (all active clients from DB, sorted by cash received)
+  const totalCash = d.clientBreakdown.reduce((s: number, c: any) => s + c.cashReceived, 0)
   const clientLines = [
-    csvRow('Client', 'Monthly MRR (USD)', '% of Total MRR'),
-    ...d.clientBreakdown.map((c: any) => csvRow(c.name, c.mrr, `${c.pct}%`)),
-    csvRow('Total', totalMrr, '100%'),
+    csvRow('Client', 'Holding Company', 'Billing Type', 'Cash Received (USD)', '% of Client Cash Revenue'),
+    ...d.clientBreakdown.map((c: any) =>
+      csvRow(c.name, c.holdingCompany, c.billingType, c.cashReceived, `${c.pct}%`)
+    ),
+    csvRow('Total', '', '', totalCash, '100%'),
   ].join('\n')
   downloadCSV(clientLines, '3_Client_Breakdown.csv')
   await delay(150)

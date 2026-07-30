@@ -412,8 +412,7 @@ export async function GET(req: NextRequest) {
       category:    categorizeExpense(r.description || '', parseFloat(r.total || 0), parseInt(r.tx_count || 0)),
     }))
 
-    // ── Pipeline (status = pipeline / proposal / prospect) ──────────────────
-    const pipelineStatuses = new Set(['pipeline', 'proposal', 'prospect'])
+    // ── Pipeline (status = 'sales-sent' / 'sales sent' → normalised 'salessent') ──
     const pipeline: Array<{
       client: string; amount: number; billingType: string
       notes: string; potentialArr: number; potentialMrr: number
@@ -422,13 +421,13 @@ export async function GET(req: NextRequest) {
 
     for (const r of sheetRows) {
       const invoiceId    = (r[0] || '').trim()
-      const clientName   = (r[1] || '').trim()
+      const clientName   = (r[8] || r[1] || '').trim()   // col I (display name) falls back to col B
       const notes        = (r[2] || '').trim()
       const amount       = parseNum((r[5] || '').toString())
-      const status       = (r[6] || '').toLowerCase().trim()
+      const statusNorm   = (r[6] || '').toLowerCase().replace(/[\s\-]+/g, '')
       const billingType  = (r[7] || 'annual').toLowerCase().trim()
       if (!clientName) continue
-      if (!pipelineStatuses.has(status)) continue
+      if (statusNorm !== 'salessent') continue
 
       const key = invoiceId || `${clientName.toLowerCase()}|${amount}|${billingType}`
       if (pipelineSeen.has(key)) continue

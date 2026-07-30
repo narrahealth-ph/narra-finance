@@ -5,6 +5,7 @@ import {
   CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
 import { fmt, shortLabel } from '@/lib/format'
+import { downloadCSV } from '@/lib/csv'
 
 // totalInvested comes from the API (sum of all 'investment' bank transactions)
 
@@ -32,9 +33,90 @@ function fmtDate(dateStr: string) {
   return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
 }
 
+function fmtUsd(n: number): string {
+  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+async function handleExport() {
+  const res  = await fetch('/api/investor-export', { credentials: 'include' })
+  if (!res.ok) throw new Error(`Export failed: ${res.status}`)
+  const d    = await res.json()
+
+  const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+  // 1 — Summary KPIs
+  const s = d.summary
+  const summaryRows = [
+    'Metric,Value,Notes',
+    `Current MRR,${fmtUsd(s.currentMrr)},Accrual MRR from invoice tracker (current month)`,
+    `Avg Monthly Revenue (3mo),${fmtUsd(s.avgRevenue)},Average accrual MRR over last 3 months`,
+    `Avg Monthly Burn,${fmtUsd(s.avgBurn)},Average operating expenses over last 3 months`,
+    `Runway,${s.runway !== null ? `${s.runway} months` : 'N/A'},Cash ÷ avg monthly burn`,
+    `Cash Position,${fmtUsd(s.cashPosition)},Opening balance + all revenue + investment - all costs`,
+    `Total Revenue Earned,${fmtUsd(s.totalRevenue)},All cash received since inception`,
+    `Total Raised,${fmtUsd(s.totalRaised)},Founder investments (Rene + Mike)`,
+    `Active Clients,${s.activeClients},From client registry`,
+  ].join('\n')
+  downloadCSV(summaryRows, '1_Summary_KPIs.csv')
+  await delay(150)
+
+  // 2 — MRR History
+  const mrrLines = [
+    'Month,Accrual MRR (USD),Cash Revenue (USD),Operating Burn (USD),Net (USD)',
+    ...d.mrrHistory.map((m: any) =>
+      `${m.month},${m.mrr},${m.cashRevenue},${m.burn},${m.net}`
+    ),
+  ].join('\n')
+  downloadCSV(mrrLines, '2_MRR_History.csv')
+  await delay(150)
+
+  // 3 — Client Breakdown
+  const totalMrr = d.clientBreakdown.reduce((s: number, c: any) => s + c.mrr, 0)
+  const clientLines = [
+    'Client,Monthly MRR (USD),% of Total MRR',
+    ...d.clientBreakdown.map((c: any) => `${c.name},${c.mrr},${c.pct}%`),
+    `Total,${totalMrr},100%`,
+  ].join('\n')
+  downloadCSV(clientLines, '3_Client_Breakdown.csv')
+  await delay(150)
+
+  // 4 — Cash Flow
+  const cfLines = [
+    'Year,Month,Cash Revenue,Operating Expenses,Capex,Net Profit,Opening Cash,Closing Cash',
+    ...d.cashFlow.map((r: any) =>
+      `${r.year},${r.month},${r.revenue},${r.expenses},${r.capex},${r.net},${r.openingCash},${r.closingCash}`
+    ),
+  ].join('\n')
+  downloadCSV(cfLines, '4_Cash_Flow.csv')
+  await delay(150)
+
+  // 5 — Expenses by Category
+  const expLines = [
+    'Description,Account,Total (USD),Transactions',
+    ...d.expensesByCategory.map((e: any) => {
+      const desc    = e.description.includes(',') ? `"${e.description}"` : e.description
+      const account = (e.account || '').includes(',') ? `"${e.account}"` : (e.account || '')
+      return `${desc},${account},${e.total},${e.txCount}`
+    }),
+  ].join('\n')
+  downloadCSV(expLines, '5_Expenses_by_Category.csv')
+  await delay(150)
+
+  // 6 — Pipeline
+  const pipeLines = [
+    'Client,Invoice Amount,Billing Type,Potential ARR,Potential MRR,Notes',
+    ...d.pipeline.map((p: any) => {
+      const notes = (p.notes || '').includes(',') ? `"${p.notes}"` : (p.notes || '')
+      return `${p.client},${p.amount},${p.billingType},${p.potentialArr},${p.potentialMrr},${notes}`
+    }),
+  ].join('\n')
+  downloadCSV(pipeLines, '6_Pipeline.csv')
+}
+
 export default function InvestorPanel({ currency = 'USD' }: { currency?: 'USD' | 'SGD' }) {
   const [data,        setData]        = useState<any>(null)
   const [loading,     setLoading]     = useState(true)
+  const [exporting,   setExporting]   = useState(false)
   const [sheetClients, setSheetClients] = useState<any[]>([])
   const [sheetUnmatched, setSheetUnmatched] = useState<any[]>([])
 
@@ -113,9 +195,23 @@ export default function InvestorPanel({ currency = 'USD' }: { currency?: 'USD' |
     <div className="space-y-6 animate-fade-up">
 
       {/* Title */}
-      <div>
-        <h2 className="font-heading text-xl font-semibold text-narra-dark">Business Overview</h2>
-        <p className="text-narra-muted text-sm mt-0.5">Live data · Narra Health PTE. LTD.</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="font-heading text-xl font-semibold text-narra-dark">Business Overview</h2>
+          <p className="text-narra-muted text-sm mt-0.5">Live data · Narra Health PTE. LTD.</p>
+        </div>
+        <button
+          disabled={exporting}
+          onClick={async () => {
+            setExporting(true)
+            try { await handleExport() }
+            catch (err) { console.error('investor export error:', err) }
+            finally { setExporting(false) }
+          }}
+          className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-dark hover:bg-narra-light transition-all disabled:opacity-40 whitespace-nowrap shrink-0"
+        >
+          {exporting ? 'Exporting…' : '↓ Investor Export'}
+        </button>
       </div>
 
       {/* Data coverage banner */}

@@ -82,9 +82,9 @@ async function handleExport() {
 
   // 4 — Cash Flow
   const cfLines = [
-    'Year,Month,Cash Revenue,Operating Expenses,Capex,Net Profit,Opening Cash,Closing Cash',
+    'Year,Month,Cash Revenue,Operating Expenses,Capex,Founder Investment,Net Operating,Opening Cash,Closing Cash',
     ...d.cashFlow.map((r: any) =>
-      `${r.year},${r.month},${r.revenue},${r.expenses},${r.capex},${r.net},${r.openingCash},${r.closingCash}`
+      `${r.year},${r.month},${r.revenue},${r.expenses},${r.capex},${r.investment},${r.netOperating},${r.openingCash},${r.closingCash}`
     ),
   ].join('\n')
   downloadCSV(cfLines, '4_Cash_Flow.csv')

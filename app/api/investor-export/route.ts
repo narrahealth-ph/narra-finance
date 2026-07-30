@@ -102,7 +102,7 @@ export async function GET(req: NextRequest) {
       // Active client count
       query(`SELECT COUNT(*) AS count FROM clients WHERE active = TRUE`),
 
-      // Cash flow by period (2025+) — revenue, expenses, capex grouped by period label
+      // Cash flow by period (2025+) — revenue, expenses, capex, investment grouped by period label
       query(`
         SELECT
           p.label,
@@ -111,10 +111,11 @@ export async function GET(req: NextRequest) {
           p.start_date,
           COALESCE(SUM(CASE WHEN bt.type = 'revenue'    THEN bt.amount_usd ELSE 0 END), 0) AS revenue,
           COALESCE(SUM(CASE WHEN bt.type = 'expense'    THEN bt.amount_usd ELSE 0 END), 0) AS expenses,
-          COALESCE(SUM(CASE WHEN bt.type = 'capex'      THEN bt.amount_usd ELSE 0 END), 0) AS capex
+          COALESCE(SUM(CASE WHEN bt.type = 'capex'      THEN bt.amount_usd ELSE 0 END), 0) AS capex,
+          COALESCE(SUM(CASE WHEN bt.type = 'investment' THEN bt.amount_usd ELSE 0 END), 0) AS investment
         FROM periods p
         LEFT JOIN bank_transactions bt ON bt.period_id = p.id
-          AND bt.type IN ('revenue','expense','capex')
+          AND bt.type IN ('revenue','expense','capex','investment')
         WHERE SPLIT_PART(p.label,'_',2)::int >= 2025
         GROUP BY p.id, p.label, p.start_date
         ORDER BY p.start_date
@@ -266,14 +267,20 @@ export async function GET(req: NextRequest) {
 
     let runningCash = openingSnapshot
     const cashFlow = cashFlowRes.rows
-      .filter((r: any) => parseFloat(r.revenue) > 0 || parseFloat(r.expenses) > 0 || parseFloat(r.capex) > 0)
+      .filter((r: any) =>
+        parseFloat(r.revenue) > 0 || parseFloat(r.expenses) > 0 ||
+        parseFloat(r.capex) > 0   || parseFloat(r.investment) > 0
+      )
       .map((r: any) => {
-        const revenue  = parseFloat(r.revenue)
-        const expenses = parseFloat(r.expenses)
-        const capex    = parseFloat(r.capex)
-        const net      = revenue - expenses - capex
+        const revenue    = parseFloat(r.revenue)
+        const expenses   = parseFloat(r.expenses)
+        const capex      = parseFloat(r.capex)
+        const investment = parseFloat(r.investment)
+        // Net operating = revenue - expenses (capex excluded from operating margin)
+        const netOperating = revenue - expenses
+        // Closing cash includes investment deposits and capex spend
         const opening  = runningCash
-        const closing  = opening + net
+        const closing  = opening + revenue + investment - expenses - capex
         runningCash    = closing
         return {
           year:         r.year,
@@ -281,7 +288,8 @@ export async function GET(req: NextRequest) {
           revenue:      Math.round(revenue),
           expenses:     Math.round(expenses),
           capex:        Math.round(capex),
-          net:          Math.round(net),
+          investment:   Math.round(investment),
+          netOperating: Math.round(netOperating),
           openingCash:  Math.round(opening),
           closingCash:  Math.round(closing),
         }

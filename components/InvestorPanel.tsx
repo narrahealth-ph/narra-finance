@@ -78,14 +78,13 @@ async function handleExport() {
   downloadCSV(mrrLines, '2_MRR_History.csv')
   await delay(150)
 
-  // 3 — Client Breakdown (all active clients from DB, sorted by cash received)
-  const totalCash = d.clientBreakdown.reduce((s: number, c: any) => s + c.cashReceived, 0)
+  // 3 — Client Breakdown (active clients from DB — no per-client revenue for privacy)
   const clientLines = [
-    csvRow('Client', 'Holding Company', 'Billing Type', 'Cash Received (USD)', '% of Client Cash Revenue'),
+    csvRow('Client', 'Holding Company', 'Billing Type', 'Contract Start', 'Contract End'),
     ...d.clientBreakdown.map((c: any) =>
-      csvRow(c.name, c.holdingCompany, c.billingType, c.cashReceived, `${c.pct}%`)
+      csvRow(c.name, c.holdingCompany, c.billingType, c.contractStart, c.contractEnd)
     ),
-    csvRow('Total', '', '', totalCash, '100%'),
+    csvRow(`Total Active: ${d.clientBreakdown.length}`, '', '', '', ''),
   ].join('\n')
   downloadCSV(clientLines, '3_Client_Breakdown.csv')
   await delay(150)

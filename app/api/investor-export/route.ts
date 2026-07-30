@@ -133,20 +133,18 @@ export async function GET(req: NextRequest) {
         ORDER BY total DESC
       `),
 
-      // Client breakdown — all active clients from DB with total cash received
+      // Client breakdown — all active clients from DB (no revenue per client for privacy)
       query(`
         SELECT
-          c.id,
           c.name,
           c.billing_type,
-          hc.name                        AS holding_company,
-          COALESCE(SUM(bt.amount_usd), 0) AS cash_received
+          c.contract_start,
+          c.contract_end,
+          hc.name AS holding_company
         FROM clients c
         LEFT JOIN holding_companies hc ON hc.id = c.holding_company_id
-        LEFT JOIN bank_transactions bt ON bt.client_id = c.id AND bt.type = 'revenue'
         WHERE c.active = TRUE
-        GROUP BY c.id, c.name, c.billing_type, hc.name
-        ORDER BY cash_received DESC
+        ORDER BY c.name
       `),
 
       // Total expenses + capex all time (for reconciliation in summary)
@@ -244,22 +242,14 @@ export async function GET(req: NextRequest) {
       investmentTotals,
     }
 
-    // ── Client Breakdown — from clients DB table (same source as Clients page) ─
-    const totalClientCash = clientBreakdownRes.rows.reduce(
-      (s: number, r: any) => s + parseFloat(r.cash_received), 0
-    )
-    const clientBreakdown = clientBreakdownRes.rows.map((r: any) => {
-      const cashReceived = Math.round(parseFloat(r.cash_received))
-      return {
-        name:           r.name,
-        holdingCompany: r.holding_company || '',
-        billingType:    r.billing_type    || '',
-        cashReceived,
-        pct: totalClientCash > 0
-          ? Math.round((parseFloat(r.cash_received) / totalClientCash) * 10000) / 100
-          : 0,
-      }
-    })
+    // ── Client Breakdown — active clients from DB (no per-client revenue for privacy) ─
+    const clientBreakdown = clientBreakdownRes.rows.map((r: any) => ({
+      name:          r.name,
+      holdingCompany: r.holding_company  || '',
+      billingType:   r.billing_type      || '',
+      contractStart: r.contract_start ? new Date(r.contract_start).toISOString().split('T')[0] : '',
+      contractEnd:   r.contract_end   ? new Date(r.contract_end).toISOString().split('T')[0]   : '',
+    }))
 
     // ── Cash Flow (2025+, with opening carry-forward) ────────────────────────
     const openingSnapRes = await query(`

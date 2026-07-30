@@ -33,8 +33,13 @@ function fmtDate(dateStr: string) {
   return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
 }
 
-function fmtUsd(n: number): string {
-  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+/** Properly escape a CSV cell: wrap in quotes if it contains comma, quote, or newline */
+function csvCell(v: string | number | null | undefined): string {
+  const s = String(v ?? '')
+  return /[,"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+function csvRow(...cells: (string | number | null | undefined)[]): string {
+  return cells.map(csvCell).join(',')
 }
 
 async function handleExport() {
@@ -44,27 +49,27 @@ async function handleExport() {
 
   const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
 
-  // 1 — Summary KPIs
+  // 1 — Summary KPIs (values are plain numbers so Excel formats them; notes quoted if needed)
   const s = d.summary
   const summaryRows = [
-    'Metric,Value,Notes',
-    `Current MRR,${fmtUsd(s.currentMrr)},Accrual MRR from invoice tracker (current month)`,
-    `Avg Monthly Revenue (3mo),${fmtUsd(s.avgRevenue)},Average accrual MRR over last 3 months`,
-    `Avg Monthly Burn,${fmtUsd(s.avgBurn)},Average operating expenses over last 3 months`,
-    `Runway,${s.runway !== null ? `${s.runway} months` : 'N/A'},Cash ÷ avg monthly burn`,
-    `Cash Position,${fmtUsd(s.cashPosition)},Opening balance + all revenue + investment - all costs`,
-    `Total Revenue Earned,${fmtUsd(s.totalRevenue)},All cash received since inception`,
-    `Total Raised,${fmtUsd(s.totalRaised)},Founder investments (Rene + Mike)`,
-    `Active Clients,${s.activeClients},From client registry`,
+    csvRow('Metric', 'Value (USD)', 'Notes'),
+    csvRow('Current MRR',           Math.round(s.currentMrr),  'Accrual MRR from invoice tracker (current month)'),
+    csvRow('Avg Monthly Revenue (3mo)', Math.round(s.avgRevenue), 'Average accrual MRR over last 3 months'),
+    csvRow('Avg Monthly Burn',      Math.round(s.avgBurn),      'Average operating expenses over last 3 months'),
+    csvRow('Runway (months)',        s.runway ?? 'N/A',          'Cash ÷ avg monthly burn'),
+    csvRow('Cash Position',          Math.round(s.cashPosition), 'Opening balance + all revenue + investment - all costs'),
+    csvRow('Total Revenue Earned',   Math.round(s.totalRevenue), 'All cash received since inception'),
+    csvRow('Total Raised',           Math.round(s.totalRaised),  'Founder investments (Rene + Mike)'),
+    csvRow('Active Clients',         s.activeClients,            'From client registry'),
   ].join('\n')
   downloadCSV(summaryRows, '1_Summary_KPIs.csv')
   await delay(150)
 
   // 2 — MRR History
   const mrrLines = [
-    'Month,Accrual MRR (USD),Cash Revenue (USD),Operating Burn (USD),Net (USD)',
+    csvRow('Month', 'Accrual MRR (USD)', 'Cash Revenue (USD)', 'Operating Burn (USD)', 'Net (USD)'),
     ...d.mrrHistory.map((m: any) =>
-      `${m.month},${m.mrr},${m.cashRevenue},${m.burn},${m.net}`
+      csvRow(m.month, m.mrr, m.cashRevenue, m.burn, m.net)
     ),
   ].join('\n')
   downloadCSV(mrrLines, '2_MRR_History.csv')
@@ -73,18 +78,18 @@ async function handleExport() {
   // 3 — Client Breakdown
   const totalMrr = d.clientBreakdown.reduce((s: number, c: any) => s + c.mrr, 0)
   const clientLines = [
-    'Client,Monthly MRR (USD),% of Total MRR',
-    ...d.clientBreakdown.map((c: any) => `${c.name},${c.mrr},${c.pct}%`),
-    `Total,${totalMrr},100%`,
+    csvRow('Client', 'Monthly MRR (USD)', '% of Total MRR'),
+    ...d.clientBreakdown.map((c: any) => csvRow(c.name, c.mrr, `${c.pct}%`)),
+    csvRow('Total', totalMrr, '100%'),
   ].join('\n')
   downloadCSV(clientLines, '3_Client_Breakdown.csv')
   await delay(150)
 
   // 4 — Cash Flow
   const cfLines = [
-    'Year,Month,Cash Revenue,Operating Expenses,Capex,Founder Investment,Net Operating,Opening Cash,Closing Cash',
+    csvRow('Year', 'Month', 'Cash Revenue', 'Operating Expenses', 'Capex', 'Founder Investment', 'Net Operating', 'Opening Cash', 'Closing Cash'),
     ...d.cashFlow.map((r: any) =>
-      `${r.year},${r.month},${r.revenue},${r.expenses},${r.capex},${r.investment},${r.netOperating},${r.openingCash},${r.closingCash}`
+      csvRow(r.year, r.month, r.revenue, r.expenses, r.capex, r.investment, r.netOperating, r.openingCash, r.closingCash)
     ),
   ].join('\n')
   downloadCSV(cfLines, '4_Cash_Flow.csv')
@@ -92,23 +97,20 @@ async function handleExport() {
 
   // 5 — Expenses by Category
   const expLines = [
-    'Description,Account,Total (USD),Transactions',
-    ...d.expensesByCategory.map((e: any) => {
-      const desc    = e.description.includes(',') ? `"${e.description}"` : e.description
-      const account = (e.account || '').includes(',') ? `"${e.account}"` : (e.account || '')
-      return `${desc},${account},${e.total},${e.txCount}`
-    }),
+    csvRow('Description', 'Account', 'Total (USD)', 'Transactions'),
+    ...d.expensesByCategory.map((e: any) =>
+      csvRow(e.description, e.account, e.total, e.txCount)
+    ),
   ].join('\n')
   downloadCSV(expLines, '5_Expenses_by_Category.csv')
   await delay(150)
 
   // 6 — Pipeline
   const pipeLines = [
-    'Client,Invoice Amount,Billing Type,Potential ARR,Potential MRR,Notes',
-    ...d.pipeline.map((p: any) => {
-      const notes = (p.notes || '').includes(',') ? `"${p.notes}"` : (p.notes || '')
-      return `${p.client},${p.amount},${p.billingType},${p.potentialArr},${p.potentialMrr},${notes}`
-    }),
+    csvRow('Client', 'Invoice Amount', 'Billing Type', 'Potential ARR', 'Potential MRR', 'Notes'),
+    ...d.pipeline.map((p: any) =>
+      csvRow(p.client, p.amount, p.billingType, p.potentialArr, p.potentialMrr, p.notes)
+    ),
   ].join('\n')
   downloadCSV(pipeLines, '6_Pipeline.csv')
 }

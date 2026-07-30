@@ -78,12 +78,15 @@ export async function GET(req: NextRequest) {
          AND bt.type != 'opening'`,
       [year]
     ),
-    // All individual bank transactions for GL
+    // All individual bank transactions for GL — order by period start so period grouping is correct
+    // (avoids timezone edge cases where a tx date in UTC appears to be in the prior month)
     query(
-      `SELECT bt.date, bt.description, bt.amount_usd, bt.type, bt.account, bt.currency
+      `SELECT bt.date, bt.description, bt.amount_usd, bt.type, bt.account, bt.currency,
+              p.label AS period_label
        FROM bank_transactions bt
+       JOIN periods p ON p.id = bt.period_id
        WHERE bt.period_id = ANY($1) AND bt.type IN ('revenue', 'expense', 'capex', 'investment')
-       ORDER BY bt.date`,
+       ORDER BY p.start_date, bt.date`,
       [periodIds]
     ),
   ])
@@ -131,12 +134,13 @@ export async function GET(req: NextRequest) {
       total:       parseFloat(r.total),
     })),
     allTransactions: allTxRes.rows.map((r: any) => ({
-      date:        r.date,
-      description: r.description,
-      amount_usd:  parseFloat(r.amount_usd),
-      type:        r.type,
-      account:     r.account,
-      currency:    r.currency,
+      date:         r.date,
+      description:  r.description,
+      amount_usd:   parseFloat(r.amount_usd),
+      type:         r.type,
+      account:      r.account,
+      currency:     r.currency,
+      period_label: r.period_label,
     })),
     lastPeriodId,
     lockedCount:  months.filter((m: any) => m.locked).length,

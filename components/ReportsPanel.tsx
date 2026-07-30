@@ -258,8 +258,11 @@ function buildAnnualGLCSV(annualData: any): string {
   for (const tx of (allTransactions || [])) {
     const amt = tx.type === 'revenue' ? tx.amount_usd : -tx.amount_usd
     balance += amt
+    // Convert UTC date to SGT (UTC+8) for display — avoids end-of-month transactions
+    // showing as the prior month (e.g. 2026-03-31T22:00Z = 2026-04-01 in Singapore)
+    const sgtDate = tx.date ? new Date(new Date(tx.date).getTime() + 8 * 3600000).toISOString().split('T')[0] : ''
     rows.push([
-      tx.date ? new Date(tx.date).toISOString().split('T')[0] : '',
+      sgtDate,
       `"${(tx.description || '').replace(/"/g, '""')}"`,
       tx.account || '',
       tx.type,
@@ -511,13 +514,13 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
             <div className="px-6 py-4 border-b border-narra-border bg-narra-dark text-white">
               <div className="text-xs text-white/40 uppercase tracking-widest mb-1">NARRA HEALTH PTE. LTD.</div>
               <h3 className="font-heading font-semibold text-white">Annual General Ledger</h3>
-              <p className="text-xs text-white/50 mt-0.5">{aYear} · {(annualData.allTransactions||[]).length} bank transactions</p>
+              <p className="text-xs text-white/50 mt-0.5">{aYear} · {(annualData.allTransactions||[]).length} bank transactions · grouped by accounting period</p>
             </div>
             <div className="overflow-x-auto">
             <table className="w-full min-w-[600px] text-sm">
               <thead>
                 <tr className="border-b border-narra-border bg-narra-surface">
-                  <th className="text-left px-4 py-3 text-xs text-narra-muted font-body uppercase tracking-widest">Date</th>
+                  <th className="text-left px-4 py-3 text-xs text-narra-muted font-body uppercase tracking-widest">Date (SGT)</th>
                   <th className="text-left px-4 py-3 text-xs text-narra-muted font-body uppercase tracking-widest">Description</th>
                   <th className="text-left px-4 py-3 text-xs text-narra-muted font-body uppercase tracking-widest">Account</th>
                   <th className="text-right px-4 py-3 text-xs text-narra-muted font-body uppercase tracking-widest">Debit (USD)</th>
@@ -528,20 +531,37 @@ export default function ReportsPanel({ data, loading, period, selectedYear, onRe
               <tbody>
                 {(() => {
                   let bal = 0
-                  return (annualData.allTransactions || []).map((tx: any, i: number) => {
+                  let lastPeriod = ''
+                  return (annualData.allTransactions || []).flatMap((tx: any, i: number) => {
                     const amt = tx.amount_usd
                     if (tx.type === 'revenue') bal += amt
                     else bal -= amt
-                    return (
+                    const sgtDate = tx.date
+                      ? new Date(new Date(tx.date).getTime() + 8 * 3600000).toISOString().split('T')[0]
+                      : '—'
+                    const periodLabel = tx.period_label || ''
+                    const rows = []
+                    if (periodLabel && periodLabel !== lastPeriod) {
+                      lastPeriod = periodLabel
+                      rows.push(
+                        <tr key={`period-${i}`} className="bg-narra-dark/5 border-t-2 border-narra-border">
+                          <td colSpan={6} className="px-4 py-2 text-xs font-heading font-semibold text-narra-dark uppercase tracking-widest">
+                            {periodLabel.replace('_', ' ')}
+                          </td>
+                        </tr>
+                      )
+                    }
+                    rows.push(
                       <tr key={i} className="border-t border-narra-border/30 hover:bg-narra-surface">
-                        <td className="px-4 py-2.5 text-narra-muted text-xs font-mono">{tx.date ? new Date(tx.date).toISOString().split('T')[0] : '—'}</td>
+                        <td className="px-4 py-2.5 text-narra-muted text-xs font-mono">{sgtDate}</td>
                         <td className="px-4 py-2.5 text-narra-ink max-w-[280px] truncate">{tx.description}</td>
                         <td className="px-4 py-2.5 text-narra-muted text-xs">{tx.account}</td>
-                        <td className="px-4 py-2.5 text-right font-medium text-narra-dark">{tx.type === 'expense' ? fmt(amt) : '—'}</td>
+                        <td className="px-4 py-2.5 text-right font-medium text-narra-dark">{tx.type === 'expense' || tx.type === 'capex' ? fmt(amt) : '—'}</td>
                         <td className="px-4 py-2.5 text-right font-medium text-green-700">{tx.type === 'revenue' ? fmt(amt) : '—'}</td>
                         <td className={`px-4 py-2.5 text-right font-medium ${bal >= 0 ? 'text-narra-dark' : 'text-red-600'}`}>{bal < 0 ? '(' : ''}{fmt(Math.abs(bal))}{bal < 0 ? ')' : ''}</td>
                       </tr>
                     )
+                    return rows
                   })
                 })()}
               </tbody>

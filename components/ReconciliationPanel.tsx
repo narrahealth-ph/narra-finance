@@ -744,8 +744,8 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
               {(() => {
                 const filteredTxns = typeFilter === 'all' ? yearTxns : yearTxns.filter(t => t.type === typeFilter)
                 return (
-              <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
-                <table className="w-full text-sm">
+              <div className="bg-white border border-narra-border rounded-xl overflow-x-auto">
+                <table className="min-w-full text-sm">
                   <thead>
                     <tr className="bg-narra-dark text-white">
                       {['Month', 'Date', 'Description', 'Amount', 'Type', 'Invoice', 'Tag Client'].map(h => (
@@ -787,7 +787,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                             </div>
                           </td>
                           <td className="px-4 py-2.5 text-xs text-narra-muted whitespace-nowrap">{String(tx.date).split('T')[0]}</td>
-                          <td className="px-4 py-2.5 text-narra-dark max-w-xs">
+                          <td className="px-4 py-2.5 text-narra-dark w-[200px] max-w-[200px]">
                             <div className="truncate">{tx.description}</div>
                           </td>
                           <td className={`px-4 py-2.5 text-right font-medium whitespace-nowrap ${amtColor}`}>
@@ -841,7 +841,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                             </select>
                           </td>
                           {/* Invoice column — match/unmatch for expense rows */}
-                          <td className="px-4 py-2.5 min-w-[180px]">
+                          <td className="px-3 py-2.5 w-[160px]">
                             {(() => {
                               const isExpense = tx.type === 'expense'
                               if (!isExpense) return <span className="text-xs text-narra-muted">—</span>
@@ -878,7 +878,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                                   defaultValue=""
                                   disabled={reassigning === tx.id}
                                   onChange={e => { if (e.target.value) yearMatchInvoice(tx.id, parseInt(e.target.value)) }}
-                                  className="text-xs border border-blue-300 rounded-lg px-2 py-1 bg-white outline-none max-w-[180px] text-blue-800 disabled:opacity-50"
+                                  className="text-xs border border-blue-300 rounded-lg px-2 py-1 bg-white outline-none w-[150px] text-blue-800 disabled:opacity-50"
                                 >
                                   <option value="">Match to invoice…</option>
                                   {unmatchedInvs.map((inv: any) => (
@@ -890,7 +890,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                               )
                             })()}
                           </td>
-                          <td className="px-4 py-2.5">
+                          <td className="px-3 py-2.5 w-[160px]">
                             {isRevenue && clients.length > 0 ? (
                               <div className="flex flex-col gap-1">
                                 {(clientIdMap[tx.id] || []).length > 0 && (
@@ -924,10 +924,10 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                                     select.value = ''
                                   }}
                                   disabled={taggingTx === tx.id}
-                                  className="text-xs border border-blue-300 rounded-lg px-2 py-1 bg-white outline-none max-w-[200px] text-blue-800 disabled:opacity-50"
+                                  className="text-xs border border-blue-300 rounded-lg px-2 py-1 bg-white outline-none w-full text-blue-800 disabled:opacity-50"
                                 >
                                   <option value="">
-                                    {(clientIdMap[tx.id] || []).length > 0 ? '+ Add client…' : 'Tag client…'}
+                                    {(clientIdMap[tx.id] || []).length > 0 ? '+ Add…' : 'Tag client…'}
                                   </option>
                                   {clients
                                     .filter(c => !(clientIdMap[tx.id] || []).includes(c.id))

@@ -64,6 +64,7 @@ TYPE RULES — COLUMN DETERMINES TYPE, NOT VENDOR NAME:
 CURRENCY & ACCOUNT:
 - Each transaction's currency = the section it appears in (EUR / GBP / SGD / USD)
 - account field = the currency code (e.g. "SGD", "USD")
+- EXCEPTION — cross-currency salary/payroll transfers: if a withdrawal in the SGD section shows an "INSTRUCTED AMT USD X" line in its description (meaning the actual instructed amount was in USD), set currency = "USD" and amount = the USD instructed amount from the description. These are typically payments to individual people (e.g. "Karina Garcia", "Tatiana Garcia"). The SGD column value is just the bank's settlement amount — the real currency is USD.
 
 CURRENCY EXCHANGE (FX) DEDUPLICATION — CRITICAL:
 - Every FX conversion appears TWICE: as a Deposit in the destination currency section AND as a Withdrawal in the source currency section

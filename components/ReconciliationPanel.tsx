@@ -697,6 +697,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                           <td className={`px-4 py-2.5 text-right font-medium whitespace-nowrap ${amtColor}`}>
                             <div className="flex items-center justify-end gap-1">
                               <select
+                                key={`${tx.id}-${tx.currency}`}
                                 defaultValue={tx.currency || 'USD'}
                                 onChange={e => {
                                   setYearTxns(prev => prev.map(t => t.id === tx.id ? { ...t, currency: e.target.value } : t))
@@ -945,6 +946,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                               <td className="px-4 py-2.5 text-right font-medium text-red-500 whitespace-nowrap">
                                 <div className="flex items-center justify-end gap-1">
                                   <select
+                                    key={`${item.id}-${item.currency}`}
                                     defaultValue={item.currency || 'USD'}
                                     onChange={e => updateCurrency(item.id, e.target.value)}
                                     className="text-xs bg-transparent border border-narra-border rounded px-1 py-0.5 outline-none cursor-pointer text-narra-muted hover:border-red-300 focus:border-red-400"
@@ -1284,6 +1286,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                       <td className="px-4 py-3 text-right font-medium text-amber-900 whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1">
                           <select
+                            key={`${tx.id}-${tx.currency}`}
                             defaultValue={tx.currency || 'USD'}
                             onChange={e => updateCurrency(tx.id, e.target.value)}
                             className="text-xs bg-transparent border border-amber-200 rounded px-1 py-0.5 outline-none cursor-pointer text-amber-600 hover:border-amber-400"

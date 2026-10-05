@@ -94,6 +94,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   const [typeFilter,      setTypeFilter]      = useState<'all' | 'expense' | 'revenue' | 'capex' | 'investment'>('all')
   const [allExpanded,     setAllExpanded]     = useState(false)
   const [yearInvoices,    setYearInvoices]    = useState<any[]>([])
+  const [yearPeriods,     setYearPeriods]     = useState<{id: number; label: string}[]>([])
   const [yearRunning,     setYearRunning]     = useState(false)
   const [yearRunMsg,      setYearRunMsg]      = useState('')
 
@@ -112,10 +113,11 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   async function loadYearData() {
     setYearLoading(true)
     try {
-      const [txRes, clientsRes, invRes] = await Promise.all([
+      const [txRes, clientsRes, invRes, periodsRes] = await Promise.all([
         fetch(`/api/bank?action=year_all&year=${yearViewYear}`, { credentials: 'include' }),
         fetch('/api/clients', { credentials: 'include' }),
         fetch(`/api/invoices?action=year_all&year=${yearViewYear}`, { credentials: 'include' }),
+        fetch('/api/periods', { credentials: 'include' }),
       ])
       if (txRes.ok) {
         const data = await txRes.json()
@@ -137,6 +139,15 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
       if (invRes.ok) {
         const id = await invRes.json()
         setYearInvoices(id.invoices || [])
+      }
+      if (periodsRes.ok) {
+        const pd = await periodsRes.json()
+        const yr = yearViewYear
+        setYearPeriods(
+          (pd.periods || [])
+            .filter((p: any) => (p.label || '').endsWith(`_${yr}`))
+            .map((p: any) => ({ id: p.id, label: p.label }))
+        )
       }
     } catch (err) {
       console.error('Year data load error:', err)
@@ -434,6 +445,16 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
     } finally {
       setReassigning(null)
     }
+  }
+
+  async function moveTxPeriod(bankTxId: number, targetPeriodId: number) {
+    await fetch('/api/bank', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ action: 'move_period', bankTxId, newInvoiceId: targetPeriodId }),
+    })
+    await loadYearData()
   }
 
   async function retypeTx(txId: number, newType: string, isYearView: boolean) {
@@ -741,7 +762,30 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                       const amtColor = isRevenue ? 'text-green-600' : isCapex ? 'text-purple-600' : isInvestment ? 'text-emerald-600' : 'text-red-500'
                       return (
                         <tr key={tx.id} className={`border-t hover:bg-narra-surface transition-colors ${rowColor}`}>
-                          <td className="px-4 py-2.5 text-xs text-narra-muted whitespace-nowrap">{(tx.period_label || '').replace('_', ' ')}</td>
+                          <td className="px-4 py-2.5 text-xs text-narra-muted whitespace-nowrap">
+                            <div className="flex flex-col gap-0.5">
+                              <span>{(tx.period_label || '').replace('_', ' ')}</span>
+                              {yearPeriods.length > 1 && (
+                                <select
+                                  defaultValue=""
+                                  onChange={e => {
+                                    if (e.target.value) moveTxPeriod(tx.id, parseInt(e.target.value))
+                                  }}
+                                  className="text-[10px] text-narra-muted bg-transparent border-b border-transparent hover:border-narra-muted outline-none cursor-pointer"
+                                  title="Move to a different month"
+                                >
+                                  <option value="">↷ Move to…</option>
+                                  {yearPeriods
+                                    .filter(p => p.id !== tx.period_id)
+                                    .map(p => (
+                                      <option key={p.id} value={p.id}>
+                                        {p.label.replace('_', ' ')}
+                                      </option>
+                                    ))}
+                                </select>
+                              )}
+                            </div>
+                          </td>
                           <td className="px-4 py-2.5 text-xs text-narra-muted whitespace-nowrap">{String(tx.date).split('T')[0]}</td>
                           <td className="px-4 py-2.5 text-narra-dark max-w-xs">
                             <div className="truncate">{tx.description}</div>

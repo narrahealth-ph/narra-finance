@@ -136,7 +136,7 @@ export async function GET(req: NextRequest) {
     const res = await query(
       `SELECT bt.id, bt.date, bt.description, bt.amount, bt.currency, bt.amount_usd,
               bt.account, bt.status, bt.type, bt.client_id, bt.invoice_ref,
-              bt.matched_invoice_id,
+              bt.matched_invoice_id, bt.period_id,
               p.label AS period_label
        FROM bank_transactions bt
        JOIN periods p ON p.id = bt.period_id
@@ -496,6 +496,33 @@ export async function PATCH(req: NextRequest) {
       userEmail
     )
     return NextResponse.json({ ok: true })
+  }
+
+  // ── move_period — reassign a bank transaction to a different period ──────────
+  // Caller sends { action: 'move_period', bankTxId, newInvoiceId: targetPeriodId }
+  if (action === 'move_period') {
+    const tgtPeriodId = newInvoiceId // reuse newInvoiceId slot for targetPeriodId
+    if (!bankTxId || !tgtPeriodId) {
+      return NextResponse.json({ error: 'bankTxId and targetPeriodId required' }, { status: 400 })
+    }
+
+    const [srcTx, tgtPeriod] = await Promise.all([
+      query('SELECT bt.id, bt.period_id, p.locked, p.label FROM bank_transactions bt JOIN periods p ON p.id = bt.period_id WHERE bt.id = $1', [bankTxId]),
+      query('SELECT id, locked, label FROM periods WHERE id = $1', [tgtPeriodId]),
+    ])
+
+    if (!srcTx.rows[0]) return NextResponse.json({ error: 'Transaction not found' }, { status: 404 })
+    if (srcTx.rows[0].locked) return NextResponse.json({ error: `Source period "${srcTx.rows[0].label}" is locked` }, { status: 403 })
+    if (!tgtPeriod.rows[0]) return NextResponse.json({ error: 'Target period not found' }, { status: 404 })
+    if (tgtPeriod.rows[0].locked) return NextResponse.json({ error: `Target period "${tgtPeriod.rows[0].label}" is locked` }, { status: 403 })
+
+    await query('UPDATE bank_transactions SET period_id=$1 WHERE id=$2', [tgtPeriodId, bankTxId])
+    await writeAudit('bank_transactions', bankTxId, 'move_period',
+      { period_id: srcTx.rows[0].period_id, period_label: srcTx.rows[0].label },
+      { period_id: tgtPeriodId, period_label: tgtPeriod.rows[0].label },
+      userEmail
+    )
+    return NextResponse.json({ ok: true, newPeriodLabel: tgtPeriod.rows[0].label })
   }
 
   // ── year_rerun — cross-period auto-match for an entire year ──────────────────

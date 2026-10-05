@@ -290,7 +290,7 @@ export async function GET(req: NextRequest) {
       const issueDateStr = (r[4] || '').trim()
       if (!clientName && !invoiceId) continue
 
-      if (statusNorm === 'sent' && amount > 0) {
+      if ((statusNorm === 'sent' || statusNorm === 'partialpayment' || statusNorm === 'pendingpayment') && amount > 0) {
         const d = parseInvDate(issueDateStr)
         const daysOutstanding = d ? Math.floor((todayMs - d.getTime()) / 86400000) : 0
         pendingFromSheet.push({ invoiceId, clientName, amount, issueDate: issueDateStr, daysOutstanding, billingType })

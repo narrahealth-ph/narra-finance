@@ -241,7 +241,7 @@ export async function PATCH(req: NextRequest) {
   const session = await requireRole('finance')
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { action, bankTxId, invoiceId, newInvoiceId, periodId: bodyPeriodId, splits, clientId, clientIds, invoiceRef, account: bodyAccount, amount: bodyAmount } = await req.json()
+  const { action, bankTxId, invoiceId, newInvoiceId, periodId: bodyPeriodId, splits, clientId, clientIds, invoiceRef, account: bodyAccount, amount: bodyAmount, currency: bodyCurrency } = await req.json()
   const userEmail = (session as any).email || 'unknown'
 
   // Check period lock via the bank transaction's period
@@ -495,6 +495,26 @@ export async function PATCH(req: NextRequest) {
       userEmail
     )
     return NextResponse.json({ ok: true })
+  }
+
+  // ── update_currency — correct a misread currency and recalculate amount_usd ──
+  if (action === 'update_currency') {
+    const SUPPORTED = ['USD', 'SGD', 'PHP', 'EUR', 'GBP']
+    if (!bodyCurrency || !SUPPORTED.includes(bodyCurrency)) {
+      return NextResponse.json({ error: 'Invalid currency' }, { status: 400 })
+    }
+    const txRow = await query('SELECT amount, date, currency FROM bank_transactions WHERE id=$1', [bankTxId])
+    if (!txRow.rows[0]) return NextResponse.json({ error: 'Transaction not found' }, { status: 404 })
+    const { amount, date, currency: oldCurrency } = txRow.rows[0]
+    const txDate = String(date).split('T')[0]
+    const newAmountUsd = await toUSD(parseFloat(amount), bodyCurrency, txDate)
+    await query(
+      'UPDATE bank_transactions SET currency=$1, amount_usd=$2 WHERE id=$3',
+      [bodyCurrency, newAmountUsd, bankTxId]
+    )
+    await writeAudit('bank_transactions', bankTxId, 'update_currency',
+      { currency: oldCurrency }, { currency: bodyCurrency, amount_usd: newAmountUsd }, userEmail)
+    return NextResponse.json({ ok: true, amountUsd: newAmountUsd })
   }
 
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 })

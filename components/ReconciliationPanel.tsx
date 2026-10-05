@@ -21,6 +21,8 @@ interface MatchedPair {
   discrepancyPct: number | null
 }
 
+const SUPPORTED_CURRENCIES = ['USD', 'SGD', 'PHP', 'EUR', 'GBP']
+
 const ACCOUNT_OPTIONS = [
   '411 - Professional Fees',
   '417 - Freight',
@@ -90,6 +92,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   const [yearLoading,     setYearLoading]     = useState(false)
   const [yearViewYear,    setYearViewYear]    = useState<string>(() => selectedMonth ? selectedMonth.split('_')[1] : String(new Date().getFullYear()))
   const [typeFilter,      setTypeFilter]      = useState<'all' | 'expense' | 'revenue' | 'capex' | 'investment'>('all')
+  const [allExpanded,     setAllExpanded]     = useState(false)
 
   const selectedYear = selectedMonth ? selectedMonth.split('_')[1] : String(new Date().getFullYear())
 
@@ -282,6 +285,21 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
     })
     await loadData()
     onRefresh()
+  }
+
+  async function updateCurrency(txId: number, newCurrency: string, isYearView = false) {
+    await fetch('/api/bank', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ action: 'update_currency', bankTxId: txId, currency: newCurrency }),
+    })
+    if (isYearView) {
+      await loadYearData()
+    } else {
+      await loadData()
+      onRefresh()
+    }
   }
 
   async function retagBankTx(bankTxId: number, account: string) {
@@ -677,17 +695,29 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                             <div className="truncate">{tx.description}</div>
                           </td>
                           <td className={`px-4 py-2.5 text-right font-medium whitespace-nowrap ${amtColor}`}>
-                            {tx.currency !== 'USD' && <span className="text-xs text-narra-muted mr-1">{tx.currency}</span>}
-                            $<input
-                              defaultValue={parseFloat(tx.amount_usd || tx.amount || 0).toFixed(2)}
-                              onBlur={e => {
-                                const val = parseFloat(e.target.value)
-                                const cur = parseFloat(tx.amount_usd || tx.amount || 0)
-                                if (!isNaN(val) && val > 0 && Math.abs(val - cur) > 0.001) updateAmount(tx.id, val)
-                              }}
-                              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                              className={`w-24 text-right bg-transparent border-b border-transparent hover:border-current focus:border-current outline-none ${amtColor}`}
-                            />
+                            <div className="flex items-center justify-end gap-1">
+                              <select
+                                defaultValue={tx.currency || 'USD'}
+                                onChange={e => {
+                                  setYearTxns(prev => prev.map(t => t.id === tx.id ? { ...t, currency: e.target.value } : t))
+                                  updateCurrency(tx.id, e.target.value, true)
+                                }}
+                                className={`text-xs bg-transparent border border-current/20 rounded px-1 py-0.5 outline-none cursor-pointer hover:border-current/50 ${amtColor}`}
+                                title="Correct the currency for this transaction"
+                              >
+                                {SUPPORTED_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                              </select>
+                              $<input
+                                defaultValue={parseFloat(tx.amount_usd || tx.amount || 0).toFixed(2)}
+                                onBlur={e => {
+                                  const val = parseFloat(e.target.value)
+                                  const cur = parseFloat(tx.amount_usd || tx.amount || 0)
+                                  if (!isNaN(val) && val > 0 && Math.abs(val - cur) > 0.001) updateAmount(tx.id, val)
+                                }}
+                                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                                className={`w-20 text-right bg-transparent border-b border-transparent hover:border-current focus:border-current outline-none ${amtColor}`}
+                              />
+                            </div>
                           </td>
                           <td className="px-4 py-2.5">
                             <select
@@ -836,9 +866,27 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
       {/* ── COSTS BREAKDOWN ── */}
       {activeTab === 'overview' && (
         <div className="space-y-3">
-          <p className="text-xs text-narra-muted">
-            Costs pulled from your uploaded bank statement · Grouped by account code · Click to expand
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-narra-muted">
+              Costs pulled from your uploaded bank statement · Grouped by account code · Click to expand
+            </p>
+            {costGroups.length > 0 && (
+              <button
+                onClick={() => {
+                  if (allExpanded) {
+                    setExpandedGroups(new Set())
+                    setAllExpanded(false)
+                  } else {
+                    setExpandedGroups(new Set(costGroups.map(g => g.accountCode)))
+                    setAllExpanded(true)
+                  }
+                }}
+                className="text-xs px-3 py-1.5 border border-narra-border rounded-lg text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all whitespace-nowrap"
+              >
+                {allExpanded ? '▲ Collapse All' : '▼ Expand All'}
+              </button>
+            )}
+          </div>
 
           {costGroups.length === 0 ? (
             <div className="bg-narra-light/40 border border-narra-border rounded-xl p-8 text-center">
@@ -895,15 +943,25 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                                 )}
                               </td>
                               <td className="px-4 py-2.5 text-right font-medium text-red-500 whitespace-nowrap">
-                                <input
-                                  defaultValue={item.amount.toFixed(2)}
-                                  onBlur={e => {
-                                    const val = parseFloat(e.target.value)
-                                    if (!isNaN(val) && val > 0 && val !== item.amount) updateAmount(item.id, val)
-                                  }}
-                                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                                  className="w-24 text-right bg-transparent border-b border-transparent hover:border-red-300 focus:border-red-400 outline-none text-red-500 font-medium"
-                                />
+                                <div className="flex items-center justify-end gap-1">
+                                  <select
+                                    defaultValue={item.currency || 'USD'}
+                                    onChange={e => updateCurrency(item.id, e.target.value)}
+                                    className="text-xs bg-transparent border border-narra-border rounded px-1 py-0.5 outline-none cursor-pointer text-narra-muted hover:border-red-300 focus:border-red-400"
+                                    title="Correct the currency for this transaction"
+                                  >
+                                    {SUPPORTED_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                                  </select>
+                                  <input
+                                    defaultValue={item.amount.toFixed(2)}
+                                    onBlur={e => {
+                                      const val = parseFloat(e.target.value)
+                                      if (!isNaN(val) && val > 0 && val !== item.amount) updateAmount(item.id, val)
+                                    }}
+                                    onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                                    className="w-20 text-right bg-transparent border-b border-transparent hover:border-red-300 focus:border-red-400 outline-none text-red-500 font-medium"
+                                  />
+                                </div>
                               </td>
                               <td className="px-4 py-2.5">
                                 {item.matchedInvoice ? (
@@ -1224,16 +1282,25 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                       <td className="px-4 py-3 text-amber-700 text-xs whitespace-nowrap">{String(tx.date).split('T')[0]}</td>
                       <td className="px-4 py-3 text-amber-900 font-medium">{tx.description}</td>
                       <td className="px-4 py-3 text-right font-medium text-amber-900 whitespace-nowrap">
-                        <span className="text-xs text-amber-600 mr-1">{tx.currency}</span>
-                        <input
-                          defaultValue={parseFloat(tx.amount || 0).toFixed(2)}
-                          onBlur={e => {
-                            const val = parseFloat(e.target.value)
-                            if (!isNaN(val) && val > 0 && val !== parseFloat(tx.amount)) updateAmount(tx.id, val)
-                          }}
-                          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                          className="w-24 text-right bg-transparent border-b border-transparent hover:border-amber-400 focus:border-amber-500 outline-none font-medium text-amber-900"
-                        />
+                        <div className="flex items-center justify-end gap-1">
+                          <select
+                            defaultValue={tx.currency || 'USD'}
+                            onChange={e => updateCurrency(tx.id, e.target.value)}
+                            className="text-xs bg-transparent border border-amber-200 rounded px-1 py-0.5 outline-none cursor-pointer text-amber-600 hover:border-amber-400"
+                            title="Correct the currency for this transaction"
+                          >
+                            {SUPPORTED_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                          <input
+                            defaultValue={parseFloat(tx.amount || 0).toFixed(2)}
+                            onBlur={e => {
+                              const val = parseFloat(e.target.value)
+                              if (!isNaN(val) && val > 0 && val !== parseFloat(tx.amount)) updateAmount(tx.id, val)
+                            }}
+                            onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                            className="w-20 text-right bg-transparent border-b border-transparent hover:border-amber-400 focus:border-amber-500 outline-none font-medium text-amber-900"
+                          />
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-amber-600 text-xs">{tx.account || '—'}</td>
                       <td className="px-4 py-3">

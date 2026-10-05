@@ -1,13 +1,16 @@
 'use client'
-import { useState, useEffect } from 'react'
-import { FileText, Search, Users, Sparkles, MessageCircle, SendHorizonal } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { FileText, Search, Users, Sparkles, MessageCircle, SendHorizonal, Trash2 } from 'lucide-react'
 
+type ChatMessage = { role: 'user' | 'assistant'; content: string }
 
 export default function AIInsights({ periodId, data, selectedMonth }: { periodId: number; data: any; selectedMonth?: string }) {
   const [loading, setLoading] = useState<string | null>(null)
-  const [results, setResults] = useState<{ narrative?: string; anomalies?: any[]; churn?: any[]; answer?: string }>({})
+  const [results, setResults] = useState<{ narrative?: string; anomalies?: any[]; churn?: any[] }>({})
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [question, setQuestion] = useState('')
   const [viewMode, setViewMode] = useState<'period' | 'annual'>('period')
+  const chatBottomRef = useRef<HTMLDivElement>(null)
   const [annualData, setAnnualData] = useState<any>(null)
 
   const year = selectedMonth?.split('_')[1]
@@ -50,17 +53,30 @@ export default function AIInsights({ periodId, data, selectedMonth }: { periodId
     setLoading(null)
   }
 
+  // Auto-scroll chat to bottom when new messages arrive
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [chatMessages, loading])
+
   async function ask(q: string) {
     if (!q.trim()) return
+    const userMsg: ChatMessage = { role: 'user', content: q }
+    const updatedHistory = [...chatMessages, userMsg]
+    setChatMessages(updatedHistory)
     setLoading('ask')
-    setResults(prev => ({ ...prev, answer: undefined }))
+    // Pass prior turns (excluding the new user message) as history
     const res = await fetch('/api/ai-insights', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ periodId, type: 'ask', question: q, viewMode }),
+      body: JSON.stringify({
+        periodId, type: 'ask', question: q, viewMode,
+        conversationHistory: chatMessages, // history before this turn
+      }),
     })
     const result = await res.json()
-    setResults(prev => ({ ...prev, answer: result.answer }))
+    if (result.answer) {
+      setChatMessages(prev => [...prev, { role: 'assistant', content: result.answer }])
+    }
     setLoading(null)
   }
 
@@ -82,13 +98,13 @@ export default function AIInsights({ periodId, data, selectedMonth }: { periodId
         </div>
         <div className="flex items-center gap-1 bg-narra-surface border border-narra-border rounded-lg p-1 self-start sm:self-auto">
           <button
-            onClick={() => { setViewMode('period'); setResults({}); setAnnualData(null) }}
+            onClick={() => { setViewMode('period'); setResults({}); setAnnualData(null); setChatMessages([]) }}
             className={`px-3 py-1.5 rounded text-sm font-body transition-all ${viewMode === 'period' ? 'bg-narra-dark text-narra-green shadow-sm' : 'text-narra-muted hover:text-narra-dark'}`}
           >
             This Period
           </button>
           <button
-            onClick={() => { setViewMode('annual'); setResults({}) }}
+            onClick={() => { setViewMode('annual'); setResults({}); setChatMessages([]) }}
             className={`px-3 py-1.5 rounded text-sm font-body transition-all ${viewMode === 'annual' ? 'bg-narra-dark text-narra-green shadow-sm' : 'text-narra-muted hover:text-narra-dark'}`}
           >
             Annual
@@ -118,42 +134,63 @@ export default function AIInsights({ periodId, data, selectedMonth }: { periodId
         </div>
       )}
 
-      {/* Financial Q&A */}
-      <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-narra-border">
-          <h3 className="font-heading font-semibold text-narra-dark flex items-center gap-2"><MessageCircle size={16} /> Ask a Financial Question</h3>
-          <p className="text-xs text-narra-muted mt-0.5">Ask anything about your finances — or use a quick question below</p>
-        </div>
-        <div className="px-5 py-4 space-y-4">
-          {/* Question input */}
-          <div className="flex gap-2">
-            <input
-              value={question}
-              onChange={e => setQuestion(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') { ask(question); setQuestion('') } }}
-              placeholder="e.g. If we pursue a new marketing campaign at $5,000/month, can we cover it?"
-              className="flex-1 border border-narra-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-narra-green/30"
-              disabled={loading === 'ask'}
-            />
-            <button
-              onClick={() => { ask(question); setQuestion('') }}
-              disabled={loading === 'ask' || !question.trim()}
-              className="px-3 py-2 bg-narra-dark text-narra-green rounded-lg hover:bg-narra-mid transition-all disabled:opacity-40 flex items-center gap-1.5 text-sm"
-            >
-              {loading === 'ask' ? <Sparkles size={14} className="animate-pulse" /> : <SendHorizonal size={14} />}
-              {loading === 'ask' ? 'Thinking…' : 'Ask'}
-            </button>
+      {/* Financial Q&A — chat */}
+      <div className="bg-white border border-narra-border rounded-xl overflow-hidden flex flex-col">
+        <div className="px-5 py-4 border-b border-narra-border flex items-center justify-between">
+          <div>
+            <h3 className="font-heading font-semibold text-narra-dark flex items-center gap-2"><MessageCircle size={16} /> Ask a Financial Question</h3>
+            <p className="text-xs text-narra-muted mt-0.5">Conversation mode — ask follow-ups and it remembers context</p>
           </div>
+          {chatMessages.length > 0 && (
+            <button onClick={() => setChatMessages([])} className="text-narra-muted hover:text-red-500 transition-colors" title="Clear conversation">
+              <Trash2 size={15} />
+            </button>
+          )}
+        </div>
 
-          {/* Answer */}
-          {results.answer && (
-            <div className="bg-narra-surface border border-narra-border rounded-xl p-4">
-              <p className="text-sm text-narra-ink leading-relaxed whitespace-pre-line font-body">{results.answer}</p>
+        {/* Chat history */}
+        <div className="px-5 py-4 space-y-3 max-h-[420px] overflow-y-auto">
+          {chatMessages.length === 0 && loading !== 'ask' && (
+            <p className="text-narra-muted text-sm italic">Type a question below to start the conversation.</p>
+          )}
+          {chatMessages.map((msg, i) => (
+            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-line font-body ${
+                msg.role === 'user'
+                  ? 'bg-narra-dark text-narra-green rounded-br-sm'
+                  : 'bg-narra-surface border border-narra-border text-narra-ink rounded-bl-sm'
+              }`}>
+                {msg.content}
+              </div>
+            </div>
+          ))}
+          {loading === 'ask' && (
+            <div className="flex justify-start">
+              <div className="bg-narra-surface border border-narra-border rounded-2xl rounded-bl-sm px-4 py-2.5 text-sm text-narra-muted flex items-center gap-2">
+                <Sparkles size={13} className="animate-pulse" /> Thinking…
+              </div>
             </div>
           )}
-          {!results.answer && loading !== 'ask' && (
-            <p className="text-narra-muted text-sm italic">Click a quick question or type your own.</p>
-          )}
+          <div ref={chatBottomRef} />
+        </div>
+
+        {/* Input */}
+        <div className="px-5 py-3 border-t border-narra-border flex gap-2">
+          <input
+            value={question}
+            onChange={e => setQuestion(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(question); setQuestion('') } }}
+            placeholder="Ask anything about your finances…"
+            className="flex-1 border border-narra-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-narra-green/30"
+            disabled={loading === 'ask'}
+          />
+          <button
+            onClick={() => { ask(question); setQuestion('') }}
+            disabled={loading === 'ask' || !question.trim()}
+            className="px-3 py-2 bg-narra-dark text-narra-green rounded-lg hover:bg-narra-mid transition-all disabled:opacity-40 flex items-center gap-1.5 text-sm"
+          >
+            <SendHorizonal size={14} />
+          </button>
         </div>
       </div>
 

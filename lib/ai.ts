@@ -217,62 +217,65 @@ export async function answerFinancialQuestion(question: string, ctx: {
   sheetMrr?:           number
   totalInvoicedSheet?: number
   totalPipelineSheet?: number
-}) {
+},
+conversationHistory: { role: 'user' | 'assistant'; content: string }[] = []
+) {
   const expensesLine = ctx.expensesByCategory.length > 0
     ? ctx.expensesByCategory.map(e => `  ${e.category}: $${e.amount.toLocaleString()}`).join('\n')
     : `  No expense breakdown for selected month. Avg monthly burn across recent months: $${Math.round(ctx.avgMonthlyBurn).toLocaleString()}`
 
-  const response = await client.messages.create({
-    model:      'claude-sonnet-4-5',
-    max_tokens: 800,
-    messages: [{
-      role:    'user',
-      content: `You are the CFO of Narra Health PTE. LTD., a B2B SaaS health platform based in Singapore.
-Answer the following question using the financial data below. Be direct, specific, and use actual numbers.
+  // Financial context lives in the system prompt so it persists across all turns
+  const systemPrompt = `You are the CFO of Narra Health PTE. LTD., a B2B SaaS health platform based in Singapore.
+Answer questions using the financial data below. Be direct, specific, and use actual numbers. Keep replies concise (3–5 sentences). You are in a conversation — you can reference earlier questions and answers.
 
-CRITICAL BILLING MODEL — READ CAREFULLY:
-- Narra Health clients are on ANNUAL contracts with AUTOMATIC RENEWAL. They pay once per year upfront.
-- When a client pays $X annually, the FULL $X lands in the bank that one month. In all other months, $0 cash is received — but the cash is STILL IN THE BANK accumulating from all upfront payments.
-- $0 cash received in a month does NOT mean revenue disappeared or the business has no income. Contracts auto-renew; clients are still active.
-- The current cash balance ($${ctx.cashBalance.toLocaleString()}) already accounts for ALL cash ever received minus ALL expenses ever paid. This is the ground truth — do not re-derive it.
-- MRR ($${ctx.totalMrr.toLocaleString()}/mo) is the accrual revenue earned monthly from active contracts.
-- Average monthly operating expenses (from recent months): $${Math.round(ctx.avgMonthlyBurn).toLocaleString()}/mo — use this as the baseline for hypothetical expense calculations, not the selected month's figure which may be $0 if statements aren't imported yet.
-${ctx.mrrPeriodNote ? '\n' + ctx.mrrPeriodNote + '\n' : ''}${ctx.billingNote ? '\n' + ctx.billingNote + '\n' : ''}
-QUESTION: ${question}
+CRITICAL BILLING MODEL:
+- Clients are on ANNUAL contracts with AUTOMATIC RENEWAL. They pay the full year upfront.
+- $0 cash received in a month is normal — cash sits in the bank from prior upfront payments.
+- Cash balance ($${ctx.cashBalance.toLocaleString()}) = all cash ever received minus all expenses. Ground truth.
+- MRR ($${ctx.totalMrr.toLocaleString()}/mo) = accrual revenue earned monthly from active contracts.
+- Avg monthly burn: $${Math.round(ctx.avgMonthlyBurn).toLocaleString()}/mo — use for hypothetical cost questions.
+${ctx.mrrPeriodNote ? ctx.mrrPeriodNote + '\n' : ''}${ctx.billingNote ? ctx.billingNote + '\n' : ''}
+FINANCIAL DATA (period: ${ctx.period}):
+- MRR: $${ctx.totalMrr.toLocaleString()}/mo
+- Cash received this period: $${ctx.cashRevenue.toLocaleString()}
+- Expenses this period: $${ctx.totalExpenses.toLocaleString()}
+- Avg monthly burn: $${Math.round(ctx.avgMonthlyBurn).toLocaleString()}/mo
+- Cash balance: $${ctx.cashBalance.toLocaleString()}
+- Runway: ${ctx.runway} months
 
-FINANCIAL DATA (viewing period: ${ctx.period}):
-- Monthly Recurring Revenue (MRR, accrual): $${ctx.totalMrr.toLocaleString()}/mo
-- Cash received from clients this period: $${ctx.cashRevenue.toLocaleString()} (may be $0 under annual billing — normal)
-- Operating expenses this period: $${ctx.totalExpenses.toLocaleString()}
-- Average monthly burn (recent months): $${Math.round(ctx.avgMonthlyBurn).toLocaleString()}/mo
-- CURRENT CASH BALANCE (actual bank position, all time): $${ctx.cashBalance.toLocaleString()}
-- Cash runway at avg burn: ${ctx.runway} months
+Recent cash received:
+${ctx.prevRevenue.map(r => `  ${r.label}: $${r.revenue.toLocaleString()}`).join('\n') || '  No prior data'}
 
-When clients paid (recent months — annual upfront payments):
-${ctx.prevRevenue.map(r => `  ${r.label}: $${r.revenue.toLocaleString()}`).join('\n') || '  No prior cash data'}
-
-Expenses by category (this period):
+Expenses by category:
 ${expensesLine}
 
-Top expense vendors:
-${ctx.topExpenses.slice(0, 8).map(e => `  ${e.vendor} (${e.account}): $${e.amount.toLocaleString()}`).join('\n') || '  No expense detail for this period'}
+Top vendors:
+${ctx.topExpenses.slice(0, 8).map(e => `  ${e.vendor} (${e.account}): $${e.amount.toLocaleString()}`).join('\n') || '  No expense detail'}
 
-Active clients and MRR — LIVE from invoice tracker (source of truth):
+Active clients — LIVE from invoice tracker:
 ${ctx.sheetClients && ctx.sheetClients.length > 0
-  ? ctx.sheetClients.map(c => `  ${c.name} | ${c.billingType} | $${c.annualAmount.toLocaleString()}/yr ($${Math.round(c.monthlyMrr).toLocaleString()}/mo) | status: ${c.status}`).join('\n')
+  ? ctx.sheetClients.map(c => `  ${c.name} | ${c.billingType} | $${c.annualAmount.toLocaleString()}/yr ($${Math.round(c.monthlyMrr).toLocaleString()}/mo) | ${c.status}`).join('\n')
   : ctx.mrrByClient.map(c => `  ${c.client}: $${c.amount.toLocaleString()}/mo`).join('\n') || '  No client data'}
-${ctx.sheetMrr != null ? `Total live MRR from tracker: $${Math.round(ctx.sheetMrr).toLocaleString()}/mo` : ''}
-${ctx.totalInvoicedSheet != null ? `Total invoiced (Fully Paid + Partial/Pending Payment): $${ctx.totalInvoicedSheet.toLocaleString()}` : ''}
-${ctx.totalPipelineSheet != null ? `Total invoiced + pipeline (incl. Sales - Sent): $${ctx.totalPipelineSheet.toLocaleString()}` : ''}
+${ctx.sheetMrr != null ? `Live MRR total: $${Math.round(ctx.sheetMrr).toLocaleString()}/mo` : ''}
+${ctx.totalInvoicedSheet != null ? `Total invoiced (Paid + Partial/Pending): $${ctx.totalInvoicedSheet.toLocaleString()}` : ''}
+${ctx.totalPipelineSheet != null ? `Total + pipeline (incl. Sales-Sent): $${ctx.totalPipelineSheet.toLocaleString()}` : ''}
 
-Contract renewal schedule (upcoming cash inflows from auto-renewals):
+Contract renewals:
 ${ctx.contractSchedule.length > 0
-  ? ctx.contractSchedule.map(c => `  ${c.client} (${c.billingType}): contract ends ${c.contractEnd}${c.daysUntilRenewal !== null ? ` — ${c.daysUntilRenewal <= 0 ? 'up for renewal now' : `renews in ${c.daysUntilRenewal} days`}` : ''}${c.renewingSoon ? ' ⚠ RENEWING SOON' : ''}`).join('\n')
-  : '  No contract end dates recorded yet — add them in Client Registry'}
-When a client renews their annual contract, that full annual payment lands in the bank as a lump sum. Factor this into any cash flow projections.
+  ? ctx.contractSchedule.map(c => `  ${c.client} (${c.billingType}): ends ${c.contractEnd}${c.renewingSoon ? ' ⚠ SOON' : ''}`).join('\n')
+  : '  None recorded'}`
 
-Answer in 3–5 sentences. Lead with a clear yes/no or direct finding. Use specific dollar amounts. For hypothetical questions about new costs, use the avg monthly burn ($${Math.round(ctx.avgMonthlyBurn).toLocaleString()}/mo) as the baseline, not $0. NEVER assume the business has no revenue or no clients based on a single month's data.`
-    }]
+  // Build messages: prior turns + new question
+  const messages: { role: 'user' | 'assistant'; content: string }[] = [
+    ...conversationHistory,
+    { role: 'user', content: question },
+  ]
+
+  const response = await client.messages.create({
+    model:      'claude-sonnet-4-5',
+    max_tokens: 600,
+    system:     systemPrompt,
+    messages,
   })
   return response.content[0].type === 'text' ? response.content[0].text : ''
 }

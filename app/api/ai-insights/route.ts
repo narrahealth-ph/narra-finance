@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { periodId, type, question, pipelineDeals = [], pendingCollection = [], viewMode = 'period' } = await req.json()
+  const { periodId, type, question, pipelineDeals = [], pendingCollection = [], viewMode = 'period', conversationHistory = [] } = await req.json()
   const isAnnual = viewMode === 'annual'
 
   const period = await query('SELECT * FROM periods WHERE id = $1', [periodId])
@@ -339,7 +339,7 @@ export async function POST(req: NextRequest) {
       sheetMrr:           Math.round(sheetMrr),
       totalInvoicedSheet: Math.round(totalInvoicedSheet),
       totalPipelineSheet: Math.round(totalPipelineSheet),
-    })
+    }, conversationHistory)
     result.answer = answer
   }
 

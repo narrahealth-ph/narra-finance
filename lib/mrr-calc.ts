@@ -60,7 +60,8 @@ export function isActiveStatus(status: string): boolean {
     s === 'outstanding' ||
     s === 'due' ||
     s === 'partial payment' ||
-    s === 'pending payment'
+    s === 'pending payment' ||
+    s === 'sales - sent'
   )
 }
 

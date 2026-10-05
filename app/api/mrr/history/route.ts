@@ -15,7 +15,10 @@ const MONTH_NAMES_LONG  = ['January','February','March','April','May','June','Ju
 const MONTH_NAMES_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
 function isPendingStatus(status: string): boolean {
-  return !status.toLowerCase().trim().includes('paid')
+  const s = status.toLowerCase().trim()
+  if (s.includes('paid')) return false
+  if (s.includes('partial payment / pending payment')) return false
+  return true
 }
 
 export async function GET(req: NextRequest) {
@@ -290,7 +293,8 @@ export async function GET(req: NextRequest) {
       const issueDateStr = (r[4] || '').trim()
       if (!clientName && !invoiceId) continue
 
-      if ((statusNorm === 'sent' || statusNorm === 'partialpayment' || statusNorm === 'pendingpayment' || statusNorm === 'salessent') && amount > 0) {
+      const statusLower = rawStatus.toLowerCase().trim()
+      if ((statusNorm === 'sent' || statusNorm === 'salessent' || statusLower.includes('partial payment / pending payment')) && amount > 0) {
         const d = parseInvDate(issueDateStr)
         const daysOutstanding = d ? Math.floor((todayMs - d.getTime()) / 86400000) : 0
         pendingFromSheet.push({ invoiceId, clientName, amount, issueDate: issueDateStr, daysOutstanding, billingType })
@@ -300,23 +304,42 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // ── Total invoiced per year (full invoice amounts from tracker) ───────────
-    const totalInvoicedByYear: Record<number, number> = {}
+    // ── Total invoiced / pipeline per year ───────────────────────────────────
+    // Buckets by invoice ISSUE year — the face value of what was sent that year.
+    // totalInvoicedByYear      → Fully Paid + Partial Payment + Pending Payment
+    // totalWithPipelineByYear  → above + Sales - Sent
+    // Statuses for Total Invoiced: "fully paid" (or any "paid" variant) and the
+    // single combined status "partial payment / pending payment" used in the sheet.
+    const isInvoicedStatus = (s: string) =>
+      s.includes('paid') || s.includes('partial payment / pending payment')
+    const isPipelineStatus2 = (s: string) =>
+      isInvoicedStatus(s) || (s.includes('sales') && s.includes('sent'))
+
+    const totalInvoicedByYear:     Record<number, number> = {}
+    const totalWithPipelineByYear: Record<number, number> = {}
     const seenForInvoiced = new Set<string>()
+    const seenForPipeline = new Set<string>()
+
     for (const r of invRows) {
       const invoiceId    = (r[0] || '').trim()
       const clientName   = (r[8] || r[1] || '').trim()
       const amount       = parseNum((r[5] || '').toString())
       const status       = (r[6] || '').toLowerCase().trim()
       const issueDateStr = (r[4] || '').trim()
-      if (!clientName || !amount || !isActiveStatus(status)) continue
+      if (!clientName || !amount) continue
       const d = parseInvDate(issueDateStr)
       if (!d) continue
       const key = invoiceId || `${clientName.toLowerCase()}|${issueDateStr}|${amount}`
-      if (seenForInvoiced.has(key)) continue
-      seenForInvoiced.add(key)
-      const yr = d.getFullYear()
-      totalInvoicedByYear[yr] = (totalInvoicedByYear[yr] || 0) + amount
+      const yr  = d.getFullYear()
+
+      if (isInvoicedStatus(status) && !seenForInvoiced.has(key)) {
+        seenForInvoiced.add(key)
+        totalInvoicedByYear[yr] = (totalInvoicedByYear[yr] || 0) + amount
+      }
+      if (isPipelineStatus2(status) && !seenForPipeline.has(key)) {
+        seenForPipeline.add(key)
+        totalWithPipelineByYear[yr] = (totalWithPipelineByYear[yr] || 0) + amount
+      }
     }
 
     // ── Year totals ───────────────────────────────────────────────────────────
@@ -334,6 +357,7 @@ export async function GET(req: NextRequest) {
       clientBreakdown,
       yearTotals,
       totalInvoicedByYear,
+      totalWithPipelineByYear,
       bankReceivedByYear,
       invoicedCostsByYear,
       investmentByYear,

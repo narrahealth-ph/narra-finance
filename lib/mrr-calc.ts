@@ -59,9 +59,8 @@ export function isActiveStatus(status: string): boolean {
     s === 'invoiced' ||
     s === 'outstanding' ||
     s === 'due' ||
-    s === 'partial payment' ||
-    s === 'pending payment' ||
-    s === 'sales - sent'
+    s.includes('partial payment / pending payment') ||
+    (s.includes('sales') && s.includes('sent'))
   )
 }
 

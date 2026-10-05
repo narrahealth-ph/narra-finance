@@ -65,7 +65,8 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   const [chartView,    setChartView]    = useState<string>('all')
   const [periodView,   setPeriodView]   = useState<'month' | 'year'>('year')
   const [yearTotals,   setYearTotals]   = useState<Record<number, { mrr: number; costs: number; net: number }>>({})
-  const [totalInvoicedByYear,  setTotalInvoicedByYear]  = useState<Record<number, number>>({})
+  const [totalInvoicedByYear,      setTotalInvoicedByYear]      = useState<Record<number, number>>({})
+  const [totalWithPipelineByYear,  setTotalWithPipelineByYear]  = useState<Record<number, number>>({})
   const [bankReceivedByYear,   setBankReceivedByYear]   = useState<Record<number, number>>({})
   const [invoicedCostsByYear,  setInvoicedCostsByYear]  = useState<Record<number, number>>({})
   const [investmentByYear,     setInvestmentByYear]     = useState<Record<number, number>>({})
@@ -118,7 +119,8 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
         // Year totals for annual view
         if (json.yearTotals) setYearTotals(json.yearTotals)
 
-        if (json.totalInvoicedByYear   !== undefined) setTotalInvoicedByYear(json.totalInvoicedByYear)
+        if (json.totalInvoicedByYear      !== undefined) setTotalInvoicedByYear(json.totalInvoicedByYear)
+        if (json.totalWithPipelineByYear  !== undefined) setTotalWithPipelineByYear(json.totalWithPipelineByYear)
         if (json.bankReceivedByYear    !== undefined) setBankReceivedByYear(json.bankReceivedByYear)
         if (json.invoicedCostsByYear   !== undefined) setInvoicedCostsByYear(json.invoicedCostsByYear)
         if (json.investmentByYear      !== undefined) setInvestmentByYear(json.investmentByYear)
@@ -445,12 +447,18 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
         const opMarginStr    = at?.operatingMargin || '0.0'
         const openingCashYr  = at?.openingCash  || 0
         const closingCashYr  = at?.closingCash  || 0
-        const totalInvoiced  = totalInvoicedByYear[yr] || 0
-        const cashReceived   = bankReceivedByYear[yr]  || 0
+        // Fall back to the most recent year with data if selected year has none
+        const invoicedYr        = totalInvoicedByYear[yr]     != null ? yr : Math.max(...Object.keys(totalInvoicedByYear).map(Number).filter(y => y <= yr), 0)
+        const pipelineYr        = totalWithPipelineByYear[yr] != null ? yr : Math.max(...Object.keys(totalWithPipelineByYear).map(Number).filter(y => y <= yr), 0)
+        const totalInvoiced     = totalInvoicedByYear[invoicedYr]     || 0
+        const totalWithPipeline = totalWithPipelineByYear[pipelineYr] || 0
+        const invoicedLabel     = invoicedYr !== yr && invoicedYr > 0 ? String(invoicedYr) : selectedYear
+        const pipelineLabel     = pipelineYr !== yr && pipelineYr > 0 ? String(pipelineYr) : selectedYear
+        const cashReceived        = bankReceivedByYear[yr]      || 0
 
         return (
           <>
-          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-9 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-10 gap-3">
 
             {/* 1 — Total Revenue — dark, clickable */}
             <button onClick={() => { setShowRevenueBreakdown(v => !v); setShowExpenseBreakdown(false) }}
@@ -534,13 +542,23 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
             <div className="bg-white border border-narra-border rounded-xl p-4 relative group">
               <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Total Invoiced</div>
               <div className="font-heading text-lg sm:text-xl font-semibold text-narra-dark">{sym}{fmt(cvt(totalInvoiced))}</div>
-              <div className="text-xs mt-1 text-narra-muted">Invoices sent {selectedYear}</div>
+              <div className="text-xs mt-1 text-narra-muted">Paid + partial {invoicedLabel}</div>
               <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-narra-dark text-white text-xs rounded-xl p-3 z-50 shadow-xl leading-relaxed pointer-events-none">
-                Total value of invoices sent to clients this year — includes paid and still outstanding.
+                Sum of invoices sent in {invoicedLabel} with status Fully Paid, Partial Payment, or Pending Payment.
               </div>
             </div>
 
-            {/* 9 — Cash Received */}
+            {/* 9 — Total Invoiced + Pipeline */}
+            <div className="bg-white border border-narra-border rounded-xl p-4 relative group">
+              <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Invoiced + Pipeline</div>
+              <div className="font-heading text-lg sm:text-xl font-semibold text-narra-dark">{sym}{fmt(cvt(totalWithPipeline))}</div>
+              <div className="text-xs mt-1 text-narra-muted">incl. Sales - Sent {pipelineLabel}</div>
+              <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-narra-dark text-white text-xs rounded-xl p-3 z-50 shadow-xl leading-relaxed pointer-events-none">
+                Total Invoiced plus Sales - Sent invoices issued in {pipelineLabel}.
+              </div>
+            </div>
+
+            {/* 10 — Cash Received */}
             <button onClick={openCashDetail}
               className="bg-white border border-narra-border rounded-xl p-4 text-left group relative hover:bg-narra-surface transition-colors">
               <div className="text-[10px] text-narra-muted uppercase tracking-widest mb-2 font-body leading-tight">Cash Received</div>

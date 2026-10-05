@@ -136,6 +136,7 @@ export async function GET(req: NextRequest) {
     const res = await query(
       `SELECT bt.id, bt.date, bt.description, bt.amount, bt.currency, bt.amount_usd,
               bt.account, bt.status, bt.type, bt.client_id, bt.invoice_ref,
+              bt.matched_invoice_id,
               p.label AS period_label
        FROM bank_transactions bt
        JOIN periods p ON p.id = bt.period_id
@@ -241,7 +242,7 @@ export async function PATCH(req: NextRequest) {
   const session = await requireRole('finance')
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { action, bankTxId, invoiceId, newInvoiceId, periodId: bodyPeriodId, splits, clientId, clientIds, invoiceRef, account: bodyAccount, amount: bodyAmount, currency: bodyCurrency } = await req.json()
+  const { action, bankTxId, invoiceId, newInvoiceId, periodId: bodyPeriodId, splits, clientId, clientIds, invoiceRef, account: bodyAccount, amount: bodyAmount, currency: bodyCurrency, year: bodyYear } = await req.json()
   const userEmail = (session as any).email || 'unknown'
 
   // Check period lock via the bank transaction's period
@@ -494,6 +495,92 @@ export async function PATCH(req: NextRequest) {
       { amount: newAmount, amount_usd: newAmount },
       userEmail
     )
+    return NextResponse.json({ ok: true })
+  }
+
+  // ── year_rerun — cross-period auto-match for an entire year ──────────────────
+  if (action === 'year_rerun') {
+    const year = parseInt(bodyYear)
+    if (!year) return NextResponse.json({ error: 'year required' }, { status: 400 })
+
+    const [bankRes, invRes] = await Promise.all([
+      query(
+        `SELECT bt.id, bt.amount, bt.amount_usd, bt.date, bt.description
+         FROM bank_transactions bt
+         JOIN periods p ON p.id = bt.period_id
+         WHERE EXTRACT(YEAR FROM p.start_date) = $1
+           AND bt.status = 'unmatched' AND bt.type = 'expense'`,
+        [year]
+      ),
+      query(
+        `SELECT i.id, i.amount_usd, i.date, i.vendor
+         FROM invoices i
+         JOIN periods p ON p.id = i.period_id
+         WHERE EXTRACT(YEAR FROM p.start_date) = $1
+           AND i.status = 'unmatched'`,
+        [year]
+      ),
+    ])
+
+    const bankPool: any[] = [...bankRes.rows]
+
+    for (const inv of invRes.rows) {
+      const invAmount = parseFloat(inv.amount_usd || 0)
+      if (!invAmount) continue
+
+      let bestMatch: any = null
+      let bestScore = 0
+
+      for (const tx of bankPool) {
+        const txAmount   = parseFloat(tx.amount_usd || tx.amount || 0)
+        const amountDiff = Math.abs(txAmount - invAmount) / invAmount
+        const daysDiff   = inv.date && tx.date
+          ? Math.abs(new Date(tx.date).getTime() - new Date(inv.date).getTime()) / 86400000
+          : 999
+
+        let score = 0
+        if      (amountDiff < 0.01) score += 50
+        else if (amountDiff < 0.05) score += 35
+        else if (amountDiff < 0.10) score += 15
+        else continue
+
+        // Relaxed date window — allow up to 45 days for cross-period matches
+        if      (daysDiff <= 1)  score += 30
+        else if (daysDiff <= 7)  score += 20
+        else if (daysDiff <= 14) score += 10
+        else if (daysDiff <= 31) score += 5
+        else if (daysDiff <= 45) score += 2
+
+        if (inv.vendor && tx.description) {
+          const vendor = inv.vendor.toLowerCase()
+          const desc   = tx.description.toLowerCase()
+          if (desc.includes(vendor) || vendor.includes(desc.split(' ')[0])) score += 20
+          else if (vendor.split(' ').some((w: string) => w.length > 3 && desc.includes(w))) score += 10
+        }
+
+        if (score > bestScore) { bestScore = score; bestMatch = { tx, amountDiff } }
+      }
+
+      if (bestMatch && bestScore >= 35) {
+        const diff      = bestMatch.amountDiff
+        const newStatus = diff > DISCREPANCY_FLAG_THRESHOLD ? 'flagged' : 'proposed'
+
+        await query(
+          "UPDATE bank_transactions SET status=$1, matched_invoice_id=$2, discrepancy_pct=$3 WHERE id=$4",
+          [newStatus, inv.id, diff > 0 ? (diff * 100).toFixed(4) : null, bestMatch.tx.id]
+        )
+        await query(
+          `UPDATE invoices SET status=$1,
+             matched_bank_id = CASE WHEN matched_bank_id IS NULL THEN $2 ELSE matched_bank_id END
+           WHERE id=$3`,
+          [newStatus, bestMatch.tx.id, inv.id]
+        )
+        // Remove from pool so it can't be double-matched
+        const idx = bankPool.findIndex((t: any) => t.id === bestMatch.tx.id)
+        if (idx >= 0) bankPool.splice(idx, 1)
+      }
+    }
+
     return NextResponse.json({ ok: true })
   }
 

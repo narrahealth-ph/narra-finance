@@ -93,6 +93,9 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   const [yearViewYear,    setYearViewYear]    = useState<string>(() => selectedMonth ? selectedMonth.split('_')[1] : String(new Date().getFullYear()))
   const [typeFilter,      setTypeFilter]      = useState<'all' | 'expense' | 'revenue' | 'capex' | 'investment'>('all')
   const [allExpanded,     setAllExpanded]     = useState(false)
+  const [yearInvoices,    setYearInvoices]    = useState<any[]>([])
+  const [yearRunning,     setYearRunning]     = useState(false)
+  const [yearRunMsg,      setYearRunMsg]      = useState('')
 
   const selectedYear = selectedMonth ? selectedMonth.split('_')[1] : String(new Date().getFullYear())
 
@@ -109,9 +112,10 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
   async function loadYearData() {
     setYearLoading(true)
     try {
-      const [txRes, clientsRes] = await Promise.all([
+      const [txRes, clientsRes, invRes] = await Promise.all([
         fetch(`/api/bank?action=year_all&year=${yearViewYear}`, { credentials: 'include' }),
         fetch('/api/clients', { credentials: 'include' }),
+        fetch(`/api/invoices?action=year_all&year=${yearViewYear}`, { credentials: 'include' }),
       ])
       if (txRes.ok) {
         const data = await txRes.json()
@@ -129,6 +133,10 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
       if (clientsRes.ok) {
         const cd = await clientsRes.json()
         setClients((cd.clients || []).filter((c: any) => c.active).map((c: any) => ({ id: c.id, name: c.name })))
+      }
+      if (invRes.ok) {
+        const id = await invRes.json()
+        setYearInvoices(id.invoices || [])
       }
     } catch (err) {
       console.error('Year data load error:', err)
@@ -391,6 +399,43 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
     }
   }
 
+  async function yearAutoMatch() {
+    setYearRunning(true)
+    setYearRunMsg('')
+    try {
+      await fetch('/api/bank', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action: 'year_rerun', year: yearViewYear }),
+      })
+      await loadYearData()
+      setYearRunMsg('Year auto-match complete.')
+      setTimeout(() => setYearRunMsg(''), 4000)
+    } catch {
+      setYearRunMsg('Error running year auto-match.')
+    } finally {
+      setYearRunning(false)
+    }
+  }
+
+  async function yearMatchInvoice(bankTxId: number, invoiceId: number) {
+    setReassigning(bankTxId)
+    try {
+      await fetch('/api/bank', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action: 'reassign', bankTxId, invoiceId: null, newInvoiceId: invoiceId }),
+      })
+      await loadYearData()
+    } catch (err) {
+      console.error('Year match error:', err)
+    } finally {
+      setReassigning(null)
+    }
+  }
+
   async function retypeTx(txId: number, newType: string, isYearView: boolean) {
     await fetch('/api/bank', {
       method: 'PATCH',
@@ -597,6 +642,10 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                   <option key={y} value={String(y)}>{y}</option>
                 ))}
               </select>
+              <button onClick={yearAutoMatch} disabled={yearRunning}
+                className="px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50">
+                {yearRunning ? '↻ Matching…' : '↻ Year Auto-Match'}
+              </button>
               <button onClick={loadYearData}
                 className="px-4 py-2 border border-narra-border rounded-lg text-sm font-body text-narra-muted hover:bg-narra-light hover:text-narra-dark transition-all">
                 ↻ Refresh
@@ -608,6 +657,9 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
 
       {rerunMsg && (
         <div className="bg-green-50 border border-green-200 text-green-700 rounded-xl px-4 py-3 text-sm">{rerunMsg}</div>
+      )}
+      {yearRunMsg && (
+        <div className="bg-green-50 border border-green-200 text-green-700 rounded-xl px-4 py-3 text-sm">{yearRunMsg}</div>
       )}
 
       {/* ── YEAR VIEW ── */}
@@ -675,7 +727,7 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-narra-dark text-white">
-                      {['Month', 'Date', 'Description', 'Amount', 'Type', 'Tag Client'].map(h => (
+                      {['Month', 'Date', 'Description', 'Amount', 'Type', 'Invoice', 'Tag Client'].map(h => (
                         <th key={h} className={`px-4 py-3 font-body font-normal text-xs tracking-widest uppercase text-white/60 ${h === 'Amount' ? 'text-right' : 'text-left'}`}>{h}</th>
                       ))}
                     </tr>
@@ -743,6 +795,56 @@ export default function ReconciliationPanel({ periodId, data, onRefresh, selecte
                               <option value="capex">Product Investment</option>
                               <option value="investment">Investor Deposit</option>
                             </select>
+                          </td>
+                          {/* Invoice column — match/unmatch for expense rows */}
+                          <td className="px-4 py-2.5 min-w-[180px]">
+                            {(() => {
+                              const isExpense = tx.type === 'expense'
+                              if (!isExpense) return <span className="text-xs text-narra-muted">—</span>
+                              const matchedInv = tx.matched_invoice_id
+                                ? yearInvoices.find((i: any) => i.id === tx.matched_invoice_id)
+                                : null
+                              const unmatchedInvs = yearInvoices.filter((i: any) =>
+                                i.status === 'unmatched' || i.id === tx.matched_invoice_id
+                              )
+                              if (matchedInv) {
+                                return (
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    <span className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                      ✓ {matchedInv.vendor?.length > 20 ? matchedInv.vendor.slice(0, 20) + '…' : matchedInv.vendor}
+                                      <span className="text-green-500 text-[10px]">({(matchedInv.period_label || '').replace('_', ' ')})</span>
+                                    </span>
+                                    <button
+                                      onClick={() => {
+                                        fetch('/api/bank', {
+                                          method: 'PATCH',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          credentials: 'include',
+                                          body: JSON.stringify({ action: 'unmatch', bankTxId: tx.id, invoiceId: tx.matched_invoice_id }),
+                                        }).then(() => loadYearData())
+                                      }}
+                                      className="text-xs text-red-400 hover:text-red-600 transition-colors"
+                                      title="Unmatch"
+                                    >✕</button>
+                                  </div>
+                                )
+                              }
+                              return (
+                                <select
+                                  defaultValue=""
+                                  disabled={reassigning === tx.id}
+                                  onChange={e => { if (e.target.value) yearMatchInvoice(tx.id, parseInt(e.target.value)) }}
+                                  className="text-xs border border-blue-300 rounded-lg px-2 py-1 bg-white outline-none max-w-[180px] text-blue-800 disabled:opacity-50"
+                                >
+                                  <option value="">Match to invoice…</option>
+                                  {unmatchedInvs.map((inv: any) => (
+                                    <option key={inv.id} value={inv.id}>
+                                      {inv.vendor} · ${parseFloat(inv.amount_usd || inv.amount || 0).toFixed(0)} ({(inv.period_label || '').replace('_', ' ')})
+                                    </option>
+                                  ))}
+                                </select>
+                              )
+                            })()}
                           </td>
                           <td className="px-4 py-2.5">
                             {isRevenue && clients.length > 0 ? (

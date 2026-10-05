@@ -59,6 +59,22 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  if (action === 'year_all') {
+    const year = searchParams.get('year')
+    if (!year) return NextResponse.json({ error: 'year required' }, { status: 400 })
+    const res = await query(
+      `SELECT i.id, i.vendor, i.date, i.amount, i.amount_usd, i.currency,
+              i.account_name, i.status, i.matched_bank_id, i.drive_file_name,
+              i.period_id, p.label AS period_label
+       FROM invoices i
+       JOIN periods p ON p.id = i.period_id
+       WHERE EXTRACT(YEAR FROM p.start_date) = $1
+       ORDER BY i.date`,
+      [parseInt(year)]
+    )
+    return NextResponse.json({ invoices: res.rows })
+  }
+
   const periodId = searchParams.get('periodId')
   if (!periodId) return NextResponse.json({ error: 'periodId required' }, { status: 400 })
 

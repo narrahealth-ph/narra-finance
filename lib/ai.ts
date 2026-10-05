@@ -212,6 +212,11 @@ export async function answerFinancialQuestion(question: string, ctx: {
   avgMonthlyBurn:      number
   mrrPeriodNote:       string
   contractSchedule:    { client: string; billingType: string; contractEnd: string | null; daysUntilRenewal: number | null; renewingSoon: boolean }[]
+  // Live Google Sheet data
+  sheetClients?:       { name: string; annualAmount: number; monthlyMrr: number; billingType: string; status: string }[]
+  sheetMrr?:           number
+  totalInvoicedSheet?: number
+  totalPipelineSheet?: number
 }) {
   const expensesLine = ctx.expensesByCategory.length > 0
     ? ctx.expensesByCategory.map(e => `  ${e.category}: $${e.amount.toLocaleString()}`).join('\n')
@@ -252,8 +257,13 @@ ${expensesLine}
 Top expense vendors:
 ${ctx.topExpenses.slice(0, 8).map(e => `  ${e.vendor} (${e.account}): $${e.amount.toLocaleString()}`).join('\n') || '  No expense detail for this period'}
 
-Active clients and MRR (annual auto-renewing contracts):
-${ctx.mrrByClient.map(c => `  ${c.client}: $${c.amount.toLocaleString()}/mo`).join('\n') || '  See most recent closed month above'}
+Active clients and MRR — LIVE from invoice tracker (source of truth):
+${ctx.sheetClients && ctx.sheetClients.length > 0
+  ? ctx.sheetClients.map(c => `  ${c.name} | ${c.billingType} | $${c.annualAmount.toLocaleString()}/yr ($${Math.round(c.monthlyMrr).toLocaleString()}/mo) | status: ${c.status}`).join('\n')
+  : ctx.mrrByClient.map(c => `  ${c.client}: $${c.amount.toLocaleString()}/mo`).join('\n') || '  No client data'}
+${ctx.sheetMrr != null ? `Total live MRR from tracker: $${Math.round(ctx.sheetMrr).toLocaleString()}/mo` : ''}
+${ctx.totalInvoicedSheet != null ? `Total invoiced (Fully Paid + Partial/Pending Payment): $${ctx.totalInvoicedSheet.toLocaleString()}` : ''}
+${ctx.totalPipelineSheet != null ? `Total invoiced + pipeline (incl. Sales - Sent): $${ctx.totalPipelineSheet.toLocaleString()}` : ''}
 
 Contract renewal schedule (upcoming cash inflows from auto-renewals):
 ${ctx.contractSchedule.length > 0

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { generateInvestorNarrative, detectAnomalies, assessChurnRisk, answerFinancialQuestion } from '@/lib/ai'
+import { fetchAllTimeRows, parseNum, parseInvDate, isActiveStatus, calcMonthlyMrr, contractEnd } from '@/lib/mrr-calc'
 
 export async function POST(req: NextRequest) {
   const session = await getSession()
@@ -26,7 +27,9 @@ export async function POST(req: NextRequest) {
     periodLabel = `Full Year ${new Date(p.start_date).getFullYear()}`
   }
 
-  const [bankTxsRes, mrrRes, prevRevenueRes, prevBurnRes, prevMrrRes, latestMrrRes, contractsRes] = await Promise.all([
+  // Fetch live Google Sheet data in parallel with DB queries
+  const [invRows, bankTxsRes, mrrRes, prevRevenueRes, prevBurnRes, prevMrrRes, latestMrrRes, contractsRes] = await Promise.all([
+    fetchAllTimeRows().catch(() => [] as any[][]),
     query(
       'SELECT * FROM bank_transactions WHERE period_id = ANY($1::int[])',
       [scopePeriodIds]
@@ -114,7 +117,43 @@ export async function POST(req: NextRequest) {
 
   const bankTxs = bankTxsRes.rows
 
-  // Accrual revenue = MRR entries (what was earned this month under contracts)
+  // ── Live invoice tracker data (Google Sheet) ─────────────────────────────────
+  const today2       = new Date()
+  const sheetClients: { name: string; annualAmount: number; monthlyMrr: number; billingType: string; status: string; issueDate: string }[] = []
+  const seenSheet    = new Set<string>()
+  let totalInvoicedSheet  = 0  // fully paid + partial payment / pending payment
+  let totalPipelineSheet  = 0  // above + sales - sent
+
+  for (const r of invRows) {
+    const invoiceId    = (r[0] || '').trim()
+    const clientName   = (r[8] || r[1] || '').trim()
+    const amount       = parseNum((r[5] || '').toString())
+    const rawStatus    = (r[6] || '').trim()
+    const status       = rawStatus.toLowerCase().trim()
+    const billingType  = (r[7] || 'annual').toLowerCase().trim()
+    const issueDateStr = (r[4] || '').trim()
+    if (!clientName || !amount || !isActiveStatus(status)) continue
+    const d = parseInvDate(issueDateStr)
+    if (!d) continue
+    const isOneOff = billingType === 'one-off' || billingType === 'one off' || billingType === 'oneoff'
+    // Only include non-expired recurring or one-offs within last 12 months
+    if (!isOneOff && contractEnd(d, billingType) <= today2) continue
+    const key = invoiceId || `${clientName.toLowerCase()}|${issueDateStr}|${amount}`
+    if (seenSheet.has(key)) continue
+    seenSheet.add(key)
+    const monthly = isOneOff ? amount : calcMonthlyMrr(amount, billingType)
+    sheetClients.push({ name: clientName, annualAmount: isOneOff ? amount : amount, monthlyMrr: monthly, billingType, status: rawStatus, issueDate: issueDateStr })
+    const isInvoiced = status.includes('paid') || status.includes('partial payment / pending payment')
+    const isPipeline = isInvoiced || (status.includes('sales') && status.includes('sent'))
+    if (isInvoiced) totalInvoicedSheet  += amount
+    if (isPipeline) totalPipelineSheet  += amount
+  }
+
+  const sheetMrr = sheetClients
+    .filter(c => !c.status.toLowerCase().includes('sales'))
+    .reduce((s, c) => s + c.monthlyMrr, 0)
+
+  // ── Accrual revenue = MRR entries (what was earned this month under contracts)
   // If current period has no MRR yet (e.g. month not closed), fall back to latest known MRR
   const currentMrr = mrrRes.rows.reduce((s: number, r: any) => s + parseFloat(r.amount_usd || 0), 0)
   const latestMrrRows = latestMrrRes.rows
@@ -296,6 +335,10 @@ export async function POST(req: NextRequest) {
       avgMonthlyBurn,
       mrrPeriodNote:      mrrIsFallback && latestMrrPeriodLabel ? `MRR data shown is from ${latestMrrPeriodLabel} (most recent closed month) — these contracts auto-renew annually so clients are still active.` : '',
       contractSchedule,
+      sheetClients,
+      sheetMrr:           Math.round(sheetMrr),
+      totalInvoicedSheet: Math.round(totalInvoicedSheet),
+      totalPipelineSheet: Math.round(totalPipelineSheet),
     })
     result.answer = answer
   }

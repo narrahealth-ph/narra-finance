@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { query } from '@/lib/db'
 import { generateInvestorNarrative, detectAnomalies, assessChurnRisk, answerFinancialQuestion } from '@/lib/ai'
-import { fetchAllTimeRows, parseNum, parseInvDate, isActiveStatus, calcMonthlyMrr, contractEnd } from '@/lib/mrr-calc'
+import { fetchAllTimeRows, fetchInvestmentTotals, parseNum, parseInvDate, isActiveStatus, calcMonthlyMrr, contractEnd } from '@/lib/mrr-calc'
 
 export async function POST(req: NextRequest) {
   const session = await getSession()
@@ -28,8 +28,9 @@ export async function POST(req: NextRequest) {
   }
 
   // Fetch live Google Sheet data in parallel with DB queries
-  const [invRows, bankTxsRes, mrrRes, prevRevenueRes, prevBurnRes, prevMrrRes, latestMrrRes, contractsRes] = await Promise.all([
+  const [invRows, investmentTotals, bankTxsRes, mrrRes, prevRevenueRes, prevBurnRes, prevMrrRes, latestMrrRes, contractsRes, financialHistRes] = await Promise.all([
     fetchAllTimeRows().catch(() => [] as any[][]),
+    fetchInvestmentTotals().catch(() => ({ rene: 0, mike: 0, total: 0, rounds: [] })),
     query(
       'SELECT * FROM bank_transactions WHERE period_id = ANY($1::int[])',
       [scopePeriodIds]
@@ -113,6 +114,20 @@ export async function POST(req: NextRequest) {
 
     // Client contracts for renewal forecasting
     query(`SELECT name, billing_type, contract_start, contract_end FROM clients WHERE active = true AND contract_end IS NOT NULL ORDER BY contract_end ASC`),
+
+    // 4-month financial history: MRR + expenses per period (for investor narrative table)
+    query(`
+      SELECT p2.label, p2.start_date,
+        COALESCE(SUM(m.amount_usd), 0)                                                        AS mrr,
+        COALESCE(SUM(CASE WHEN bt.type = 'expense' THEN bt.amount_usd ELSE 0 END), 0)        AS expenses
+      FROM periods p2
+      LEFT JOIN mrr_entries m      ON m.period_id  = p2.id
+      LEFT JOIN bank_transactions bt ON bt.period_id = p2.id
+      WHERE p2.start_date >= (SELECT start_date FROM periods WHERE id = $1) - INTERVAL '3 months'
+        AND p2.start_date <= (SELECT start_date FROM periods WHERE id = $1)
+      GROUP BY p2.label, p2.start_date
+      ORDER BY p2.start_date ASC
+    `, [periodId]),
   ])
 
   const bankTxs = bankTxsRes.rows
@@ -150,7 +165,10 @@ export async function POST(req: NextRequest) {
   }
 
   const sheetMrr = sheetClients
-    .filter(c => !c.status.toLowerCase().includes('sales'))
+    .filter(c => {
+      const s = c.status.toLowerCase()
+      return s.includes('paid') || s.includes('partial payment / pending payment')
+    })
     .reduce((s, c) => s + c.monthlyMrr, 0)
 
   // ── Accrual revenue = MRR entries (what was earned this month under contracts)
@@ -177,17 +195,34 @@ export async function POST(req: NextRequest) {
   const expenseTxs = bankTxs.filter((r: any) => r.type === 'expense')
   const totalBankExpenses = expenseTxs.reduce((s: number, r: any) => s + safeAmt(r), 0)
 
-  // Global cash position — sum across ALL periods (opening + revenue + investment - expenses)
-  // This is the true bank balance, not just this month's delta
-  const globalCashRes = await query(`
-    SELECT
-      COALESCE(SUM(CASE WHEN type = 'opening'    THEN amount_usd ELSE 0 END), 0) +
-      COALESCE(SUM(CASE WHEN type = 'revenue'    THEN amount_usd ELSE 0 END), 0) +
-      COALESCE(SUM(CASE WHEN type = 'investment' THEN amount_usd ELSE 0 END), 0) -
-      COALESCE(SUM(CASE WHEN type = 'expense'    THEN amount_usd ELSE 0 END), 0) AS cash_position
-    FROM bank_transactions
-  `)
-  const cashBalance = parseFloat(globalCashRes.rows[0]?.cash_position || 0)
+  // Global cash position — matches the balance sheet calculation in /api/reports exactly:
+  // cumulative up to the selected period's end date, deduplicating opening entries per account,
+  // with safeUsd fallback (amount_usd → amount for USD txs), excluding investment type.
+  const aiCashTxsRes = await query(
+    `SELECT bt.account, bt.type, bt.amount, bt.currency, bt.amount_usd
+     FROM bank_transactions bt
+     JOIN periods pp ON pp.id = bt.period_id
+     WHERE pp.end_date <= $1 AND bt.type IN ('opening','revenue','expense')
+     ORDER BY pp.start_date ASC, bt.date ASC`,
+    [p.end_date]
+  )
+  const cashByAcct: Record<string, number> = {}
+  const seenOpeningAcct = new Set<string>()
+  for (const tx of aiCashTxsRes.rows) {
+    const acct = tx.account || 'Main'
+    if (!(acct in cashByAcct)) cashByAcct[acct] = 0
+    const amt = (tx.amount_usd != null && parseFloat(tx.amount_usd) > 0)
+      ? parseFloat(tx.amount_usd)
+      : ((tx.currency === 'USD' || !tx.currency) ? parseFloat(tx.amount || 0) : 0)
+    if (tx.type === 'opening') {
+      if (!seenOpeningAcct.has(acct)) { seenOpeningAcct.add(acct); cashByAcct[acct] += amt }
+    } else if (tx.type === 'revenue') {
+      cashByAcct[acct] += amt
+    } else if (tx.type === 'expense') {
+      cashByAcct[acct] -= amt
+    }
+  }
+  const cashBalance = Object.values(cashByAcct).reduce((s, v) => s + v, 0)
 
   // Avg monthly burn from last 3 months (for runway calculation)
   const recentBurnMonths = prevBurnRes.rows.filter((r: any) => parseFloat(r.expenses) > 0)
@@ -246,18 +281,33 @@ export async function POST(req: NextRequest) {
   let result: any = {}
 
   if (type === 'narrative' || type === 'all') {
+    // Build 4-month financial history for the investor narrative table
+    // If current period MRR is 0 (not yet entered), use sheetMrr for current month
+    const financialHistory = financialHistRes.rows.map((r: any) => {
+      const arr    = parseFloat(r.mrr) > 0 ? parseFloat(r.mrr) : (r.label === periodLabel ? Math.round(sheetMrr) : 0)
+      const costs  = parseFloat(r.expenses)
+      const net    = arr - costs
+      const margin = arr > 0 ? (net / arr) * 100 : 0
+      // Format month label as "Mon YYYY" (e.g. "Sep 2025")
+      const d = new Date(r.start_date)
+      const monthLabel = d.toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' })
+      return { month: monthLabel, arr, costs, netRevenue: net, margin }
+    })
+
     const narrative = await generateInvestorNarrative({
       period:            periodLabel,
       totalRevenue:      totalMrr,
       cashRevenue:       totalCashRevenue,
       totalExpenses:     totalBankExpenses,
       netProfit:         totalMrr - totalBankExpenses,
-      mrr:               totalMrr,
+      mrr:               totalMrr > 0 ? totalMrr : Math.round(sheetMrr),
       mrrGrowth:         0,
-      clientCount:       activeMrrRows.length,
+      clientCount:       sheetClients.length > 0 ? sheetClients.filter(c => !c.status.toLowerCase().includes('sales')).length : activeMrrRows.length,
       cashBalance,
       runway,
-      topClients:        activeMrrRows.slice(0, 3).map((r: any) => ({ name: r.client_name, amount: parseFloat(r.amount_usd || 0) })),
+      topClients:        sheetClients.length > 0
+                           ? sheetClients.filter(c => !c.status.toLowerCase().includes('sales')).sort((a, b) => b.monthlyMrr - a.monthlyMrr).slice(0, 5).map(c => ({ name: c.name, amount: Math.round(c.monthlyMrr) }))
+                           : activeMrrRows.slice(0, 5).map((r: any) => ({ name: r.client_name, amount: parseFloat(r.amount_usd || 0) })),
       anomalies:         [],
       billingNote:       annualBillingNote,
       prevRevenue,
@@ -266,6 +316,9 @@ export async function POST(req: NextRequest) {
       costMoMPct,
       pendingCollection: pendingCollection as { clientName: string; amount: number; daysOutstanding: number }[],
       pipelineDeals:     pipelineDeals as { clientName: string; amount: number; billingType: string; notes?: string }[],
+      investmentRounds:  investmentTotals.rounds,
+      totalInvestment:   investmentTotals.total,
+      financialHistory,
     })
     result.narrative = narrative
 

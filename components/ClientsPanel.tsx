@@ -13,6 +13,7 @@ type Client = {
   contract_end: string | null
   notes: string | null
   active: boolean
+  auto_renewal: boolean
   ltv: number
   invoice_count: number
   group_invoice_count: number
@@ -438,6 +439,7 @@ export default function ClientsPanel() {
                 { label: '% of Total',            col: 'pct',            right: true  },
                 { label: 'Notes',                 col: '',               right: false },
                 { label: 'Status',                col: '',               right: false },
+                { label: 'Auto-renewal',          col: '',               right: false },
                 { label: '',                      col: '',               right: false },
               ] as { label: string; col: string; right: boolean }[]).map(({ label, col, right }) => (
                 <th key={label}
@@ -524,6 +526,11 @@ export default function ClientsPanel() {
                   </button>
                 </td>
                 <td className="px-4 py-3">
+                  {c.auto_renewal !== false
+                    ? <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">Auto-renews</span>
+                    : <span className="text-xs text-narra-muted">Manual</span>}
+                </td>
+                <td className="px-4 py-3">
                   <div className="flex gap-2 justify-end">
                     <button onClick={() => openInvoices(c)}
                       className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">
@@ -534,7 +541,7 @@ export default function ClientsPanel() {
                       distributor: c.distributor || '', billing_type: c.billing_type,
                       contract_start: c.contract_start ? c.contract_start.split('T')[0] : '',
                       contract_end:   c.contract_end   ? c.contract_end.split('T')[0]   : '',
-                      notes: c.notes || '', active: c.active,
+                      notes: c.notes || '', active: c.active, auto_renewal: c.auto_renewal !== false,
                     })} className="text-xs text-narra-muted hover:text-narra-dark">Edit</button>
                     <button onClick={() => deleteClient(c.id)} className="text-xs text-red-400 hover:text-red-600">✕</button>
                   </div>
@@ -777,6 +784,20 @@ export default function ClientsPanel() {
                 <textarea value={editingClient.notes || ''} onChange={e => setEditingClient(p => ({ ...p!, notes: e.target.value }))}
                   className="w-full border border-narra-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-narra-green/30 resize-none"
                   rows={2} placeholder="Any additional context…" />
+              </div>
+
+              <div className="flex items-center justify-between border border-narra-border rounded-lg px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium text-narra-dark">Auto-renewal</p>
+                  <p className="text-xs text-narra-muted mt-0.5">Contract renews automatically unless cancelled</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingClient(p => ({ ...p!, auto_renewal: !(p!.auto_renewal !== false) }))}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${editingClient.auto_renewal !== false ? 'bg-narra-dark' : 'bg-gray-200'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${editingClient.auto_renewal !== false ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
               </div>
             </div>
 

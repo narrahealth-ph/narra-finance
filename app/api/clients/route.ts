@@ -57,7 +57,8 @@ const tablesReady = (async () => {
     await query(`
       ALTER TABLE clients
         ADD COLUMN IF NOT EXISTS contract_start DATE,
-        ADD COLUMN IF NOT EXISTS contract_end DATE
+        ADD COLUMN IF NOT EXISTS contract_end DATE,
+        ADD COLUMN IF NOT EXISTS auto_renewal BOOLEAN DEFAULT TRUE
     `)
     await query(`
       ALTER TABLE invoices
@@ -241,10 +242,11 @@ export async function POST(req: NextRequest) {
   const billingType  = body.billingType || body.billing_type || 'annual'
   const contractStart = body.contract_start || body.contractStart || null
   const contractEnd   = body.contract_end   || body.contractEnd   || null
+  const autoRenewal = body.auto_renewal !== false
   const res = await query(
-    `INSERT INTO clients (name, holding_company_id, distributor, billing_type, notes, contract_start, contract_end)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-    [body.name, holdingId || null, body.distributor || null, billingType, body.notes || null, contractStart, contractEnd]
+    `INSERT INTO clients (name, holding_company_id, distributor, billing_type, notes, contract_start, contract_end, auto_renewal)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    [body.name, holdingId || null, body.distributor || null, billingType, body.notes || null, contractStart, contractEnd, autoRenewal]
   )
   return NextResponse.json({ client: res.rows[0] })
 }
@@ -265,12 +267,13 @@ export async function PATCH(req: NextRequest) {
   const billingType  = body.billingType || body.billing_type || 'annual'
   const contractStart = body.contract_start || body.contractStart || null
   const contractEnd   = body.contract_end   || body.contractEnd   || null
+  const autoRenewal = body.auto_renewal !== false
   await query(
     `UPDATE clients
      SET name=$1, holding_company_id=$2, distributor=$3, billing_type=$4, notes=$5, active=$6,
-         contract_start=$7, contract_end=$8, updated_at=NOW()
-     WHERE id=$9`,
-    [body.name, holdingId || null, body.distributor || null, billingType, body.notes || null, body.active !== false, contractStart, contractEnd, body.id]
+         contract_start=$7, contract_end=$8, auto_renewal=$9, updated_at=NOW()
+     WHERE id=$10`,
+    [body.name, holdingId || null, body.distributor || null, billingType, body.notes || null, body.active !== false, contractStart, contractEnd, autoRenewal, body.id]
   )
 
   // Sync updated client list to Google Sheet "Clients" tab

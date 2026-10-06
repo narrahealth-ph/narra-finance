@@ -4,11 +4,15 @@ import { query } from '@/lib/db'
 import {
   fetchAllTimeRows,
   isActiveStatus,
+  isPaidStatus,
   parseNum,
   parseInvDate,
   contractEnd,
   calcMonthlyMrr,
   calcMrrForMonth,
+  calcProjectedMrrForMonth,
+  fetchForecastCosts,
+  type ProjectedBreakdown,
 } from '@/lib/mrr-calc'
 
 const MONTH_NAMES_LONG  = ['January','February','March','April','May','June','July','August','September','October','November','December']
@@ -26,12 +30,16 @@ export async function GET(req: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(req.url)
-  const monthParam    = searchParams.get('month')
-  const yearViewParam = searchParams.get('yearView') === 'true'
+  const monthParam      = searchParams.get('month')
+  const yearViewParam   = searchParams.get('yearView') === 'true'
+  const excludeParam    = searchParams.get('excludeCarryOver')
+  const excludeCarryOver = excludeParam
+    ? new Set(excludeParam.split(',').map((s: string) => s.toLowerCase().trim()).filter(Boolean))
+    : undefined
 
   try {
     // Fetch all sources in parallel
-    const [invRows, holdingRes, costsRes, bankRes, revenueByMonthRes, invoiceCostsRes, investmentRes, openingRes] = await Promise.all([
+    const [invRows, holdingRes, costsRes, bankRes, revenueByMonthRes, invoiceCostsRes, investmentRes, openingRes, forecastCosts] = await Promise.all([
       fetchAllTimeRows(),
 
       query(`
@@ -97,6 +105,7 @@ export async function GET(req: NextRequest) {
         FROM bank_transactions bt
         WHERE bt.type = 'opening'
       `).catch(() => ({ rows: [{ opening_cash: 0 }] })),
+      fetchForecastCosts().catch((err) => { console.error('[forecast-costs] fetch failed:', err?.message || err); return {} as Record<string, number> }),
     ])
 
     // holding company name → active subsidiary names
@@ -155,7 +164,7 @@ export async function GET(req: NextRequest) {
 
     const openingCash = parseFloat((openingRes as any).rows[0]?.opening_cash || 0)
 
-    // Build history: earliest year with bank data (floor 2025) → today
+    // Build history: earliest year with bank data (floor 2025) → end of next year
     const today        = new Date()
     const currentYear  = today.getFullYear()
     const earliestYear = Math.min(
@@ -163,19 +172,29 @@ export async function GET(req: NextRequest) {
       ...(costsRes as any).rows.map((r: any) => new Date(r.start_date).getFullYear()).filter(Boolean),
     )
 
-    const history: { month: string; year: number; confirmed: number; pending: number; costs: number; net: number; bankCashIn: number }[] = []
+    // projected MRR is now calculated per-month in the history loop below
 
-    for (let yr = earliestYear; yr <= currentYear; yr++) {
-      const lastMonth = yr < currentYear ? 11 : today.getMonth()
+    const history: { month: string; year: number; confirmed: number | null; pending: number; costs: number; net: number; bankCashIn: number; projected?: number; projectedBreakdown?: ProjectedBreakdown; forecastedCost?: number }[] = []
+
+    for (let yr = earliestYear; yr <= currentYear + 1; yr++) {
+      // All years: show all 12 months. isFuture handles past vs future distinction.
+      const lastMonth = 11
       for (let m = 0; m <= lastMonth; m++) {
-        const label     = `${MONTH_NAMES_SHORT[m]} ${yr}`
-        const key       = `${yr}-${String(m + 1).padStart(2, '0')}`
-        const mStart      = new Date(yr, m, 1)
-        const mEnd        = new Date(yr, m + 1, 0)
-        const confirmed   = invRows.length > 0 ? calcMrrForMonth(invRows, mStart, mEnd) : (revenueByMonth[key] || 0)
-        const costs       = costsByMonth[key] || 0
-        const bankCashIn  = revenueByMonth[key] || 0
-        history.push({ month: label, year: yr, confirmed, pending: 0, costs, net: confirmed - costs, bankCashIn })
+        const label      = `${MONTH_NAMES_SHORT[m]} ${yr}`
+        const key        = `${yr}-${String(m + 1).padStart(2, '0')}`
+        const mStart     = new Date(yr, m, 1)
+        const mEnd       = new Date(yr, m + 1, 0)
+        const isFuture   = mStart > today
+        // Always compute breakdown — used for tooltip client lists on all months
+        const projResult = invRows.length > 0 ? calcProjectedMrrForMonth(invRows, mStart, mEnd, excludeCarryOver) : undefined
+        // Confirmed = strictly contract-based: only invoices whose contract period covers this month
+        const confirmed  = isFuture ? null : (invRows.length > 0 ? calcMrrForMonth(invRows, mStart, mEnd, isPaidStatus) : (revenueByMonth[key] || 0))
+        const projected  = isFuture ? projResult?.total : undefined
+        const costs      = costsByMonth[key] || 0
+        const bankCashIn = revenueByMonth[key] || 0
+        const fc         = (forecastCosts as Record<string, number>)[key]
+        const net        = (confirmed ?? 0) - costs
+        history.push({ month: label, year: yr, confirmed, pending: 0, costs, net: net, bankCashIn, ...(projected !== undefined ? { projected } : {}), ...(projResult ? { projectedBreakdown: projResult } : {}), ...(fc != null ? { forecastedCost: Math.round(fc) } : {}) })
       }
     }
 
@@ -310,8 +329,7 @@ export async function GET(req: NextRequest) {
     // totalWithPipelineByYear  → above + Sales - Sent
     // Statuses for Total Invoiced: "fully paid" (or any "paid" variant) and the
     // single combined status "partial payment / pending payment" used in the sheet.
-    const isInvoicedStatus = (s: string) =>
-      s.includes('paid') || s.includes('partial payment / pending payment')
+    const isInvoicedStatus = isPaidStatus
     const isPipelineStatus2 = (s: string) =>
       isInvoicedStatus(s) || (s.includes('sales') && s.includes('sent'))
 
@@ -347,7 +365,7 @@ export async function GET(req: NextRequest) {
     for (const pt of history) {
       if (pt.confirmed === 0 && pt.costs === 0) continue
       if (!yearTotals[pt.year]) yearTotals[pt.year] = { mrr: 0, costs: 0, net: 0 }
-      yearTotals[pt.year].mrr   += pt.confirmed
+      yearTotals[pt.year].mrr   += pt.confirmed ?? 0
       yearTotals[pt.year].costs += pt.costs
       yearTotals[pt.year].net   += pt.net
     }

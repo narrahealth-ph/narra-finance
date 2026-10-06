@@ -8,7 +8,8 @@ import { downloadCSV, toCSV } from '@/lib/csv'
 import { fmt } from '@/lib/format'
 import { AlertTriangle, ClipboardList, Target } from 'lucide-react'
 
-type HistoryPoint = { month: string; confirmed: number; pending: number; costs: number; net: number; bankCashIn?: number }
+type ProjectedBreakdown = { total: number; activeContracts: number; carryOver: number; autoRenewed: number; pipeline: number; activeClients: string[]; carryOverClients: string[]; autoRenewedClients: string[]; pipelineClients: string[]; expiredClients: string[]; newClients: string[] }
+type HistoryPoint = { month: string; confirmed: number | null; pending: number; costs: number; net: number; bankCashIn?: number; projected?: number; projectedBreakdown?: ProjectedBreakdown; forecastedCost?: number }
 type PendingInvoice = { invoiceId: string; clientName: string; amount: number; issueDate: string; daysOutstanding: number; billingType: string }
 type PipelineInvoice = { invoiceId: string; clientName: string; amount: number; issueDate: string; billingType: string; notes?: string }
 type Client = { invoiceId?: string; name: string; annualAmount: number; seats: number; billingType: string; issueDate?: string; isNew: boolean; isPending: boolean; isOneOff: boolean; isCarryover?: boolean; countedInMrr?: boolean }
@@ -28,20 +29,92 @@ const FALLBACK_HISTORY: HistoryPoint[] = [
   { month: 'Dec 2025', confirmed: 7640, pending: 0, costs: 6062,  net: 1579  },
 ]
 
+const TOOLTIP_META: Record<string, { label: string; note?: string }> = {
+  confirmed:      { label: 'Confirmed MRR',    note: 'Paid & partial/pending invoices' },
+  projected:      { label: 'Projected MRR',    note: 'Renewals (100%) + pipeline (10%)' },
+  pipeline:       { label: 'Pipeline MRR',     note: 'Sales-sent invoices at full value' },
+  costs:          { label: 'Actual Costs',     note: 'From bank transactions' },
+  forecastedCost: { label: 'Forecasted Costs', note: 'From Monthly Forecast P&L' },
+}
+
+function ClientList({ title, clients, max = 8 }: { title: string; clients: string[]; max?: number }) {
+  if (!clients.length) return null
+  const shown = clients.slice(0, max)
+  const rest  = clients.length - shown.length
+  return (
+    <div className="mt-1">
+      <p className="text-white/50 mb-0.5">{title} ({clients.length}):</p>
+      {shown.map((c, i) => <p key={i} className="text-white/70 truncate">· {c}</p>)}
+      {rest > 0 && <p className="text-white/40">+{rest} more</p>}
+    </div>
+  )
+}
+
 function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null
+  const visible = payload.filter((e: any) => e.value != null && e.value !== 0)
+  if (!visible.length) return null
+  const point     = payload[0]?.payload
+  const breakdown = point?.projectedBreakdown as ProjectedBreakdown | undefined
   return (
-    <div className="bg-narra-dark border border-white/20 rounded-xl p-3 text-xs shadow-xl min-w-[180px]">
+    <div className="bg-narra-dark border border-white/20 rounded-xl p-3 text-xs shadow-xl min-w-[200px] max-w-[260px]">
       <p className="text-narra-green font-heading font-semibold mb-2">{label}</p>
-      {payload.map((entry: any) => (
-        <div key={entry.name} className="flex justify-between gap-4 py-0.5">
-          <span className="flex items-center gap-1.5 text-white">
-            <span style={{ background: entry.color }} className="inline-block w-2 h-2 rounded-full flex-shrink-0" />
-            {entry.name}
-          </span>
-          <span className="text-white font-medium">${Number(entry.value).toLocaleString()}</span>
+      {visible.map((entry: any) => {
+        const meta = TOOLTIP_META[entry.dataKey] || { label: entry.name }
+        return (
+          <div key={entry.dataKey} className="flex justify-between gap-4 mb-1">
+            <span className="flex items-center gap-1.5 text-white">
+              <span style={{ background: entry.color }} className="inline-block w-2 h-2 rounded-full flex-shrink-0" />
+              {meta.label}
+            </span>
+            <span className="text-white font-medium">${Number(entry.value).toLocaleString()}</span>
+          </div>
+        )
+      })}
+      {breakdown && point?.projected != null && (
+        <div className="mt-1.5 border-t border-white/10 pt-1.5 space-y-1.5">
+          {breakdown.activeContracts > 0 && (
+            <div className="flex justify-between gap-4">
+              <span className="text-white/60">Active contracts</span>
+              <span className="text-white/80">${breakdown.activeContracts.toLocaleString()}</span>
+            </div>
+          )}
+          {breakdown.carryOver > 0 && (
+            <div>
+              <div className="flex justify-between gap-4">
+                <span className="text-white/60">Carrying over</span>
+                <span className="text-white/80">${breakdown.carryOver.toLocaleString()}</span>
+              </div>
+              {breakdown.carryOverClients.map((c, i) => (
+                <p key={i} className="text-white/40 truncate ml-2">· {c}</p>
+              ))}
+            </div>
+          )}
+          {breakdown.autoRenewed > 0 && (
+            <div>
+              <div className="flex justify-between gap-4">
+                <span className="text-white/60">Renewals this month</span>
+                <span className="text-white/80">${breakdown.autoRenewed.toLocaleString()}</span>
+              </div>
+              {breakdown.autoRenewedClients.map((c, i) => (
+                <p key={i} className="text-white/40 truncate ml-2">· {c}</p>
+              ))}
+            </div>
+          )}
+          {breakdown.pipeline > 0 && (
+            <div className="flex justify-between gap-4">
+              <span className="text-white/60">Pipeline (10%)</span>
+              <span className="text-white/80">${breakdown.pipeline.toLocaleString()}</span>
+            </div>
+          )}
         </div>
-      ))}
+      )}
+      {breakdown && point?.projected == null && (breakdown.newClients.length > 0 || breakdown.expiredClients.length > 0) && (
+        <div className="mt-1.5 border-t border-white/10 pt-1.5 space-y-0.5">
+          <ClientList title="New this month"   clients={breakdown.newClients} />
+          <ClientList title="Contracts ended"  clients={breakdown.expiredClients} />
+        </div>
+      )}
     </div>
   )
 }
@@ -62,7 +135,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   const [editName,         setEditName]         = useState('')
   const [syncing,         setSyncing]         = useState(false)
   const [syncResult,      setSyncResult]      = useState<any>(null)
-  const [chartView,    setChartView]    = useState<string>('all')
+  const [chartView,    setChartView]    = useState<string>(new Date().getFullYear().toString())
   const [periodView,   setPeriodView]   = useState<'month' | 'year'>('year')
   const [yearTotals,   setYearTotals]   = useState<Record<number, { mrr: number; costs: number; net: number }>>({})
   const [totalInvoicedByYear,      setTotalInvoicedByYear]      = useState<Record<number, number>>({})
@@ -72,6 +145,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   const [investmentByYear,     setInvestmentByYear]     = useState<Record<number, number>>({})
   const [openingCash,          setOpeningCash]          = useState<number>(0)
   const [sheetRefreshKey,      setSheetRefreshKey]      = useState(0)
+  const [excludedCarryOver,    setExcludedCarryOver]    = useState<Set<string>>(new Set())
   const [showCashDetail,       setShowCashDetail]       = useState(false)
   const [cashDetailRows,       setCashDetailRows]       = useState<any[]>([])
   const [cashDetailLoading,    setCashDetailLoading]    = useState(false)
@@ -81,6 +155,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   const [annualData,           setAnnualData]           = useState<any>(null)
   const [showRevenueBreakdown, setShowRevenueBreakdown] = useState(false)
   const [showExpenseBreakdown, setShowExpenseBreakdown] = useState(false)
+  const [projectedMrr,         setProjectedMrr]         = useState<number>(0)
   const selectedYear = selectedMonth?.split('_')[1] || '2026'
 
   // Currency conversion
@@ -93,7 +168,8 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
     setHistoryLoading(true)
     setClients([])
     const yearView = periodView === 'year'
-    fetch(`/api/mrr/history?month=${encodeURIComponent(selectedMonth || '')}&yearView=${yearView}`, { credentials: 'include' })
+    const excludeParam = excludedCarryOver.size > 0 ? `&excludeCarryOver=${encodeURIComponent([...excludedCarryOver].join(','))}` : ''
+    fetch(`/api/mrr/history?month=${encodeURIComponent(selectedMonth || '')}&yearView=${yearView}${excludeParam}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : { history: [], clientBreakdown: [], yearTotals: {} })
       .then(json => {
         // History
@@ -127,11 +203,12 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
         if (json.openingCash           !== undefined) setOpeningCash(json.openingCash)
         if (json.pendingFromSheet)  setPendingInvoices(json.pendingFromSheet)
         if (json.pipelineFromSheet) setPipelineInvoices(json.pipelineFromSheet)
+        if (json.projectedMrr != null) setProjectedMrr(json.projectedMrr)
       })
       .catch(() => {})
       .finally(() => setHistoryLoading(false))
-    setChartView('all') // reset chart filter when year changes
-  }, [selectedMonth, refreshKey, sheetRefreshKey, periodView]) // re-fetch when month/year-view/refresh changes
+    setChartView(new Date().getFullYear().toString()) // reset to current year when period changes
+  }, [selectedMonth, refreshKey, sheetRefreshKey, periodView, excludedCarryOver]) // re-fetch when month/year-view/refresh/exclusions changes
 
   // Fetch annual-report data for the selected year (for P&L-style cards)
   useEffect(() => {
@@ -168,6 +245,37 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
       .catch(() => {})
   }, [])
 
+  // Load carry-over exclusions from DB on mount
+  useEffect(() => {
+    fetch('/api/mrr/exclusions', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : { exclusions: [] })
+      .then(d => setExcludedCarryOver(new Set(d.exclusions || [])))
+      .catch(() => {})
+  }, [])
+
+  function excludeClient(displayName: string) {
+    const key = displayName.toLowerCase().trim()
+    setExcludedCarryOver(prev => new Set([...prev, key]))
+    fetch('/api/mrr/exclusions', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientKey: key }),
+    }).catch(() => {})
+  }
+
+  function restoreClient(key: string) {
+    setExcludedCarryOver(prev => { const next = new Set(prev); next.delete(key); return next })
+    fetch(`/api/mrr/exclusions?clientKey=${encodeURIComponent(key)}`, { method: 'DELETE', credentials: 'include' })
+      .catch(() => {})
+  }
+
+  function resetAllExclusions() {
+    const keys = [...excludedCarryOver]
+    setExcludedCarryOver(new Set())
+    keys.forEach(key =>
+      fetch(`/api/mrr/exclusions?clientKey=${encodeURIComponent(key)}`, { method: 'DELETE', credentials: 'include' }).catch(() => {})
+    )
+  }
 
   function calcMonthly(amount: number, billingType: string): number {
     const t = (billingType || 'annual').toLowerCase().trim()
@@ -214,7 +322,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   const totalCosts        = history.find(h => h.month === selectedHistoryLabel)?.costs || 0
   const netRevenue        = totalConfirmedMrr - totalCosts
   const opMargin          = totalConfirmedMrr > 0 ? ((netRevenue / totalConfirmedMrr) * 100).toFixed(1) : '0'
-  const prevMrr           = history.filter(h => h.confirmed > 0).slice(-2)[0]?.confirmed || 0
+  const prevMrr           = history.filter(h => (h.confirmed ?? 0) > 0).slice(-2)[0]?.confirmed ?? 0
   const mrrGrowth         = prevMrr > 0 ? ((totalConfirmedMrr - prevMrr) / prevMrr * 100).toFixed(1) : '0'
   const hasCurrentYearData = history.some(h => !h.month.includes('2025'))
   const last3             = history.slice(-3).map(d => d.costs)
@@ -240,7 +348,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
 
   const chartData = useMemo(() => {
     const base = chartView !== 'all' ? history.filter(h => h.month.includes(chartView)) : history
-    return base.map(h => {
+    const mapped = base.map(h => {
       const [monthShort, yearStr] = h.month.split(' ')
       const mIdx   = MONTH_SHORT.indexOf(monthShort)
       const yr     = parseInt(yearStr)
@@ -270,8 +378,35 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
         }
       }
 
-      return { ...h, pipeline }
+      return { ...h, pipeline, projected: h.projected ?? null, projectedBreakdown: h.projectedBreakdown ?? null, forecastedCost: h.forecastedCost ?? null }
     })
+
+    // Bridge confirmed → projected: last confirmed month also gets a projected value so
+    // the dotted projected line connects seamlessly to the solid confirmed line.
+    const lastConfirmedIdx = mapped.reduce((best, d, i) => (d.confirmed ?? 0) > 0 ? i : best, -1)
+    if (lastConfirmedIdx !== -1) {
+      const bridgeVal = mapped[lastConfirmedIdx].confirmed ?? 0
+      mapped[lastConfirmedIdx] = { ...mapped[lastConfirmedIdx], projected: bridgeVal }
+    }
+
+    // Bridge actual costs → forecast costs: keep forecastedCost null for all months up to
+    // (and including) the last month with actual bank costs, then set the bridge point so
+    // the dotted forecast line continues seamlessly from the solid costs line.
+    const lastActualCostIdx = mapped.reduce((best, d, i) => d.costs > 0 ? i : best, -1)
+    for (let i = 0; i < mapped.length; i++) {
+      if (i < lastActualCostIdx) {
+        // Before bridge: no forecast line yet
+        mapped[i] = { ...mapped[i], forecastedCost: null }
+      } else if (i === lastActualCostIdx) {
+        // Bridge point: both lines meet here
+        mapped[i] = { ...mapped[i], forecastedCost: mapped[i].costs }
+      } else {
+        // After bridge: actual costs line stops, forecast line continues
+        mapped[i] = { ...mapped[i], costs: null as any }
+      }
+    }
+
+    return mapped
   }, [history, chartView, pipelineInvoices])
 
   async function saveOverride() {
@@ -571,6 +706,24 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
 
           </div>
 
+          {/* Projected ARR banner — only shown when viewing a future year */}
+          {yr > new Date().getFullYear() && projectedMrr > 0 && (
+            <div className="flex items-center gap-4 border border-indigo-200 border-dashed bg-indigo-50/60 rounded-xl px-5 py-4">
+              <div className="flex-1">
+                <div className="text-[10px] text-indigo-400 uppercase tracking-widest font-body">Contracted {yr} ARR</div>
+                <div className="font-heading text-xl font-semibold text-indigo-700 mt-1">
+                  {sym}{fmt(cvt(projectedMrr * 12))}
+                  <span className="text-sm font-normal text-indigo-400 ml-2">/ yr</span>
+                </div>
+                <div className="text-xs text-indigo-400 mt-1">{sym}{fmt(cvt(projectedMrr))} / mo · based on all active contracts auto-renewing</div>
+              </div>
+              <div className="hidden sm:flex items-center gap-1.5 text-xs text-indigo-400">
+                <svg width="32" height="12"><line x1="0" y1="6" x2="32" y2="6" stroke="#6366f1" strokeWidth="2" strokeDasharray="6 4"/></svg>
+                dotted line on chart
+              </div>
+            </div>
+          )}
+
           {/* Revenue breakdown */}
           {showRevenueBreakdown && annualData?.allTransactions?.filter((t: any) => t.type === 'revenue').length > 0 && (
             <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
@@ -670,16 +823,70 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
                 <Tooltip content={<CustomTooltip />} />
                 <Line type="monotone" dataKey="confirmed" stroke="#16a34a" strokeWidth={2.5}
                   dot={{ fill: '#16a34a', r: 3, strokeWidth: 0 }} activeDot={{ r: 6, fill: '#16a34a' }} name="Confirmed MRR" />
+                <Line type="monotone" dataKey="projected" stroke="#16a34a" strokeWidth={2.5} strokeDasharray="6 4"
+                  dot={false} activeDot={{ r: 5, fill: '#16a34a' }} name="Projected MRR" connectNulls={false} />
                 <Line type="monotone" dataKey="pipeline" stroke="#f59e0b" strokeWidth={2} strokeDasharray="5 3"
                   dot={{ fill: '#f59e0b', r: 3, strokeWidth: 0 }} activeDot={{ r: 6, fill: '#f59e0b' }} name="Pipeline MRR" />
-                <Line type="monotone" dataKey="costs" stroke="#ef4444" strokeWidth={1.5} strokeDasharray="3 3"
+                <Line type="monotone" dataKey="costs" stroke="#ef4444" strokeWidth={1.5}
                   dot={false} activeDot={{ r: 4, fill: '#ef4444' }} name="Costs" />
+                <Line type="monotone" dataKey="forecastedCost" stroke="#ef4444" strokeWidth={1.5} strokeDasharray="5 3"
+                  dot={false} activeDot={{ r: 4, fill: '#ef4444' }} name="Forecasted Costs" connectNulls={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
         <p className="text-xs text-narra-muted mt-1">← Scroll to see all months</p>
       </div>
+
+      {/* Carry-over exclusion manager — shown when there are any carry-over clients in projected months */}
+      {(() => {
+        const allCarryOver = Array.from(new Set(
+          history.flatMap(h => h.projectedBreakdown?.carryOverClients ?? [])
+        ))
+        if (allCarryOver.length === 0 && excludedCarryOver.size === 0) return null
+        return (
+          <div className="border border-narra-border rounded-xl p-4 bg-white">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-sm font-heading font-medium text-narra-dark">Carry-over clients</p>
+                <p className="text-xs text-narra-muted mt-0.5">Clients whose prior contract is being carried into projected months. Click × to exclude from projected MRR.</p>
+              </div>
+              {excludedCarryOver.size > 0 && (
+                <button
+                  onClick={resetAllExclusions}
+                  className="text-xs text-narra-muted hover:text-red-500 transition-colors flex-shrink-0"
+                >
+                  Reset all
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {allCarryOver.map((c, i) => {
+                const key = c.toLowerCase().trim()
+                const excluded = excludedCarryOver.has(key)
+                return (
+                  <div key={i} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs border transition-colors ${excluded ? 'bg-red-50 border-red-200 text-red-400 line-through' : 'bg-narra-surface border-narra-border text-narra-dark'}`}>
+                    <span>{c}</span>
+                    {excluded ? (
+                      <button
+                        onClick={() => restoreClient(key)}
+                        className="text-red-300 hover:text-red-600 ml-1"
+                        title="Restore to carry-over"
+                      >↩</button>
+                    ) : (
+                      <button
+                        onClick={() => excludeClient(c)}
+                        className="text-narra-muted hover:text-red-500 ml-1"
+                        title="Exclude from projected MRR"
+                      >×</button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Sub-tabs */}
       <div className="flex gap-1 border-b border-narra-border overflow-x-auto scrollbar-none">

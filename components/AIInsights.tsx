@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import { FileText, Search, Users, Sparkles, MessageCircle, SendHorizonal, Trash2 } from 'lucide-react'
+import { FileText, Search, Users, Sparkles, MessageCircle, SendHorizonal, Trash2, Copy, Check, Mail } from 'lucide-react'
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string }
 
@@ -8,12 +8,15 @@ export default function AIInsights({ periodId, data, selectedMonth }: { periodId
   const [loading, setLoading] = useState<string | null>(null)
   const [results, setResults] = useState<{ narrative?: string; anomalies?: any[]; churn?: any[] }>({})
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  const [copied, setCopied] = useState(false)
   const [question, setQuestion] = useState('')
   const [viewMode, setViewMode] = useState<'period' | 'annual'>('period')
   const chatBottomRef = useRef<HTMLDivElement>(null)
   const [annualData, setAnnualData] = useState<any>(null)
 
   const year = selectedMonth?.split('_')[1]
+  // Format "September_2025" → "September 2025"
+  const monthLabel = selectedMonth?.replace('_', ' ') || ''
 
   useEffect(() => {
     if (viewMode === 'annual' && year && !annualData) {
@@ -198,25 +201,51 @@ export default function AIInsights({ periodId, data, selectedMonth }: { periodId
       <div className="bg-white border border-narra-border rounded-xl overflow-hidden">
         <div className="px-5 py-4 border-b border-narra-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <h3 className="font-heading font-semibold text-narra-dark flex items-center gap-2"><FileText size={16} /> Monthly Investor Narrative</h3>
-            <p className="text-xs text-narra-muted mt-0.5">AI-written summary for your investor update</p>
+            <h3 className="font-heading font-semibold text-narra-dark flex items-center gap-2"><FileText size={16} /> Monthly Investor Update Email</h3>
+            <p className="text-xs text-narra-muted mt-0.5">Formatted email ready to send — includes investment table, financial overview & pipeline</p>
           </div>
-          <button onClick={() => generate('narrative')} disabled={loading === 'narrative'}
+          <button onClick={() => { generate('narrative'); setCopied(false) }} disabled={loading === 'narrative'}
             className="shrink-0 px-4 py-2 bg-narra-dark text-narra-green rounded-lg text-sm font-body hover:bg-narra-mid transition-all disabled:opacity-50 flex items-center gap-2">
             {loading === 'narrative' ? <><Sparkles size={14} className="animate-pulse" />Writing…</> : <><Sparkles size={14} />Generate</>}
           </button>
         </div>
         <div className="px-5 py-4">
           {results.narrative ? (
-            <div className="prose prose-sm max-w-none">
-              <p className="text-narra-ink leading-relaxed whitespace-pre-line font-body text-sm">{results.narrative}</p>
-              <button onClick={() => navigator.clipboard.writeText(results.narrative || '')}
-                className="mt-3 text-xs text-narra-muted hover:text-narra-dark border border-narra-border rounded px-2 py-1 transition-colors">
-                Copy to clipboard
-              </button>
+            <div>
+              {/* Email meta */}
+              <div className="mb-3 pb-3 border-b border-narra-border space-y-1 text-xs text-narra-muted">
+                <div><span className="font-medium text-narra-dark">To:</span> renegarcia@ph.klinelogistics.com, mike@mbgcapital.com</div>
+                <div><span className="font-medium text-narra-dark">Cc:</span> tatiana@narrahealth.co</div>
+                <div><span className="font-medium text-narra-dark">Subject:</span> Investment Update Narra Health – {monthLabel || periodId}</div>
+              </div>
+              {/* Email body */}
+              <pre className="text-narra-ink text-xs leading-relaxed whitespace-pre-wrap font-mono bg-narra-surface rounded-lg p-4 border border-narra-border overflow-x-auto max-h-[600px] overflow-y-auto">
+                {results.narrative}
+              </pre>
+              {/* Action buttons */}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  onClick={() => {
+                    const subject = `Investment Update Narra Health – ${monthLabel}`
+                    const body    = results.narrative || ''
+                    navigator.clipboard.writeText(`Subject: ${subject}\n\nTo: renegarcia@ph.klinelogistics.com, mike@mbgcapital.com\nCc: tatiana@narrahealth.co\n\n${body}`)
+                    setCopied(true)
+                    setTimeout(() => setCopied(false), 2500)
+                  }}
+                  className="flex items-center gap-1.5 text-xs border border-narra-border rounded-lg px-3 py-1.5 hover:bg-narra-surface transition-colors text-narra-dark"
+                >
+                  {copied ? <><Check size={13} className="text-green-500" />Copied!</> : <><Copy size={13} />Copy email</>}
+                </button>
+                <a
+                  href={`mailto:renegarcia@ph.klinelogistics.com,mike@mbgcapital.com?cc=tatiana@narrahealth.co&subject=${encodeURIComponent(`Investment Update Narra Health – ${monthLabel}`)}&body=${encodeURIComponent(results.narrative || '')}`}
+                  className="flex items-center gap-1.5 text-xs border border-narra-border rounded-lg px-3 py-1.5 hover:bg-narra-surface transition-colors text-narra-dark"
+                >
+                  <Mail size={13} />Open in Gmail
+                </a>
+              </div>
             </div>
           ) : (
-            <p className="text-narra-muted text-sm italic">Click Generate to write the investor narrative for this month.</p>
+            <p className="text-narra-muted text-sm italic">Click Generate to draft the investor update email for this month.</p>
           )}
         </div>
       </div>

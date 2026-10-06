@@ -6,6 +6,10 @@ import { writeAudit } from '@/lib/audit'
 
 const DISCREPANCY_FLAG_THRESHOLD = 0.05 // Flag matches with >5% amount difference
 
+// One-time migration: retype any expense transactions tagged with account 670 to capex
+query(`UPDATE bank_transactions SET type='capex' WHERE account ILIKE '670%' AND type='expense'`)
+  .catch(() => {})
+
 // POST /api/bank — save transactions and auto-reconcile
 export async function POST(req: NextRequest) {
   const session = await requireRole('finance')
@@ -301,7 +305,13 @@ export async function PATCH(req: NextRequest) {
   // ── retag — update the account category on a bank transaction ───────────────
   if (action === 'retag') {
     if (!bodyAccount) return NextResponse.json({ error: 'account required' }, { status: 400 })
-    await query('UPDATE bank_transactions SET account=$1 WHERE id=$2', [bodyAccount, bankTxId])
+    // Account 670 (Intangible Assets / Capitalized Software) is always capex
+    const isCapexAccount = bodyAccount.trim().startsWith('670')
+    if (isCapexAccount) {
+      await query('UPDATE bank_transactions SET account=$1, type=\'capex\' WHERE id=$2', [bodyAccount, bankTxId])
+    } else {
+      await query('UPDATE bank_transactions SET account=$1 WHERE id=$2', [bodyAccount, bankTxId])
+    }
     await writeAudit('bank_transactions', bankTxId, 'retag', null, { account: bodyAccount }, userEmail)
     return NextResponse.json({ ok: true })
   }

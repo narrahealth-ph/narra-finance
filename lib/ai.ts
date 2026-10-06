@@ -68,8 +68,8 @@ If you cannot extract a field, use null.`
 // ── Generate monthly AI narrative for investors ───────────────────────────────
 export async function generateInvestorNarrative(data: {
   period:            string
-  totalRevenue:      number   // accrual MRR (earned this month under contracts)
-  cashRevenue:       number   // actual bank cash received this month
+  totalRevenue:      number
+  cashRevenue:       number
   totalExpenses:     number
   netProfit:         number
   mrr:               number
@@ -86,70 +86,111 @@ export async function generateInvestorNarrative(data: {
   costMoMPct:        number | null
   pendingCollection: { clientName: string; amount: number; daysOutstanding: number }[]
   pipelineDeals:     { clientName: string; amount: number; billingType: string; notes?: string }[]
+  // Investment utilization
+  investmentRounds:  { round: string; rene: number; mike: number; total: number }[]
+  totalInvestment:   number
+  // Financial history table (oldest → newest, last entry = current period)
+  financialHistory:  { month: string; arr: number; costs: number; netRevenue: number; margin: number }[]
 }) {
-  const prevRevenueStr = data.prevRevenue.length > 0
-    ? data.prevRevenue.map(r => `  ${r.label}: $${r.revenue.toLocaleString()} cash received`).join('\n')
-    : '  No prior months on record'
+  const month = data.period   // e.g. "September 2025"
 
-  const topClient = data.topClients[0]
+  // ── Investment utilization table ────────────────────────────────────────────
+  const invRowsStr = data.investmentRounds.map(r =>
+    `${r.round.padEnd(12)} | $${r.rene.toLocaleString().padStart(10)} | $${r.mike.toLocaleString().padStart(10)} | $${r.total.toLocaleString().padStart(10)} | $0`
+  ).join('\n')
+  const invTotalStr =
+    `${'Total'.padEnd(12)} | $${data.investmentRounds.reduce((s, r) => s + r.rene, 0).toLocaleString().padStart(10)} | $${data.investmentRounds.reduce((s, r) => s + r.mike, 0).toLocaleString().padStart(10)} | $${data.totalInvestment.toLocaleString().padStart(10)} | $0`
 
-  const pendingStr = data.pendingCollection.length > 0
-    ? `$${data.pendingCollection.reduce((s, i) => s + i.amount, 0).toLocaleString()} across ${data.pendingCollection.length} invoice(s) — ` +
-      data.pendingCollection.map(i => `${i.clientName} ($${i.amount.toLocaleString()}, ${i.daysOutstanding}d outstanding)`).join(', ')
-    : 'None'
+  // ── Financial history table ──────────────────────────────────────────────────
+  const histHeaderStr = `${'Month'.padEnd(12)} | ${'Total ARR'.padStart(10)} | ${'Costs (ARC)'.padStart(12)} | ${'Net Revenue'.padStart(12)} | Margin`
+  const histRowsStr = data.financialHistory.map(h => {
+    const marginStr = h.arr > 0 ? `${Math.round(h.margin)}%` : 'N/A'
+    return `${h.month.padEnd(12)} | $${h.arr.toLocaleString().padStart(9)} | $${h.costs.toLocaleString().padStart(11)} | $${h.netRevenue.toLocaleString().padStart(11)} | ${marginStr}`
+  }).join('\n')
+  const histRange = data.financialHistory.length >= 2
+    ? `${data.financialHistory[0].month} – ${data.financialHistory[data.financialHistory.length - 1].month}`
+    : month
 
+  // ── Pipeline / pending ───────────────────────────────────────────────────────
   const pipelineTotal = data.pipelineDeals.reduce((s, d) => s + d.amount, 0)
   const pipelineStr = data.pipelineDeals.length > 0
-    ? `$${pipelineTotal.toLocaleString()} ARR — ${data.pipelineDeals.map(d => `${d.clientName} ($${d.amount.toLocaleString()} ${d.billingType}${d.notes ? ', ' + d.notes : ''})`).join(', ')}`
+    ? data.pipelineDeals.map(d => `${d.clientName} ($${d.amount.toLocaleString()} ${d.billingType}${d.notes ? ', ' + d.notes : ''})`).join('; ')
     : 'None currently'
 
-  const costMomStr = data.costMoMPct !== null
-    ? `${data.costMoMPct > 0 ? '+' : ''}${data.costMoMPct}% vs prior month`
-    : 'No prior month data'
+  const pendingStr = data.pendingCollection.length > 0
+    ? data.pendingCollection.map(i => `${i.clientName} ($${i.amount.toLocaleString()}, ${i.daysOutstanding}d outstanding)`).join('; ')
+    : 'None'
 
   const newClientsStr = data.newClients.length > 0
     ? data.newClients.map(c => `${c.name} ($${c.amount.toLocaleString()}/mo)`).join(', ')
-    : 'None this month'
+    : 'none'
 
   const response = await client.messages.create({
     model:      'claude-sonnet-4-5',
-    max_tokens: 1200,
+    max_tokens: 1800,
     messages: [{
       role:    'user',
-      content: `You are the CFO of Narra Health PTE. LTD., a B2B SaaS health platform based in Singapore.
-Write a concise, professional monthly financial narrative for ${data.period} to share with investors.
+      content: `You are Karina Garcia, CEO of Narra Health PTE. LTD., writing the monthly investor update email for ${month}.
 
-BILLING MODEL: Narra Health clients are on ANNUAL contracts with automatic renewal. They pay the full year upfront. Cash received may be $0 in months where clients already pre-paid earlier in the year — this is NORMAL and expected, NOT a revenue problem. MRR (accrual) reflects the true monthly revenue regardless of when cash arrives.
+Produce the COMPLETE email body below, following this EXACT structure and format. Do not add extra sections or change the order.
 
-${data.billingNote ? data.billingNote + '\n' : ''}
-FINANCIAL DATA FOR ${data.period}:
-- MRR (accrual revenue earned this month): $${data.mrr.toLocaleString()}
-- Cash received from clients this month: $${data.cashRevenue.toLocaleString()}
-- Operating expenses: $${data.totalExpenses.toLocaleString()} (${costMomStr})
-- Net Profit/Loss (accrual): $${data.netProfit.toLocaleString()}
-- Cash Balance: $${data.cashBalance.toLocaleString()}
-- Cash Runway: ${data.runway} months
-- Active Clients: ${data.clientCount}
-- Top revenue client: ${topClient ? `${topClient.name} at $${topClient.amount.toLocaleString()}/mo` : 'N/A'}
-- All clients by MRR: ${data.topClients.map(c => `${c.name} ($${c.amount.toLocaleString()}/mo)`).join(', ')}
-- New clients added this month: ${newClientsStr}
+---
 
-Recent cash received (prior months):
-${prevRevenueStr}
+Subject: Investment Update Narra Health – ${month}
 
-PENDING COLLECTION (invoices sent but not yet paid):
-${pendingStr}
+Dear Rene and Mike,
 
-SALES PIPELINE (deals not yet contracted):
-${pipelineStr}
+[Write a 2–3 sentence intro paragraph: highlight the month's headline metric (MRR = $${data.mrr.toLocaleString()}), any new clients (${newClientsStr}), and overall momentum. Tone: warm, direct, CEO voice.]
 
-Write 4 short paragraphs:
-1. Month headline — MRR as primary revenue figure, note any new clients added
-2. Revenue & clients — MRR, top revenue client, client count, cash timing if relevant (annual billing)
-3. Costs & cash — operating expenses, MoM cost change, cash balance, runway
-4. Pipeline & outlook — pending collections, sales pipeline names and amounts, forward-looking
+INVESTMENT UTILIZATION
+──────────────────────────────────────────────────────────────────
+Round        | Contributed (Rene) | Contributed (Mike) | Total
+──────────────────────────────────────────────────────────────────
+${invRowsStr}
+──────────────────────────────────────────────────────────────────
+${invTotalStr}
 
-Tone: confident, transparent, investor-appropriate. Include all specific dollar amounts and client names provided. Do not flag $0 cash months as a problem. No bullet points. Max 280 words.`
+FINANCIAL OVERVIEW: ${histRange}
+──────────────────────────────────────────────────────────────────
+${histHeaderStr}
+──────────────────────────────────────────────────────────────────
+${histRowsStr}
+
+Key Financial Movements:
+• Revenue: [one sentence on MRR trend and what drove it — use data above]
+• Costs: [one sentence on operating expenses trend — use data above]
+• Efficiency: [one sentence on net revenue and operating margin trend — use data above]
+
+WHAT'S NEXT?
+1. [Most important strategic or sales priority — name specific pipeline deals if any: ${pipelineStr}]
+2. [Second priority — pending collections follow-up if any: ${pendingStr}]
+3. [Product or operational milestone]
+4. [Team or hiring update, or another business priority]
+5. [Investor relations or financial milestone, e.g. closing next round, reaching break-even, etc.]
+
+[Write 1–2 closing sentences expressing gratitude and commitment. Warm but professional.]
+
+Ingat,
+Karina Garcia
+Chief Executive Officer, Narra Health
+
+---
+
+RULES:
+- Copy the tables EXACTLY as shown above (including the separator lines) — only fill in the bracketed placeholders.
+- Do NOT add markdown, asterisks, or extra formatting.
+- The Key Financial Movements bullets must each be exactly one sentence.
+- The WHAT'S NEXT items must each be one sentence.
+- Use specific dollar amounts and client names from the data provided.
+- Do not include the "Subject:" line in the body — start with "Dear Rene and Mike,".
+
+CONTEXT:
+- Billing model: annual contracts, clients pay full year upfront. $0 cash months are NORMAL.
+- Cash balance: $${data.cashBalance.toLocaleString()} | Runway: ${data.runway} months
+- Active clients: ${data.topClients.map(c => `${c.name} ($${c.amount.toLocaleString()}/mo)`).join(', ')}
+- Cash received this month: $${data.cashRevenue.toLocaleString()}
+- Operating expenses this month: $${data.totalExpenses.toLocaleString()}
+${data.billingNote ? data.billingNote : ''}`
     }]
   })
 

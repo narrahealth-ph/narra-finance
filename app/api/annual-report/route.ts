@@ -11,6 +11,9 @@ export async function GET(req: NextRequest) {
   if (!year) return NextResponse.json({ error: 'year required' }, { status: 400 })
 
   try {
+  // Ensure any 670-account transactions are typed as capex (idempotent)
+  await query(`UPDATE bank_transactions SET type='capex' WHERE account ILIKE '670%' AND type='expense'`).catch(() => {})
+
   // All periods for the year — use label (e.g. "January_2025") to avoid UTC timezone
   // boundary issues where Jan periods have start_date in the prior calendar year (UTC)
   const periodsRes = await query(

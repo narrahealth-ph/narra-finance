@@ -168,7 +168,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
     setHistoryLoading(true)
     setClients([])
     const yearView = periodView === 'year'
-    const excludeParam = excludedCarryOver.size > 0 ? `&excludeCarryOver=${encodeURIComponent([...excludedCarryOver].join(','))}` : ''
+    const excludeParam = excludedCarryOver.size > 0 ? `&excludeCarryOver=${encodeURIComponent(Array.from(excludedCarryOver).join(','))}` : ''
     fetch(`/api/mrr/history?month=${encodeURIComponent(selectedMonth || '')}&yearView=${yearView}${excludeParam}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : { history: [], clientBreakdown: [], yearTotals: {} })
       .then(json => {
@@ -255,7 +255,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
 
   function excludeClient(displayName: string) {
     const key = displayName.toLowerCase().trim()
-    setExcludedCarryOver(prev => new Set([...prev, key]))
+    setExcludedCarryOver(prev => new Set(Array.from(prev).concat(key)))
     fetch('/api/mrr/exclusions', {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -270,7 +270,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
   }
 
   function resetAllExclusions() {
-    const keys = [...excludedCarryOver]
+    const keys = Array.from(excludedCarryOver)
     setExcludedCarryOver(new Set())
     keys.forEach(key =>
       fetch(`/api/mrr/exclusions?clientKey=${encodeURIComponent(key)}`, { method: 'DELETE', credentials: 'include' }).catch(() => {})
@@ -804,7 +804,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
           </div>
           {/* View toggle */}
           <div className="flex bg-narra-surface border border-narra-border rounded-lg overflow-hidden text-xs">
-            {(['all', ...Array.from(new Set(history.map(h => h.month.split(' ')[1]))).sort()] as const).map(v => (
+            {(['all', ...Array.from(new Set(history.map(h => h.month.split(' ')[1]))).sort()] as string[]).map(v => (
               <button key={v} onClick={() => setChartView(v)}
                 className={`px-4 py-2 font-body transition-all ${chartView === v ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:text-narra-dark'}`}>
                 {v === 'all' ? 'All Time' : v}

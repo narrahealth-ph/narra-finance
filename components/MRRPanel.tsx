@@ -804,7 +804,7 @@ export default function MRRPanel({ periodId, data, onRefresh, selectedMonth, ref
           </div>
           {/* View toggle */}
           <div className="flex bg-narra-surface border border-narra-border rounded-lg overflow-hidden text-xs">
-            {(['all', selectedYear] as const).map(v => (
+            {(['all', ...Array.from(new Set(history.map(h => h.month.split(' ')[1]))).sort()] as const).map(v => (
               <button key={v} onClick={() => setChartView(v)}
                 className={`px-4 py-2 font-body transition-all ${chartView === v ? 'bg-narra-dark text-narra-green' : 'text-narra-muted hover:text-narra-dark'}`}>
                 {v === 'all' ? 'All Time' : v}

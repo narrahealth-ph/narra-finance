@@ -353,11 +353,26 @@ export function calcProjectedMrrForMonth(invRows: any[][], monthStart: Date, mon
         }
       }
     } else if (isPipeline(status)) {
-      // ── Component 3: pipeline × 10% ──────────────────────────────────
+      // ── Component 3: pipeline × 10% (with renewal compounding) ───────
+      // Pipeline deals are annual — 10% is the close probability per deal.
+      // After the initial contract window, we assume the 10% that closed auto-renews
+      // each year, compounding forward indefinitely (same logic as paid carry-over).
       if (d > monthEnd) continue
-      const end = contractEnd(d, billingType)
-      if (end <= monthStart) continue
       if (seenPipeline.has(key)) continue
+
+      // Walk renewal cycles until we find the one containing monthStart
+      let cycleStart = d
+      let cycleEnd   = contractEnd(d, billingType)
+      while (cycleEnd <= monthStart) {
+        cycleStart = cycleEnd
+        const next  = new Date(cycleEnd)
+        if      (billingType === 'quarterly') next.setMonth(next.getMonth() + 3)
+        else if (billingType === 'monthly')   next.setMonth(next.getMonth() + 1)
+        else                                  next.setMonth(next.getMonth() + 12)
+        next.setDate(1)
+        cycleEnd = next
+      }
+      // cycleStart ≤ monthStart < cycleEnd — deal is active in current cycle
       seenPipeline.add(key)
       pipeline += calcMonthlyMrr(amount, billingType) * 0.1
       pipelineClients.push(clientName)
